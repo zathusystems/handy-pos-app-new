@@ -147,6 +147,7 @@ function runBuild() {
     const result = spawnSync(TAURI_BINARY, tauriArgs, {
       cwd: ROOT_DIR,
       env: process.env,
+      shell: process.platform === "win32",
       stdio: "inherit",
     });
 
