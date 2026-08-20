@@ -1,0 +1,157 @@
+{% extends "admin/change_list.html" %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .affiliate-admin-dashboard {
+      margin: 0 0 16px 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .affiliate-admin-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    }
+    .affiliate-admin-card h4 {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+    }
+    .affiliate-admin-meta {
+      font-size: 12px;
+      color: #6b7280;
+      margin: 0 0 6px 0;
+    }
+    .affiliate-admin-big {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin: 0;
+      color: #111827;
+    }
+    .affiliate-admin-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      margin: 4px 0;
+    }
+    .affiliate-admin-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .affiliate-admin-links {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  {% if affiliate_dashboard %}
+    <div class="affiliate-admin-dashboard">
+      <div class="affiliate-admin-card">
+        <h4>Affiliate Status</h4>
+        <p class="affiliate-admin-meta">Total affiliates</p>
+        <p class="affiliate-admin-big">{{ affiliate_dashboard.total_affiliates }}</p>
+        {% for card in affiliate_dashboard.status_cards %}
+          <div class="affiliate-admin-row">
+            <span>
+              <span class="affiliate-admin-dot" style="background: {{ card.color }};"></span>{{ card.label }}
+            </span>
+            <strong>{{ card.count }}</strong>
+          </div>
+        {% endfor %}
+        <div class="affiliate-admin-links">
+          <a class="button" href="{% url 'admin:affiliate_affiliate_changelist' %}">All</a>
+          <a class="button" href="{% url 'admin:affiliate_affiliate_changelist' %}?status__exact=active">Active</a>
+          <a class="button" href="{% url 'admin:affiliate_affiliate_changelist' %}?status__exact=pending">Pending</a>
+        </div>
+      </div>
+
+      <div class="affiliate-admin-card">
+        <h4>Payout Account Health</h4>
+        <div class="affiliate-admin-row">
+          <span>Ready</span>
+          <strong>{{ affiliate_dashboard.payout_ready_count }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Missing</span>
+          <strong>{{ affiliate_dashboard.payout_missing_count }}</strong>
+        </div>
+        <div class="affiliate-admin-links">
+          <a class="button" href="{% url 'admin:affiliate_affiliate_changelist' %}?payout_account=ready">Ready</a>
+          <a class="button" href="{% url 'admin:affiliate_affiliate_changelist' %}?payout_account=missing">Missing</a>
+        </div>
+      </div>
+
+      <div class="affiliate-admin-card">
+        <h4>Open Payout Requests</h4>
+        <div class="affiliate-admin-row">
+          <span>Pending</span>
+          <strong>{{ affiliate_dashboard.pending_payout_count }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Pending Amount</span>
+          <strong>{{ affiliate_dashboard.pending_payout_amount }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Processing</span>
+          <strong>{{ affiliate_dashboard.processing_payout_count }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Processing Amount</span>
+          <strong>{{ affiliate_dashboard.processing_payout_amount }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Total Open</span>
+          <strong>{{ affiliate_dashboard.open_payout_count }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Total Open Amount</span>
+          <strong>{{ affiliate_dashboard.open_payout_amount }}</strong>
+        </div>
+        <div class="affiliate-admin-links">
+          <a class="button" href="{% url 'admin:affiliate_affiliatepayment_changelist' %}?status__exact=pending">Pending</a>
+          <a class="button" href="{% url 'admin:affiliate_affiliatepayment_changelist' %}?status__exact=processing">Processing</a>
+        </div>
+      </div>
+
+      <div class="affiliate-admin-card">
+        <h4>Commissions Queue</h4>
+        <div class="affiliate-admin-row">
+          <span>Pending</span>
+          <strong>{{ affiliate_dashboard.pending_commission_count }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Pending Amount</span>
+          <strong>{{ affiliate_dashboard.pending_commission_amount }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Approved</span>
+          <strong>{{ affiliate_dashboard.approved_commission_count }}</strong>
+        </div>
+        <div class="affiliate-admin-row">
+          <span>Approved Amount</span>
+          <strong>{{ affiliate_dashboard.approved_commission_amount }}</strong>
+        </div>
+        <div class="affiliate-admin-links">
+          <a class="button" href="{% url 'admin:affiliate_recurringcommission_changelist' %}?status__exact=pending">Pending</a>
+          <a class="button" href="{% url 'admin:affiliate_recurringcommission_changelist' %}?status__exact=approved">Approved</a>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

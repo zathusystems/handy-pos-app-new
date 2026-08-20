@@ -1,0 +1,217 @@
+{
+  "generated_at": "2026-03-05T06:12:21.986524+00:00",
+  "source_report": "/home/oscar/Desktop/mwakaproject/handy-pos-new/docs/mra-eis/dry-readiness-latest.json",
+  "environment": {
+    "django_settings_module": "core.settings_test",
+    "database_engine": "django.db.backends.sqlite3",
+    "mra_eis_mode": "TEST",
+    "mra_eis_dry_run": true,
+    "mra_eis_allow_live_submission": false,
+    "mra_eis_enable_http_calls": true,
+    "mra_eis_base_url": "https://dev-eis-api.mra.mw",
+    "mra_eis_strict_product_codes": true
+  },
+  "api_input_output_examples": {
+    "activate_terminal": {
+      "endpoint": "/api/v1/onboarding/activate-terminal",
+      "input_payload": {
+        "tacCode": "DRY-260305061132099610",
+        "businessTin": "9260305044827",
+        "businessName": "MRA Dry Readiness Business",
+        "branchCode": "13",
+        "branchName": "Dry Readiness Branch 260305061131",
+        "deviceSerial": "DRY-DEVICE-260305061131",
+        "macAddress": "00:1A:2B:3C:4D:5E",
+        "posName": "Handy POS",
+        "posVersion": "dry-readiness-1.0",
+        "osType": "Web"
+      },
+      "output_payload": {
+        "status": "prepared",
+        "reason": "dry_run_enabled",
+        "endpoint_key": "activate_terminal",
+        "payload": {
+          "tacCode": "DRY-260305061132099610",
+          "businessTin": "9260305044827",
+          "businessName": "MRA Dry Readiness Business",
+          "branchCode": "13",
+          "branchName": "Dry Readiness Branch 260305061131",
+          "deviceSerial": "DRY-DEVICE-260305061131",
+          "macAddress": "00:1A:2B:3C:4D:5E",
+          "posName": "Handy POS",
+          "posVersion": "dry-readiness-1.0",
+          "osType": "Web"
+        },
+        "prepared_at": "2026-03-05T06:11:32.249796+00:00"
+      },
+      "dry_run": true
+    },
+    "get_latest_config": {
+      "endpoint": "/api/v1/utilities/get-latest-config",
+      "requested_config_types": [
+        "tax_rules",
+        "receipt_format",
+        "product_codes",
+        "system_settings"
+      ],
+      "sync_status": "success"
+    },
+    "save_inventory_items": {
+      "endpoint": "https://dev-eis-api.mra.mw/api/v1/utilities/save-inventory-items",
+      "output_payload": {
+        "status": "prepared",
+        "reason": "dry_run_enabled",
+        "endpoint_key": "save_inventory_items",
+        "payload": {
+          "terminalId": "TRM-13-5407BB63",
+          "items": [
+            {
+              "inventoryItemId": "248d19fc-883c-4679-9f69-2c91535149cb",
+              "name": "Dry Readiness Product",
+              "productCode": "DRY-PRODUCT-260305061131",
+              "taxType": "standard",
+              "taxRate": "16.50",
+              "unitMeasure": "unit",
+              "calculationMethod": "inclusive"
+            }
+          ]
+        },
+        "prepared_at": "2026-03-05T06:11:35.075304+00:00"
+      },
+      "dry_run": true
+    },
+    "report_sale_online": {
+      "endpoint": "/api/v1/sales/report-sale",
+      "input_payload": {
+        "terminalId": "TRM-13-5407BB63",
+        "invoiceNumber": "1",
+        "sellerTin": "9260305044827",
+        "sellerName": "MRA Dry Readiness Business",
+        "buyerTin": "",
+        "buyerName": "",
+        "items": [
+          {
+            "mra_product_code": "DRY-PRODUCT-260305061131",
+            "name": "Dry Readiness Product",
+            "quantity": "2.000",
+            "unit_price": "1000.00",
+            "tax_rate": "16.50",
+            "tax_category": "standard"
+          }
+        ],
+        "netAmount": "2000.00000",
+        "taxAmount": "330.00000000",
+        "grossAmount": "2330.00000000",
+        "invoiceDate": "2026-03-05T06:11:35.334562+00:00",
+        "signature": "6881...06ea",
+        "isOffline": false,
+        "offlineSignature": "***"
+      },
+      "output_payload": {
+        "status": "prepared",
+        "reason": "dry_run_enabled",
+        "endpoint_key": "report_sale",
+        "payload": {
+          "terminalId": "TRM-13-5407BB63",
+          "invoiceNumber": "1",
+          "sellerTin": "9260305044827",
+          "sellerName": "MRA Dry Readiness Business",
+          "buyerTin": "",
+          "buyerName": "",
+          "items": [
+            {
+              "mra_product_code": "DRY-PRODUCT-260305061131",
+              "name": "Dry Readiness Product",
+              "quantity": "2.000",
+              "unit_price": "1000.00",
+              "tax_rate": "16.50",
+              "tax_category": "standard"
+            }
+          ],
+          "netAmount": "2000.00000",
+          "taxAmount": "330.00000000",
+          "grossAmount": "2330.00000000",
+          "invoiceDate": "2026-03-05T06:11:35.334562+00:00",
+          "signature": "6881...06ea",
+          "isOffline": false,
+          "offlineSignature": "***"
+        },
+        "prepared_at": "2026-03-05T06:11:35.498053+00:00"
+      },
+      "dry_run": true
+    },
+    "report_sale_offline": {
+      "endpoint": "/api/v1/sales/report-sale-offline",
+      "input_payload": {
+        "terminalId": "TRM-13-5407BB63",
+        "invoiceNumber": "1",
+        "sellerTin": "9260305044827",
+        "sellerName": "MRA Dry Readiness Business",
+        "buyerTin": "",
+        "buyerName": "",
+        "items": [
+          {
+            "mra_product_code": "DRY-PRODUCT-260305061131",
+            "name": "Dry Readiness Product",
+            "quantity": "2.000",
+            "unit_price": "1000.00",
+            "tax_rate": "16.50",
+            "tax_category": "standard"
+          }
+        ],
+        "netAmount": "2000.00",
+        "taxAmount": "330.00",
+        "grossAmount": "2330.00",
+        "invoiceDate": "2026-03-05T06:11:35.945518+00:00",
+        "signature": "d4e1...2f2c",
+        "isOffline": true,
+        "offlineSignature": "d4e1...2f2c"
+      },
+      "output_payload": {
+        "status": "prepared",
+        "reason": "dry_run_enabled",
+        "endpoint_key": "report_sale_offline",
+        "payload": {
+          "terminalId": "TRM-13-5407BB63",
+          "invoiceNumber": "1",
+          "sellerTin": "9260305044827",
+          "sellerName": "MRA Dry Readiness Business",
+          "buyerTin": "",
+          "buyerName": "",
+          "items": [
+            {
+              "mra_product_code": "DRY-PRODUCT-260305061131",
+              "name": "Dry Readiness Product",
+              "quantity": "2.000",
+              "unit_price": "1000.00",
+              "tax_rate": "16.50",
+              "tax_category": "standard"
+            }
+          ],
+          "netAmount": "2000.00",
+          "taxAmount": "330.00",
+          "grossAmount": "2330.00",
+          "invoiceDate": "2026-03-05T06:11:35.945518+00:00",
+          "signature": "d4e1...2f2c",
+          "isOffline": true,
+          "offlineSignature": "d4e1...2f2c"
+        },
+        "prepared_at": "2026-03-05T06:11:36.469251+00:00"
+      },
+      "dry_run": true
+    }
+  },
+  "error_handling_evidence": {
+    "unresolved_mra_api_errors": 0,
+    "pending_retry_jobs": 0,
+    "retry_jobs_failed": 0
+  },
+  "offline_sync_evidence": {
+    "queue_status": "synced",
+    "invoice_status": "offline_synced",
+    "sync_summary": {
+      "synced": 1,
+      "failed": 0
+    }
+  }
+}

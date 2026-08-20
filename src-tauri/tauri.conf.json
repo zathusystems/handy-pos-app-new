@@ -1,0 +1,75 @@
+{
+  "productName": "Handy POS",
+  "version": "1.0.0",
+  "identifier": "com.mwakageneraldealer.pos",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev:next",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../out"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "url": "/",
+        "title": "Handy POS - Point of Sale System",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "focus": true,
+        "visible": false,
+        "skipTaskbar": false
+      },
+      {
+        "label": "splash",
+        "url": "/splash/",
+        "title": "Handy POS - Loading",
+        "width": 600,
+        "height": 400,
+        "center": true,
+        "resizable": false,
+        "fullscreen": false,
+        "focus": true,
+        "visible": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "handypos"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb"
+    ],
+    "android": {
+      "minSdkVersion": 24,
+      "autoIncrementVersionCode": true
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ]
+  }
+}

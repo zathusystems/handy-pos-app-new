@@ -1,0 +1,17 @@
+[Unit]
+Description=Handy POS Celery Beat
+After=network.target redis-server.service
+
+[Service]
+# Replace handypos with your deployment user if you are not using a dedicated service account.
+User=handypos
+Group=www-data
+WorkingDirectory=/srv/handy-pos/backend
+EnvironmentFile=/srv/handy-pos/backend/.env
+Environment=DJANGO_SETTINGS_MODULE=core.prod_settings
+ExecStart=/srv/handy-pos/backend/.venv/bin/celery -A core beat --loglevel=INFO
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

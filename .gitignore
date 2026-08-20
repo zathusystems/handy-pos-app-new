@@ -1,0 +1,87 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# exclude non-Next.js apps
+/handy-agent-app/
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/.next-dev/
+/.next-prod/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+*.log
+*.zip
+*.exe
+*.msi
+
+# python
+__pycache__/
+*.py[cod]
+*.pyd
+*.egg-info/
+*.egg
+.venv/
+venv/
+backend/.venv/
+backend/db.sqlite3
+backend/db.test.sqlite3
+backend/db.sqlite3-journal
+backend/staticfiles/
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+.genkit/*
+.env*
+
+# local tooling
+/.idx/
+/.qodo/
+/.modified
+/.eslintcache
+/.turbo/
+/.cache/
+
+# firebase
+firebase-debug.log
+firestore-debug.log
+
+# Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/backend-bundle/*
+!src-tauri/backend-bundle/.keep
+src-tauri/gen/android/
+src-tauri/gen/schemas/
+handypos-release.jks
+key_pair
+key_pair.pub

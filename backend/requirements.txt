@@ -1,0 +1,29 @@
+# Django Core
+Django==4.2.11
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+django-jazzmin==3.0.1
+
+# JWT Authentication
+djangorestframework-simplejwt==5.5.1
+PyJWT==2.8.0
+
+# Database
+psycopg2-binary==2.9.9
+
+# Utilities
+python-dotenv==1.0.0
+Pillow==10.1.0
+requests==2.31.0
+
+# Redis / Background Tasks
+redis==5.0.1
+
+# Task Queue
+celery==5.3.6
+
+# Monitoring
+sentry-sdk==1.39.1
+
+# Production Server
+gunicorn==21.2.0

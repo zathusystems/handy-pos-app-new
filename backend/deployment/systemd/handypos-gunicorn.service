@@ -1,0 +1,21 @@
+[Unit]
+Description=Handy POS Django Gunicorn
+After=network.target postgresql.service
+
+[Service]
+# Replace handypos with your deployment user if you are not using a dedicated service account.
+User=handypos
+Group=www-data
+WorkingDirectory=/home/backend2
+EnvironmentFile=/home/backend2/.env
+Environment=DJANGO_SETTINGS_MODULE=core.prod_settings
+ExecStart=/home/backend2/.venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8001 --timeout 120 core.wsgi:application
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+
+# SSL certificate command for the Nginx config:
+# sudo certbot --nginx -d api.handypos.online -d menu.handypos.online

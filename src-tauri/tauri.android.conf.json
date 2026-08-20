@@ -1,0 +1,22 @@
+{
+  "$schema": "./gen/schemas/android-schema.json",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "url": "/",
+        "title": "Handy POS - Point of Sale System",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "focus": true,
+        "visible": true,
+        "skipTaskbar": false
+      }
+    ]
+  }
+}

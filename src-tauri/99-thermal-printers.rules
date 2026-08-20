@@ -1,0 +1,17 @@
+# udev rules for thermal printer USB access
+# This allows the handy-pos application to access USB thermal printers without sudo
+
+# Epson thermal printers
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b8", ATTRS{idProduct}=="0202", MODE="0666", GROUP="lp"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b8", ATTRS{idProduct}=="0203", MODE="0666", GROUP="lp"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b8", ATTRS{idProduct}=="0204", MODE="0666", GROUP="lp"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="04b8", ATTRS{idProduct}=="0205", MODE="0666", GROUP="lp"
+
+# Star thermal printers
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0519", MODE="0666", GROUP="lp"
+
+# Sunmi thermal printers
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0416", MODE="0666", GROUP="lp"
+
+# Generic thermal printer class
+SUBSYSTEMS=="usb", ATTRS{bInterfaceClass}=="07", MODE="0666", GROUP="lp"

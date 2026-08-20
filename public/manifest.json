@@ -1,0 +1,24 @@
+{
+  "name": "Handy POS",
+  "short_name": "Handy POS",
+  "description": "Handy POS - Offline-First POS and Inventory System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#673AB7",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-128x128.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

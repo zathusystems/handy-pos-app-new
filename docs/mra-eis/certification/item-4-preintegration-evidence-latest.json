@@ -1,0 +1,647 @@
+{
+  "generated_at": "2026-03-05T06:12:21.986524+00:00",
+  "source_report": "/home/oscar/Desktop/mwakaproject/handy-pos-new/docs/mra-eis/dry-readiness-latest.json",
+  "pre_integration_preparation": {
+    "portal_registration": {
+      "developer_portal_registration": "manual_confirmation_required",
+      "taxpayer_portal_registration": "manual_confirmation_required",
+      "notes": "MRA portal registration is external to this codebase and must be confirmed manually with screenshots or acknowledgment email."
+    },
+    "business_identification": {
+      "business_id": "1",
+      "business_name": "MRA Dry Readiness Business",
+      "tin": "9260305044827",
+      "email": "",
+      "phone": "",
+      "vat_registered": true,
+      "mra_enrolled": true,
+      "missing_fields": [
+        "email",
+        "phone"
+      ]
+    },
+    "inventory_upload_and_approval": {
+      "total_inventory_items": 13,
+      "total_mappings": 13,
+      "approved_mappings": 13,
+      "synced_mappings": 13,
+      "sample_mappings": [
+        {
+          "inventory_item_id": "248d19fc-883c-4679-9f69-2c91535149cb",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "13",
+          "mra_product_code": "DRY-PRODUCT-260305061131",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "b7dd69ac-3b30-43dd-8fb3-0732e2cce0c5",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "12",
+          "mra_product_code": "DRY-PRODUCT-260305061111",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "d3dbc1eb-39bf-447d-b632-4e5f41367cd8",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "11",
+          "mra_product_code": "DRY-PRODUCT-260305060944",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "c7665090-190d-4071-bfe0-dd0b4455cd9c",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "10",
+          "mra_product_code": "DRY-PRODUCT-260305060810",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "e58ca515-405d-4b96-86f6-fc9d55d4ccf9",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "9",
+          "mra_product_code": "DRY-PRODUCT-260305060541",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "5a0a0912-5e80-4d19-99d9-41a669fcd9b7",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "8",
+          "mra_product_code": "DRY-PRODUCT-260305060408",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "9d25257f-0f58-4c20-98ab-8357298fb2cb",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "7",
+          "mra_product_code": "DRY-PRODUCT-260305060120",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "1674b811-f08b-4ee7-8295-c002cc650a1b",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "6",
+          "mra_product_code": "DRY-PRODUCT-260305053059",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "e3beb5d4-26dd-43c6-8d6f-1e2e7b5c4cd2",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "5",
+          "mra_product_code": "DRY-PRODUCT-260305050608",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        },
+        {
+          "inventory_item_id": "003b8d47-2fa9-41b4-8772-573a8bda3d07",
+          "inventory_item_name": "Dry Readiness Product",
+          "branch_id": "4",
+          "mra_product_code": "DRY-PRODUCT-260305050206",
+          "tax_type": "standard",
+          "tax_rate": "16.50",
+          "is_approved": true,
+          "mra_synced": true
+        }
+      ],
+      "integration_points": {
+        "mapping_service": "ProductMappingService.sync_inventory_mapping_to_mra",
+        "configuration_service": "ConfigurationService.fetch_and_store_configuration"
+      }
+    },
+    "branch_and_stock_terminal_linkage": {
+      "branches": [
+        {
+          "branch_id": "1",
+          "branch_name": "Dry Readiness Branch",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "2",
+          "branch_name": "Dry Readiness Branch 260305045554",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "3",
+          "branch_name": "Dry Readiness Branch 260305045959",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "4",
+          "branch_name": "Dry Readiness Branch 260305050206",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "5",
+          "branch_name": "Dry Readiness Branch 260305050608",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "6",
+          "branch_name": "Dry Readiness Branch 260305053059",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "7",
+          "branch_name": "Dry Readiness Branch 260305060120",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "8",
+          "branch_name": "Dry Readiness Branch 260305060408",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "9",
+          "branch_name": "Dry Readiness Branch 260305060541",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "10",
+          "branch_name": "Dry Readiness Branch 260305060810",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "11",
+          "branch_name": "Dry Readiness Branch 260305060944",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "12",
+          "branch_name": "Dry Readiness Branch 260305061111",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        },
+        {
+          "branch_id": "13",
+          "branch_name": "Dry Readiness Branch 260305061131",
+          "mra_branch_code": null,
+          "address": "Readiness Address",
+          "city": "Lilongwe",
+          "country": "Malawi"
+        }
+      ],
+      "terminals": [
+        {
+          "terminal_id": "7df0c77e-7925-4bba-bde0-15d1c3d3ac79",
+          "local_terminal_code": "TRM-1-44F7786D",
+          "mra_terminal_id": "TRM-1-44F7786D",
+          "branch_id": "1",
+          "branch_name": "Dry Readiness Branch",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "65ca3f0e-95f8-4886-85c9-d8d718175452",
+          "local_terminal_code": "TRM-2-0798D104",
+          "mra_terminal_id": "TRM-2-0798D104",
+          "branch_id": "2",
+          "branch_name": "Dry Readiness Branch 260305045554",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "7a89e605-21b3-4a67-82b2-72cf54eaacff",
+          "local_terminal_code": "TRM-3-D7ED7F38",
+          "mra_terminal_id": "TRM-3-D7ED7F38",
+          "branch_id": "3",
+          "branch_name": "Dry Readiness Branch 260305045959",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "244507d6-c230-4d28-88bb-55730bd5cfe9",
+          "local_terminal_code": "TRM-4-18733F0F",
+          "mra_terminal_id": "TRM-4-18733F0F",
+          "branch_id": "4",
+          "branch_name": "Dry Readiness Branch 260305050206",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "f68fee68-72b7-498f-9321-4a10f2cda656",
+          "local_terminal_code": "TRM-5-7AA513C2",
+          "mra_terminal_id": "TRM-5-7AA513C2",
+          "branch_id": "5",
+          "branch_name": "Dry Readiness Branch 260305050608",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "5403cde3-5dbf-40ec-8add-b9bfb9017b70",
+          "local_terminal_code": "TRM-6-16747D09",
+          "mra_terminal_id": "TRM-6-16747D09",
+          "branch_id": "6",
+          "branch_name": "Dry Readiness Branch 260305053059",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "22d2858b-edae-4a89-9ce7-2c1d21b85fbe",
+          "local_terminal_code": "TRM-7-EB0CBDC3",
+          "mra_terminal_id": "TRM-7-EB0CBDC3",
+          "branch_id": "7",
+          "branch_name": "Dry Readiness Branch 260305060120",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "b35ad63f-e1d2-4939-9991-690f502ea98d",
+          "local_terminal_code": "TRM-8-CE383962",
+          "mra_terminal_id": "TRM-8-CE383962",
+          "branch_id": "8",
+          "branch_name": "Dry Readiness Branch 260305060408",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "419fd5ef-933d-46a1-a1c1-1fbdf5e973b1",
+          "local_terminal_code": "TRM-9-8060D5A5",
+          "mra_terminal_id": "TRM-9-8060D5A5",
+          "branch_id": "9",
+          "branch_name": "Dry Readiness Branch 260305060541",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "5be3158b-c160-4b6c-8f69-4533652e0302",
+          "local_terminal_code": "TRM-10-CE58BD5A",
+          "mra_terminal_id": "TRM-10-CE58BD5A",
+          "branch_id": "10",
+          "branch_name": "Dry Readiness Branch 260305060810",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "be54a7da-9dda-4e23-afd0-3ebde034d242",
+          "local_terminal_code": "TRM-11-41A6EDA9",
+          "mra_terminal_id": "TRM-11-41A6EDA9",
+          "branch_id": "11",
+          "branch_name": "Dry Readiness Branch 260305060944",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "61ef7771-92fa-42a9-b1bf-f8a5bf7fe099",
+          "local_terminal_code": "TRM-12-5AAEC94D",
+          "mra_terminal_id": "TRM-12-5AAEC94D",
+          "branch_id": "12",
+          "branch_name": "Dry Readiness Branch 260305061111",
+          "status": "pending_activation",
+          "activated_at": null
+        },
+        {
+          "terminal_id": "710c81dc-8663-4ae3-9e9f-0071ec21dd57",
+          "local_terminal_code": "TRM-13-5407BB63",
+          "mra_terminal_id": "TRM-13-5407BB63",
+          "branch_id": "13",
+          "branch_name": "Dry Readiness Branch 260305061131",
+          "status": "pending_activation",
+          "activated_at": null
+        }
+      ],
+      "branch_stock_summary": [
+        {
+          "branch_id": "1",
+          "branch_name": "Dry Readiness Branch",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "2",
+          "branch_name": "Dry Readiness Branch 260305045554",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "3",
+          "branch_name": "Dry Readiness Branch 260305045959",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "4",
+          "branch_name": "Dry Readiness Branch 260305050206",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "5",
+          "branch_name": "Dry Readiness Branch 260305050608",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "6",
+          "branch_name": "Dry Readiness Branch 260305053059",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "7",
+          "branch_name": "Dry Readiness Branch 260305060120",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "8",
+          "branch_name": "Dry Readiness Branch 260305060408",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "9",
+          "branch_name": "Dry Readiness Branch 260305060541",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "10",
+          "branch_name": "Dry Readiness Branch 260305060810",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "11",
+          "branch_name": "Dry Readiness Branch 260305060944",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "12",
+          "branch_name": "Dry Readiness Branch 260305061111",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        },
+        {
+          "branch_id": "13",
+          "branch_name": "Dry Readiness Branch 260305061131",
+          "inventory_items": 1,
+          "mapped_items": 1,
+          "synced_mapped_items": 1
+        }
+      ]
+    },
+    "terminal_activation_and_reporting": {
+      "terminal_activation_request_response": {
+        "dry_run": true,
+        "request_payload": {
+          "tacCode": "DRY-260305061132099610",
+          "businessTin": "9260305044827",
+          "businessName": "MRA Dry Readiness Business",
+          "branchCode": "13",
+          "branchName": "Dry Readiness Branch 260305061131",
+          "deviceSerial": "DRY-DEVICE-260305061131",
+          "macAddress": "00:1A:2B:3C:4D:5E",
+          "posName": "Handy POS",
+          "posVersion": "dry-readiness-1.0",
+          "osType": "Web"
+        },
+        "response": {
+          "status": "prepared",
+          "reason": "dry_run_enabled",
+          "endpoint_key": "activate_terminal",
+          "payload": {
+            "tacCode": "DRY-260305061132099610",
+            "businessTin": "9260305044827",
+            "businessName": "MRA Dry Readiness Business",
+            "branchCode": "13",
+            "branchName": "Dry Readiness Branch 260305061131",
+            "deviceSerial": "DRY-DEVICE-260305061131",
+            "macAddress": "00:1A:2B:3C:4D:5E",
+            "posName": "Handy POS",
+            "posVersion": "dry-readiness-1.0",
+            "osType": "Web"
+          },
+          "prepared_at": "2026-03-05T06:11:32.249796+00:00"
+        }
+      },
+      "post_activation_reporting_evidence": {
+        "online_invoice": {
+          "invoice_id": "095cd8f7-b9da-4885-9bc3-3f98e8f2fd42",
+          "invoice_number": 1,
+          "status": "submitted",
+          "dry_run": true,
+          "mra_invoice_id": "",
+          "receipt_number": "RCP-1",
+          "receipt_id": "98d35c47-1fe4-4261-8c16-0e3bd989925a",
+          "invoice_hash_valid": true,
+          "receipt_qr_code_present": true,
+          "receipt_qr_signature_present": true,
+          "mra_response": {
+            "dry_run": true,
+            "endpoint": "https://dev-eis-api.mra.mw/api/v1/sales/report-sale",
+            "payload": {
+              "terminalId": "TRM-13-5407BB63",
+              "invoiceNumber": "1",
+              "sellerTin": "9260305044827",
+              "sellerName": "MRA Dry Readiness Business",
+              "buyerTin": "",
+              "buyerName": "",
+              "items": [
+                {
+                  "mra_product_code": "DRY-PRODUCT-260305061131",
+                  "name": "Dry Readiness Product",
+                  "quantity": "2.000",
+                  "unit_price": "1000.00",
+                  "tax_rate": "16.50",
+                  "tax_category": "standard"
+                }
+              ],
+              "netAmount": "2000.00000",
+              "taxAmount": "330.00000000",
+              "grossAmount": "2330.00000000",
+              "invoiceDate": "2026-03-05T06:11:35.334562+00:00",
+              "signature": "***",
+              "isOffline": false,
+              "offlineSignature": "***"
+            },
+            "response": {
+              "status": "prepared",
+              "reason": "dry_run_enabled",
+              "endpoint_key": "report_sale",
+              "payload": {
+                "terminalId": "TRM-13-5407BB63",
+                "invoiceNumber": "1",
+                "sellerTin": "9260305044827",
+                "sellerName": "MRA Dry Readiness Business",
+                "buyerTin": "",
+                "buyerName": "",
+                "items": [
+                  {
+                    "mra_product_code": "DRY-PRODUCT-260305061131",
+                    "name": "Dry Readiness Product",
+                    "quantity": "2.000",
+                    "unit_price": "1000.00",
+                    "tax_rate": "16.50",
+                    "tax_category": "standard"
+                  }
+                ],
+                "netAmount": "2000.00000",
+                "taxAmount": "330.00000000",
+                "grossAmount": "2330.00000000",
+                "invoiceDate": "2026-03-05T06:11:35.334562+00:00",
+                "signature": "***",
+                "isOffline": false,
+                "offlineSignature": "***"
+              },
+              "prepared_at": "2026-03-05T06:11:35.498053+00:00"
+            }
+          }
+        },
+        "offline_invoice": {
+          "invoice_id": "25eeddf8-5397-488a-805f-459c2772eeda",
+          "invoice_number": 1,
+          "status": "offline_synced",
+          "dry_run": true,
+          "queue_status": "synced",
+          "queue_entry_id": "d0f7f7a1-3f45-46b4-ab1f-c51d85afd84b",
+          "invoice_hash_valid": true,
+          "mra_response": {
+            "dry_run": true,
+            "endpoint": "https://dev-eis-api.mra.mw/api/v1/sales/report-sale-offline",
+            "payload": {
+              "terminalId": "TRM-13-5407BB63",
+              "invoiceNumber": "1",
+              "sellerTin": "9260305044827",
+              "sellerName": "MRA Dry Readiness Business",
+              "buyerTin": "",
+              "buyerName": "",
+              "items": [
+                {
+                  "mra_product_code": "DRY-PRODUCT-260305061131",
+                  "name": "Dry Readiness Product",
+                  "quantity": "2.000",
+                  "unit_price": "1000.00",
+                  "tax_rate": "16.50",
+                  "tax_category": "standard"
+                }
+              ],
+              "netAmount": "2000.00",
+              "taxAmount": "330.00",
+              "grossAmount": "2330.00",
+              "invoiceDate": "2026-03-05T06:11:35.945518+00:00",
+              "signature": "***",
+              "isOffline": true,
+              "offlineSignature": "***"
+            },
+            "response": {
+              "status": "prepared",
+              "reason": "dry_run_enabled",
+              "endpoint_key": "report_sale_offline",
+              "payload": {
+                "terminalId": "TRM-13-5407BB63",
+                "invoiceNumber": "1",
+                "sellerTin": "9260305044827",
+                "sellerName": "MRA Dry Readiness Business",
+                "buyerTin": "",
+                "buyerName": "",
+                "items": [
+                  {
+                    "mra_product_code": "DRY-PRODUCT-260305061131",
+                    "name": "Dry Readiness Product",
+                    "quantity": "2.000",
+                    "unit_price": "1000.00",
+                    "tax_rate": "16.50",
+                    "tax_category": "standard"
+                  }
+                ],
+                "netAmount": "2000.00",
+                "taxAmount": "330.00",
+                "grossAmount": "2330.00",
+                "invoiceDate": "2026-03-05T06:11:35.945518+00:00",
+                "signature": "***",
+                "isOffline": true,
+                "offlineSignature": "***"
+              },
+              "prepared_at": "2026-03-05T06:11:36.469251+00:00"
+            }
+          },
+          "sync_summary": {
+            "synced": 1,
+            "failed": 0
+          }
+        }
+      },
+      "reporting_endpoints": {
+        "report_sale": "/api/v1/sales/report-sale",
+        "report_sale_offline": "/api/v1/sales/report-sale-offline"
+      }
+    }
+  },
+  "manual_actions_required": [
+    "Complete MRA Taxpayer/Developer portal registration and keep proof.",
+    "Confirm business contact fields (email/phone) are complete for submission forms.",
+    "Attach portal screenshots and MRA correspondence to submission dossier."
+  ]
+}

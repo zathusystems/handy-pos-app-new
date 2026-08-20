@@ -1,0 +1,302 @@
+{
+  "generated_at": "2026-03-05T06:12:21.986524+00:00",
+  "source_report": "/home/oscar/Desktop/mwakaproject/handy-pos-new/docs/mra-eis/dry-readiness-latest.json",
+  "security_authentication_accuracy": {
+    "environment": {
+      "django_settings_module": "core.settings_test",
+      "database_engine": "django.db.backends.sqlite3",
+      "mra_eis_mode": "TEST",
+      "mra_eis_dry_run": true,
+      "mra_eis_allow_live_submission": false,
+      "mra_eis_enable_http_calls": true,
+      "mra_eis_base_url": "https://dev-eis-api.mra.mw",
+      "mra_eis_strict_product_codes": true
+    },
+    "security_controls": {
+      "https_base_url": true,
+      "signature_fields_present": true,
+      "access_key_present": false,
+      "secret_key_present": false,
+      "dry_run_mode": true,
+      "receipt_qr_code_present": true,
+      "receipt_qr_signature_present": true
+    },
+    "invoice_payload_validation": {
+      "required_fields": [
+        "terminalId",
+        "invoiceNumber",
+        "sellerTin",
+        "sellerName",
+        "items",
+        "netAmount",
+        "taxAmount",
+        "grossAmount",
+        "invoiceDate",
+        "signature",
+        "isOffline"
+      ],
+      "online_has_required_fields": true,
+      "offline_has_required_fields": true,
+      "format_assertion_passed": true,
+      "online_invoice_hash_valid": true,
+      "offline_invoice_hash_valid": true,
+      "online_invoice_hash_revalidated": null,
+      "offline_invoice_hash_revalidated": null,
+      "hash_assertion_passed": true
+    },
+    "inventory_sync_validation": {
+      "product_sync": {
+        "synced": true,
+        "dry_run": true,
+        "endpoint": "https://dev-eis-api.mra.mw/api/v1/utilities/save-inventory-items",
+        "response": {
+          "status": "prepared",
+          "reason": "dry_run_enabled",
+          "endpoint_key": "save_inventory_items",
+          "payload": {
+            "terminalId": "TRM-13-5407BB63",
+            "items": [
+              {
+                "inventoryItemId": "248d19fc-883c-4679-9f69-2c91535149cb",
+                "name": "Dry Readiness Product",
+                "productCode": "DRY-PRODUCT-260305061131",
+                "taxType": "standard",
+                "taxRate": "16.50",
+                "unitMeasure": "unit",
+                "calculationMethod": "inclusive"
+              }
+            ]
+          },
+          "prepared_at": "2026-03-05T06:11:35.075304+00:00"
+        },
+        "mra_product_code": "DRY-PRODUCT-260305061131"
+      },
+      "inventory_snapshot": {
+        "total_inventory_items": 13,
+        "total_mappings": 13,
+        "approved_mappings": 13,
+        "synced_mappings": 13,
+        "sample_mappings": [
+          {
+            "inventory_item_id": "248d19fc-883c-4679-9f69-2c91535149cb",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "13",
+            "mra_product_code": "DRY-PRODUCT-260305061131",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "b7dd69ac-3b30-43dd-8fb3-0732e2cce0c5",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "12",
+            "mra_product_code": "DRY-PRODUCT-260305061111",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "d3dbc1eb-39bf-447d-b632-4e5f41367cd8",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "11",
+            "mra_product_code": "DRY-PRODUCT-260305060944",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "c7665090-190d-4071-bfe0-dd0b4455cd9c",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "10",
+            "mra_product_code": "DRY-PRODUCT-260305060810",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "e58ca515-405d-4b96-86f6-fc9d55d4ccf9",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "9",
+            "mra_product_code": "DRY-PRODUCT-260305060541",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "5a0a0912-5e80-4d19-99d9-41a669fcd9b7",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "8",
+            "mra_product_code": "DRY-PRODUCT-260305060408",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "9d25257f-0f58-4c20-98ab-8357298fb2cb",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "7",
+            "mra_product_code": "DRY-PRODUCT-260305060120",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "1674b811-f08b-4ee7-8295-c002cc650a1b",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "6",
+            "mra_product_code": "DRY-PRODUCT-260305053059",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "e3beb5d4-26dd-43c6-8d6f-1e2e7b5c4cd2",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "5",
+            "mra_product_code": "DRY-PRODUCT-260305050608",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          },
+          {
+            "inventory_item_id": "003b8d47-2fa9-41b4-8772-573a8bda3d07",
+            "inventory_item_name": "Dry Readiness Product",
+            "branch_id": "4",
+            "mra_product_code": "DRY-PRODUCT-260305050206",
+            "tax_type": "standard",
+            "tax_rate": "16.50",
+            "is_approved": true,
+            "mra_synced": true
+          }
+        ]
+      },
+      "sync_assertion_passed": true
+    },
+    "error_retry_offline_validation": {
+      "offline_invoice": {
+        "invoice_id": "25eeddf8-5397-488a-805f-459c2772eeda",
+        "invoice_number": 1,
+        "status": "offline_synced",
+        "dry_run": true,
+        "queue_status": "synced",
+        "queue_entry_id": "d0f7f7a1-3f45-46b4-ab1f-c51d85afd84b",
+        "invoice_hash_valid": true,
+        "mra_response": {
+          "dry_run": true,
+          "endpoint": "https://dev-eis-api.mra.mw/api/v1/sales/report-sale-offline",
+          "payload": {
+            "terminalId": "TRM-13-5407BB63",
+            "invoiceNumber": "1",
+            "sellerTin": "9260305044827",
+            "sellerName": "MRA Dry Readiness Business",
+            "buyerTin": "",
+            "buyerName": "",
+            "items": [
+              {
+                "mra_product_code": "DRY-PRODUCT-260305061131",
+                "name": "Dry Readiness Product",
+                "quantity": "2.000",
+                "unit_price": "1000.00",
+                "tax_rate": "16.50",
+                "tax_category": "standard"
+              }
+            ],
+            "netAmount": "2000.00",
+            "taxAmount": "330.00",
+            "grossAmount": "2330.00",
+            "invoiceDate": "2026-03-05T06:11:35.945518+00:00",
+            "signature": "***",
+            "isOffline": true,
+            "offlineSignature": "***"
+          },
+          "response": {
+            "status": "prepared",
+            "reason": "dry_run_enabled",
+            "endpoint_key": "report_sale_offline",
+            "payload": {
+              "terminalId": "TRM-13-5407BB63",
+              "invoiceNumber": "1",
+              "sellerTin": "9260305044827",
+              "sellerName": "MRA Dry Readiness Business",
+              "buyerTin": "",
+              "buyerName": "",
+              "items": [
+                {
+                  "mra_product_code": "DRY-PRODUCT-260305061131",
+                  "name": "Dry Readiness Product",
+                  "quantity": "2.000",
+                  "unit_price": "1000.00",
+                  "tax_rate": "16.50",
+                  "tax_category": "standard"
+                }
+              ],
+              "netAmount": "2000.00",
+              "taxAmount": "330.00",
+              "grossAmount": "2330.00",
+              "invoiceDate": "2026-03-05T06:11:35.945518+00:00",
+              "signature": "***",
+              "isOffline": true,
+              "offlineSignature": "***"
+            },
+            "prepared_at": "2026-03-05T06:11:36.469251+00:00"
+          }
+        },
+        "sync_summary": {
+          "synced": 1,
+          "failed": 0
+        }
+      },
+      "unresolved_mra_api_errors": 0,
+      "pending_retry_jobs": 0,
+      "failed_retry_jobs": 0,
+      "resilience_assertion_passed": true
+    },
+    "certification_assertions": [
+      {
+        "requirement": "secure_transmission_authentication_encryption",
+        "status": "pass",
+        "details": "HTTPS endpoint and signed invoice payloads were detected."
+      },
+      {
+        "requirement": "credentials_ready_for_live_authentication",
+        "status": "warn",
+        "details": "Access/secret keys are required before LIVE; dry mode may intentionally omit them."
+      },
+      {
+        "requirement": "sales_invoice_format_accuracy",
+        "status": "pass",
+        "details": "Online and offline payloads include required invoice fields and decimal amount formats."
+      },
+      {
+        "requirement": "invoice_hash_validation",
+        "status": "pass",
+        "details": "Online and offline signatures re-validated against canonical invoice payloads."
+      },
+      {
+        "requirement": "receipt_qr_code_presence",
+        "status": "pass",
+        "details": "Receipt QR payload is generated and includes invoice signature metadata."
+      },
+      {
+        "requirement": "inventory_stock_sync_accuracy",
+        "status": "pass",
+        "details": "Inventory mappings were synced and tracked without mismatch."
+      },
+      {
+        "requirement": "graceful_errors_retries_offline",
+        "status": "pass",
+        "details": "Offline queued flow synced with zero failed sync attempts and no unresolved API errors."
+      }
+    ]
+  },
+  "compliance_notice": "MRA certification can be revoked if production code drifts from compliant behavior. Re-run this package after every significant release and before go-live."
+}

@@ -1,0 +1,13 @@
+# Rust
+/target
+Cargo.lock
+**/*.rs.bk
+
+# Tauri
+/dist
+/src-tauri/target
+
+# Node
+node_modules
+.env.local
+.env.*.local

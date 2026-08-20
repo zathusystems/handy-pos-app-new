@@ -1,0 +1,54 @@
+# Generated migration for MenuConfig model
+
+from django.db import migrations, models
+import django.db.models.deletion
+import uuid
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ('business', '0011_add_slugs'),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='MenuConfig',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('display_name', models.CharField(default='Our Menu', max_length=255)),
+                ('description', models.TextField(default='Welcome to our restaurant')),
+                ('tagline', models.CharField(default='Fresh & Delicious', max_length=255)),
+                ('footer_text', models.CharField(default='Thank you for your visit!', max_length=255)),
+                ('business_logo', models.TextField(blank=True, null=True)),
+                ('business_banner', models.TextField(blank=True, null=True)),
+                ('primary_color', models.CharField(default='#263b57', max_length=7)),
+                ('accent_color', models.CharField(default='#236dd5', max_length=7)),
+                ('theme', models.CharField(choices=[('light', 'Light'), ('dark', 'Dark'), ('auto', 'Auto (System)')], default='auto', max_length=10)),
+                ('items_per_row', models.CharField(choices=[('auto', 'Auto (Responsive)'), ('2', '2 Items'), ('3', '3 Items'), ('4', '4 Items')], default='3', max_length=10)),
+                ('currency', models.CharField(default='USD', max_length=10)),
+                ('show_prices', models.BooleanField(default=True)),
+                ('show_categories', models.BooleanField(default=True)),
+                ('show_images', models.BooleanField(default=True)),
+                ('show_brand_info', models.BooleanField(default=True)),
+                ('show_contact_info', models.BooleanField(default=True)),
+                ('enable_search', models.BooleanField(default=True)),
+                ('enable_filters', models.BooleanField(default=True)),
+                ('enable_sorting', models.BooleanField(default=True)),
+                ('accept_orders', models.BooleanField(default=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('branch', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='menu_config', to='business.branch')),
+                ('business', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='menu_configs', to='business.business')),
+            ],
+            options={
+                'ordering': ['-updated_at'],
+            },
+        ),
+        migrations.AddIndex(
+            model_name='menuconfig',
+            index=models.Index(fields=['business', 'branch'], name='digitalmenu_menuconfig_business_branch_idx'),
+        ),
+    ]

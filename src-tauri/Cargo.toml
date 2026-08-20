@@ -1,0 +1,40 @@
+[package]
+name = "handy-pos"
+version = "1.0.0"
+description = "Handy POS - Point of Sale System"
+authors = ["Handy POS Team"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "handy_pos_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+tauri = { version = "2.10.2", features = [] }
+tauri-plugin-deep-link = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+urlencoding = "2.1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rusb = "0.9.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_Graphics_Printing"] }
+
+[build-dependencies]
+tauri-build = { version = "2.5.5", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "handy-pos"
+path = "src/main.rs"

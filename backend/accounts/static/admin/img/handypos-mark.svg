@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" aria-label="HandyPOS Logo">
+  <rect width="100" height="100" rx="20" fill="#673AB7" />
+  <path
+    d="M42 68V42c0-2.209 1.791-4 4-4h26m-20 42s-10 0-10-6 10-6 10-6M34 56.889s-6-3.889-6-7.889 6-7.888 6-7.888m4 11.444s-8-4.945-8-9.945 8-9.944 8-9.944M72 38s6 0 6 6v28c0 6-6 6-6 6H52m20-42L62 28"
+    stroke="#F3E5F5"
+    stroke-width="4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    fill="none"
+  />
+</svg>
