@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from business.models import Branch, Business
 from digitalmenu.models import Menu, MenuOption, MenuOptionGroup
+from inventory.models import InventoryItem
 from staff.models import Staff, StaffRole
 
 
@@ -89,6 +90,76 @@ class MenuOptionManagementTests(TestCase):
         self.assertFalse(Menu.objects.filter(id=self.menu.id).exists())
         self.assertFalse(MenuOptionGroup.objects.filter(id=group.id).exists())
         self.assertEqual(response.data['deleted'], True)
+
+    def test_active_staff_can_update_prepared_menu_item(self):
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.patch(
+            '/api/digital-menu/menu/update_item/',
+            {
+                'branch_id': self.branch.id,
+                'menu_item_id': str(self.menu.id),
+                'name': 'Grilled Chicken and Chips',
+                'category': 'Grill',
+                'description': 'Served with kachumbari',
+                'price': '5500.00',
+                'recipe': [{'ingredientId': 'salt', 'name': 'Salt', 'quantity': 1}],
+                'is_visible': False,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.menu.refresh_from_db()
+        self.assertEqual(self.menu.name, 'Grilled Chicken and Chips')
+        self.assertEqual(self.menu.category, 'Grill')
+        self.assertEqual(self.menu.description, 'Served with kachumbari')
+        self.assertEqual(self.menu.price, Decimal('5500.00'))
+        self.assertEqual(self.menu.recipe[0]['name'], 'Salt')
+        self.assertFalse(self.menu.is_visible)
+
+    def test_active_staff_can_update_inventory_backed_menu_item_source_product(self):
+        inventory_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Coca Cola',
+            category='Drinks',
+            item_type='sellable',
+            stock_units=Decimal('10.000'),
+            unit_type='bottle',
+            price=Decimal('1500.00'),
+            on_menu=True,
+        )
+        inventory_menu = Menu.objects.create(
+            business=self.business,
+            branch=self.branch,
+            inventory_item=inventory_item,
+            is_visible=True,
+        )
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.patch(
+            '/api/digital-menu/menu/update_item/',
+            {
+                'branch_id': self.branch.id,
+                'menu_item_id': str(inventory_menu.id),
+                'name': 'Coca Cola 500ml',
+                'category': 'Soft Drinks',
+                'description': 'Chilled bottle',
+                'price': '1800.00',
+                'is_visible': False,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        inventory_item.refresh_from_db()
+        inventory_menu.refresh_from_db()
+        self.assertEqual(inventory_item.name, 'Coca Cola 500ml')
+        self.assertEqual(inventory_item.category, 'Soft Drinks')
+        self.assertEqual(inventory_item.price, Decimal('1800.00'))
+        self.assertEqual(inventory_menu.description, 'Chilled bottle')
+        self.assertFalse(inventory_menu.is_visible)
 
     def test_active_staff_can_create_menu_option_group(self):
         self.client.force_authenticate(user=self.staff_user)

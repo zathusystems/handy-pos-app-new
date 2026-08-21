@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from decimal import Decimal, InvalidOperation
 
 from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup
 from .serializers import (
@@ -299,6 +300,108 @@ class MenuViewSet(viewsets.ModelViewSet):
                 {'error': 'Menu item not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=False, methods=['patch', 'post'])
+    def update_item(self, request):
+        """Update a menu item. Prepared items update Menu; inventory-backed items update InventoryItem."""
+        try:
+            from inventory.models import InventoryItem
+
+            branch_id = request.data.get('branch_id')
+            inventory_item_id = request.data.get('inventory_item_id')
+            menu_item_id = request.data.get('menu_item_id')
+
+            if not branch_id or (not inventory_item_id and not menu_item_id):
+                return Response(
+                    {'error': 'branch_id and inventory_item_id or menu_item_id are required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            lookup = {
+                'branch_id': branch_id,
+                'business_id__in': get_accessible_business_ids(request.user),
+            }
+            if menu_item_id:
+                lookup['id'] = menu_item_id
+            else:
+                lookup['inventory_item_id'] = inventory_item_id
+
+            menu_item = Menu.objects.select_related('inventory_item').get(**lookup)
+            is_visible = request.data.get('is_visible', None)
+            if is_visible is not None:
+                if isinstance(is_visible, str):
+                    is_visible = is_visible.strip().lower() in ('true', '1', 'yes', 'on')
+                else:
+                    is_visible = bool(is_visible)
+                menu_item.is_visible = is_visible
+                menu_item.save(update_fields=['is_visible', 'updated_at'])
+
+            editable_fields = ('name', 'category', 'description', 'price', 'image', 'recipe')
+            has_editable_payload = any(field in request.data for field in editable_fields)
+
+            if menu_item.inventory_item_id:
+                inventory_item = InventoryItem.objects.get(
+                    id=menu_item.inventory_item_id,
+                    branch_id=branch_id,
+                    business_id__in=get_accessible_business_ids(request.user),
+                )
+                menu_update_fields = []
+                if 'description' in request.data:
+                    menu_item.description = request.data.get('description') or ''
+                    menu_update_fields.extend(['description', 'updated_at'])
+
+                if menu_update_fields:
+                    menu_item.save(update_fields=list(dict.fromkeys(menu_update_fields)))
+
+                update_fields = []
+                for field in ('name', 'category', 'image', 'recipe'):
+                    if field in request.data:
+                        setattr(inventory_item, field, request.data.get(field) or (None if field == 'image' else ''))
+                        update_fields.append(field)
+
+                if 'price' in request.data:
+                    try:
+                        inventory_item.price = Decimal(str(request.data.get('price') or 0))
+                    except (InvalidOperation, TypeError, ValueError):
+                        return Response({'price': 'Enter a valid price.'}, status=status.HTTP_400_BAD_REQUEST)
+                    update_fields.append('price')
+
+                if has_editable_payload:
+                    update_fields.append('updated_at')
+                    inventory_item.save(update_fields=list(dict.fromkeys(update_fields)))
+
+                menu_item.refresh_from_db()
+                return Response(self.get_serializer(menu_item).data, status=status.HTTP_200_OK)
+
+            data = {}
+            for field in editable_fields:
+                if field in request.data:
+                    data[field] = request.data.get(field)
+            if 'is_visible' in request.data:
+                data['is_visible'] = is_visible
+
+            serializer = self.get_serializer(menu_item, data=data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save(is_prepared_item=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Menu.DoesNotExist:
+            return Response(
+                {'error': 'Menu item not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except InventoryItem.DoesNotExist:
+            return Response(
+                {'error': 'Inventory item not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response(
                 {'error': str(e)},

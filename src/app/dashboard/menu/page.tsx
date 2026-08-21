@@ -20,6 +20,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -201,6 +202,17 @@ type MenuOption = {
 type OptionRecipeRow = {
   ingredientId: string;
   quantity: string;
+};
+
+const recipeToRows = (recipe: unknown): OptionRecipeRow[] => {
+  if (!Array.isArray(recipe)) return [{ ingredientId: 'none', quantity: '' }];
+  const rows = recipe
+    .map((entry: any) => ({
+      ingredientId: String(entry?.ingredientId ?? entry?.ingredient_id ?? entry?.inventoryItemId ?? entry?.inventory_item_id ?? entry?.id ?? 'none'),
+      quantity: String(entry?.quantity ?? ''),
+    }))
+    .filter((row) => row.ingredientId && row.ingredientId !== 'none');
+  return rows.length > 0 ? rows : [{ ingredientId: 'none', quantity: '' }];
 };
 
 type MenuOptionGroup = {
@@ -808,46 +820,309 @@ const MenuOptionsModal = ({
   );
 };
 
+const EditMenuItemModal = ({
+  item,
+  activeBranchId,
+  recipeItems,
+  open,
+  onOpenChange,
+  onItemSaved,
+}: {
+  item: InventoryItem | null;
+  activeBranchId: string | null;
+  recipeItems: InventoryItem[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onItemSaved: (item: InventoryItem) => void;
+}) => {
+  const { toast } = useToast();
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('');
+  const [description, setDescription] = useState('');
+  const [price, setPrice] = useState('');
+  const [image, setImage] = useState('');
+  const [recipeRows, setRecipeRows] = useState<OptionRecipeRow[]>([{ ingredientId: 'none', quantity: '' }]);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const isPrepared = Boolean(item?.isPreparedMenuItem || item?.is_prepared_menu_item);
+  const stockRecipeItems = useMemo(() => (
+    recipeItems
+      .filter((candidate) => (
+        !candidate.isPreparedMenuItem &&
+        !candidate.is_prepared_menu_item &&
+        (candidate.itemType === 'ingredient' || candidate.itemType === 'sellable')
+      ))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  ), [recipeItems]);
+
+  useEffect(() => {
+    if (!item || !open) return;
+    setName(item.name || '');
+    setCategory(item.category || '');
+    setDescription(item.description || '');
+    setPrice(item.price === undefined || item.price === null ? '' : String(item.price));
+    setImage(String(item.image || ''));
+    setRecipeRows(recipeToRows(item.recipe));
+  }, [item, open]);
+
+  const getStockItemName = (stockItemId: string) => (
+    stockRecipeItems.find((stockItem) => String(stockItem.id) === String(stockItemId))?.name || ''
+  );
+
+  const buildRecipePayload = () => (
+    recipeRows
+      .map((row) => {
+        const ingredient = stockRecipeItems.find((candidate) => String(candidate.id) === String(row.ingredientId));
+        const quantity = Number(row.quantity);
+        if (!ingredient || !Number.isFinite(quantity) || quantity <= 0) return null;
+        return {
+          ingredientId: ingredient.id,
+          inventoryItemId: ingredient.id,
+          inventory_item_id: ingredient.id,
+          name: getStockItemName(ingredient.id),
+          quantity,
+          unit: ingredient.unitType || ingredient.unit_type || 'unit',
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+  );
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (readerEvent) => {
+      setImage(String(readerEvent.target?.result || ''));
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    if (!item) return;
+    const trimmedName = name.trim();
+    const parsedPrice = Number(price);
+
+    if (!trimmedName) {
+      toast({ variant: 'destructive', title: 'Name required', description: 'Enter the menu item name.' });
+      return;
+    }
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      toast({ variant: 'destructive', title: 'Invalid price', description: 'Enter a valid selling price.' });
+      return;
+    }
+    if (!activeBranchId) {
+      toast({ variant: 'destructive', title: 'No branch selected' });
+      return;
+    }
+
+    const branchIdInt = getBackendBranchId(activeBranchId);
+    if (branchIdInt === null) {
+      toast({ variant: 'destructive', title: 'Invalid branch selected' });
+      return;
+    }
+
+    const menuItemId = item.menuEntryId || item.menuItemId || item.menu_item_id;
+    const payload = {
+      branch_id: branchIdInt,
+      menu_item_id: menuItemId,
+      inventory_item_id: isPrepared ? undefined : item.id,
+      name: trimmedName,
+      category: category.trim(),
+      description: description.trim(),
+      price: parsedPrice,
+      image,
+      recipe: buildRecipePayload(),
+      is_visible: isMenuItemVisible(item),
+    };
+
+    setIsSaving(true);
+    try {
+      const response = await authFetch.fetch<any>('/digital-menu/menu/update_item/', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+
+      const localUpdates: Partial<InventoryItem> = {
+        name: trimmedName,
+        category: category.trim(),
+        description: description.trim(),
+        price: parsedPrice,
+        image,
+        recipe: payload.recipe,
+      };
+
+      if (!isPrepared) {
+        await db.inventory.update(item.id, localUpdates);
+      }
+
+      const updatedItem = buildMenuInventoryItem(response, { ...item, ...localUpdates }, activeBranchId) || {
+        ...item,
+        ...localUpdates,
+      };
+      onItemSaved(updatedItem);
+      toast({ title: 'Menu item updated', description: `${trimmedName} was saved.` });
+      onOpenChange(false);
+    } catch (error) {
+      console.error('[Menu] Error updating menu item:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Could not update menu item',
+        description: error instanceof Error ? error.message : 'Please try again.',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Edit menu item</DialogTitle>
+          <DialogDescription>
+            Update customer-facing details and the stock recipe used for tracking.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <div className="space-y-3">
+            <div className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg border bg-muted">
+              {resolveMenuItemImageSrc(image) ? (
+                <img src={resolveMenuItemImageSrc(image) || ''} alt={name || 'Menu item'} className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+                  <Upload className="h-7 w-7" />
+                  No image
+                </div>
+              )}
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+            <div className="grid gap-2">
+              <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                <Upload className="mr-2 h-4 w-4" />
+                Upload image
+              </Button>
+              {image && (
+                <Button type="button" variant="ghost" onClick={() => setImage('')}>
+                  <X className="mr-2 h-4 w-4" />
+                  Remove image
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">Recommended: 1200 x 800 px, JPG or PNG under 2 MB.</p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-menu-name">Name</Label>
+                <Input id="edit-menu-name" value={name} onChange={(event) => setName(event.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-menu-price">Selling price</Label>
+                <Input id="edit-menu-price" type="number" min="0" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="edit-menu-category">Category</Label>
+                <Input id="edit-menu-category" value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Meals, Drinks, Specials..." />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="edit-menu-description">Description</Label>
+                <Textarea id="edit-menu-description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Optional customer-facing description" />
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-lg border p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <Label>Recipe from inventory</Label>
+                  <p className="text-xs text-muted-foreground">Use ingredients or purchased stock items to deduct stock when this item is sold.</p>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => setRecipeRows((rows) => [...rows, { ingredientId: 'none', quantity: '' }])}>
+                  Add ingredient
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {recipeRows.map((row, index) => (
+                  <div key={`edit-menu-recipe-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_auto]">
+                    <Select
+                      value={row.ingredientId}
+                      onValueChange={(value) => setRecipeRows((rows) => rows.map((current, rowIndex) => (
+                        rowIndex === index ? { ...current, ingredientId: value } : current
+                      )))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select ingredient" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No stock item</SelectItem>
+                        {stockRecipeItems.map((ingredient) => (
+                          <SelectItem key={ingredient.id} value={ingredient.id}>
+                            {ingredient.name} ({ingredient.unitType || ingredient.unit_type || 'unit'})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={row.quantity}
+                      onChange={(event) => setRecipeRows((rows) => rows.map((current, rowIndex) => (
+                        rowIndex === index ? { ...current, quantity: event.target.value } : current
+                      )))}
+                      placeholder="Qty"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setRecipeRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}
+                      disabled={recipeRows.length <= 1}
+                      aria-label="Remove ingredient"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 const MenuItemCard = ({
   item,
   onItemUpdated,
+  onEdit,
   onVisibilityChange,
   onManageOptions,
   onDelete,
 }: {
   item: InventoryItem;
   onItemUpdated: (itemId: string, updates: Partial<InventoryItem>) => void;
+  onEdit: (item: InventoryItem) => void;
   onVisibilityChange: (item: InventoryItem, isVisible: boolean) => void;
   onManageOptions: (item: InventoryItem) => void;
   onDelete: (item: InventoryItem) => void;
 }) => {
-  const [isEditingImage, setIsEditingImage] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const imageSrc = resolveMenuItemImageSrc(item.image);
   const visible = isMenuItemVisible(item);
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64Image = event.target?.result as string;
-      await db.inventory.update(item.id, { image: base64Image, _dirty: true, _operation: 'update' });
-      await syncService.markAsDirty('InventoryItem', item.id, 'update');
-      onItemUpdated(item.id, { image: base64Image, _dirty: true, _operation: 'update' });
-      setIsEditingImage(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleRemoveImage = async () => {
-    await db.inventory.update(item.id, { image: '', _dirty: true, _operation: 'update' });
-    await syncService.markAsDirty('InventoryItem', item.id, 'update');
-    onItemUpdated(item.id, { image: '', _dirty: true, _operation: 'update' });
-  };
 
   const handleDelete = async () => {
     if (isDeleting) return;
@@ -878,35 +1153,21 @@ const MenuItemCard = ({
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => onEdit(item)}
                 >
-                  <Upload className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={handleRemoveImage}
-                >
-                  <X className="h-4 w-4" />
+                  <Pencil className="h-4 w-4" />
                 </Button>
               </div>
             </div>
           ) : (
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => onEdit(item)}
               className="flex flex-col items-center gap-2 text-muted-foreground hover:text-foreground"
             >
               <Upload className="h-8 w-8" />
               <span className="text-xs">Add Image</span>
             </button>
           )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            className="hidden"
-          />
         </div>
         <p className="mb-4 text-xs text-muted-foreground">
           Recommended image size: 1200 x 800 px, JPG or PNG under 2 MB.
@@ -927,6 +1188,15 @@ const MenuItemCard = ({
         </div>
 
         <Separator className="my-3" />
+        <Button
+          variant="outline"
+          size="sm"
+          className="mb-2 w-full"
+          onClick={() => onEdit(item)}
+        >
+          <Pencil className="mr-2 h-4 w-4" />
+          Edit item
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -2370,6 +2640,7 @@ export default function MenuBuilderPage() {
   const [availableItems, setAvailableItems] = useState<InventoryItem[]>([]);
   const [isLoadingMenuItems, setIsLoadingMenuItems] = useState(false);
   const [optionsItem, setOptionsItem] = useState<InventoryItem | null>(null);
+  const [editingMenuItem, setEditingMenuItem] = useState<InventoryItem | null>(null);
   const visibleMenuItems = useMemo(
     () => menuItems.filter((item) => isMenuItemVisible(item)),
     [menuItems]
@@ -2562,6 +2833,15 @@ export default function MenuBuilderPage() {
     setAvailableItems((currentItems) => currentItems.filter((currentItem) => currentItem.id !== item.id));
   };
 
+  const handleMenuItemSaved = (item: InventoryItem) => {
+    setMenuItems((currentItems) => currentItems.map((currentItem) => (
+      currentItem.id === item.id ? { ...currentItem, ...item, onMenu: true } : currentItem
+    )));
+    setAvailableItems((currentItems) => currentItems.map((currentItem) => (
+      currentItem.id === item.id ? { ...currentItem, ...item } : currentItem
+    )));
+  };
+
   const handleMenuItemVisibilityChange = async (item: InventoryItem, isVisible: boolean) => {
     const previousVisible = isMenuItemVisible(item);
 
@@ -2742,6 +3022,7 @@ export default function MenuBuilderPage() {
 	                      key={item.id}
 	                      item={item}
 	                      onItemUpdated={handleMenuItemUpdated}
+	                      onEdit={setEditingMenuItem}
 	                      onVisibilityChange={handleMenuItemVisibilityChange}
 	                      onManageOptions={setOptionsItem}
 	                      onDelete={handleMenuItemDelete}
@@ -2818,6 +3099,17 @@ export default function MenuBuilderPage() {
 	        onOpenChange={(open) => {
 	          if (!open) setOptionsItem(null);
 	        }}
+	      />
+
+	      <EditMenuItemModal
+	        item={editingMenuItem}
+	        activeBranchId={activeBranchId}
+	        recipeItems={[...menuItems, ...availableItems]}
+	        open={!!editingMenuItem}
+	        onOpenChange={(open) => {
+	          if (!open) setEditingMenuItem(null);
+	        }}
+	        onItemSaved={handleMenuItemSaved}
 	      />
 	      
 	      <ShareMenuModal
