@@ -315,14 +315,24 @@ class TakeOrderStatusManagementTests(TestCase):
     def test_cancelled_order_stays_accessible_and_can_be_reopened(self):
         order = self._create_order(status='Pending')
 
-        cancel_response = self.client.patch(
+        missing_reason_response = self.client.patch(
             f'/api/orders/take-orders/{order.id}/update_status/',
             {'status': 'Cancelled'},
             format='json',
         )
 
+        self.assertEqual(missing_reason_response.status_code, 400)
+        self.assertIn('cancellation_reason', missing_reason_response.data)
+
+        cancel_response = self.client.patch(
+            f'/api/orders/take-orders/{order.id}/update_status/',
+            {'status': 'Cancelled', 'cancellation_reason': 'Customer changed their mind'},
+            format='json',
+        )
+
         self.assertEqual(cancel_response.status_code, 200)
         self.assertEqual(cancel_response.data['status'], 'Cancelled')
+        self.assertEqual(cancel_response.data['cancellation_reason'], 'Customer changed their mind')
 
         list_response = self.client.get(
             '/api/orders/take-orders/',
@@ -342,6 +352,7 @@ class TakeOrderStatusManagementTests(TestCase):
 
         self.assertEqual(reopen_response.status_code, 200)
         self.assertEqual(reopen_response.data['status'], 'Pending')
+        self.assertFalse(reopen_response.data['cancellation_reason'])
 
     def test_completed_order_records_cashier_name(self):
         order = self._create_order(status='Ready')

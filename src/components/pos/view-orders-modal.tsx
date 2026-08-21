@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/auth-fetch';
 import {
   buildKitchenInventoryLookup,
@@ -133,6 +134,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const { toast } = useToast();
   const [selectedOrder, setSelectedOrder] = useState<TakeOrder | null>(null);
   const [orderPendingCancellation, setOrderPendingCancellation] = useState<TakeOrder | null>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
   const [showTakeOrderModal, setShowTakeOrderModal] = useState(false);
   const [activeFilter, setActiveFilter] = useState<OrderFilter>('attention');
   const [billOrder, setBillOrder] = useState<TakeOrder | null>(null);
@@ -497,9 +499,18 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     return requestedStatus;
   };
 
-  const handleUpdateStatus = async (orderId: string, newStatus: string, order?: TakeOrder): Promise<boolean> => {
+  const handleUpdateStatus = async (orderId: string, newStatus: string, order?: TakeOrder, reason?: string): Promise<boolean> => {
     try {
       const resolvedStatus = resolveStatusForOrder(order || allOrders.find((candidate) => candidate.id === orderId), newStatus);
+      const trimmedReason = String(reason || '').trim();
+      if (resolvedStatus === 'Cancelled' && !trimmedReason) {
+        toast({
+          variant: 'destructive',
+          title: 'Reason required',
+          description: 'Please enter why this order is being cancelled.',
+        });
+        return false;
+      }
       console.log(`[ViewOrdersModal] Updating order ${orderId} to status: ${resolvedStatus}`);
 
       await authFetch.fetch(
@@ -509,12 +520,17 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ status: resolvedStatus })
+          body: JSON.stringify({
+            status: resolvedStatus,
+            ...(resolvedStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
+          })
         }
       );
 
       await db.takeOrders.update(orderId, {
         status: resolvedStatus as TakeOrder['status'],
+        cancellationReason: resolvedStatus === 'Cancelled' ? trimmedReason : '',
+        cancellation_reason: resolvedStatus === 'Cancelled' ? trimmedReason : '',
         updatedAt: new Date().toISOString(),
       });
       console.log(`[ViewOrdersModal] Order ${orderId} updated to ${resolvedStatus}`);
@@ -645,10 +661,16 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     };
     const confirmCancellation = async () => {
       if (!orderPendingCancellation) return;
-      const updated = await handleUpdateStatus(orderPendingCancellation.id, 'Cancelled', orderPendingCancellation);
+      const updated = await handleUpdateStatus(
+        orderPendingCancellation.id,
+        'Cancelled',
+        orderPendingCancellation,
+        cancellationReason
+      );
       if (!updated) return;
       setActiveFilter('cancelled');
       setOrderPendingCancellation(null);
+      setCancellationReason('');
       setSelectedOrder(null);
     };
     const hasKitchenItems = hasKitchenPrepItems(order);
@@ -790,6 +812,13 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 <p className="text-sm text-muted-foreground">{order.specialInstructions}</p>
               </div>
             )}
+
+            {order.status === 'Cancelled' && (order.cancellationReason || order.cancellation_reason) && (
+              <div className="rounded border-l-4 border-destructive bg-destructive/10 p-4">
+                <p className="mb-2 text-xs font-bold uppercase text-foreground">Cancellation Reason</p>
+                <p className="text-sm text-muted-foreground">{order.cancellationReason || order.cancellation_reason}</p>
+              </div>
+            )}
           </div>
 
           <DialogFooter className="shrink-0 gap-2 border-t bg-background p-3 sm:justify-between sm:p-4">
@@ -868,7 +897,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
 
         <AlertDialog
           open={Boolean(orderPendingCancellation)}
-          onOpenChange={(open) => !open && setOrderPendingCancellation(null)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setOrderPendingCancellation(null);
+              setCancellationReason('');
+            }
+          }}
         >
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -877,10 +911,23 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 This moves order #{orderPendingCancellation?.orderNumber} to Cancelled. The order will stay available under Cancelled and All Orders, where it can be reopened later.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="order-cancellation-reason">
+                Cancellation reason
+              </label>
+              <Textarea
+                id="order-cancellation-reason"
+                value={cancellationReason}
+                onChange={(event) => setCancellationReason(event.target.value)}
+                placeholder="Example: customer changed their mind, duplicate order, item unavailable..."
+                className="min-h-24"
+              />
+            </div>
             <AlertDialogFooter>
               <AlertDialogCancel>Keep Order</AlertDialogCancel>
               <AlertDialogAction
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={!cancellationReason.trim()}
                 onClick={() => void confirmCancellation()}
               >
                 Cancel Order

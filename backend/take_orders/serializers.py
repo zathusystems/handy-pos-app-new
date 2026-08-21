@@ -100,7 +100,7 @@ class TakeOrderSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'status', 'order_type', 'order_type_display',
             'customer',
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
-            'special_instructions', 'items', 'created_by', 'created_by_name',
+            'special_instructions', 'cancellation_reason', 'items', 'created_by', 'created_by_name',
             'completed_by', 'completed_by_name',
             'created_at', 'updated_at', 'completed_at'
         ]
@@ -144,7 +144,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'status', 'order_type', 'order_type_display',
             'customer',
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
-            'special_instructions', 'items', 'items_response',
+            'special_instructions', 'cancellation_reason', 'items', 'items_response',
             'created_by', 'created_by_name', 'completed_by', 'completed_by_name',
             'created_at', 'updated_at', 'completed_at'
         ]
@@ -243,6 +243,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'customer_notes': instance.customer_notes,
             'table_number': instance.table_number,
             'special_instructions': instance.special_instructions,
+            'cancellation_reason': instance.cancellation_reason,
             'items': TakeOrderItemSerializer(instance.items.all(), many=True).data,
             'created_by': str(instance.created_by.id) if instance.created_by else None,
             'created_by_name': created_by_name,

@@ -104,6 +104,7 @@ def _public_take_order_payload(take_order):
         'currency': currency,
         'order_number': take_order.order_number,
         'status': take_order.status,
+        'cancellation_reason': take_order.cancellation_reason,
         'order_type': take_order.order_type,
         'total': float(total),
         'items': [
@@ -201,6 +202,15 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
             )
         
         resolved_status = _resolve_take_order_status(take_order, new_status)
+        cancellation_reason = str(
+            request.data.get('cancellation_reason') or request.data.get('cancellationReason') or ''
+        ).strip()
+        if resolved_status == 'Cancelled' and not cancellation_reason:
+            return Response(
+                {'cancellation_reason': 'Cancellation reason is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         if resolved_status in {'Sent to Kitchen', 'Preparing', 'Ready'}:
             order_lines = [
                 {
@@ -220,6 +230,10 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
                 return Response(_django_validation_payload(exc), status=status.HTTP_400_BAD_REQUEST)
 
         take_order.status = resolved_status
+        if resolved_status == 'Cancelled':
+            take_order.cancellation_reason = cancellation_reason
+        elif take_order.cancellation_reason and resolved_status != 'Cancelled':
+            take_order.cancellation_reason = ''
         
         if resolved_status == 'Completed':
             take_order.completed_at = timezone.now()

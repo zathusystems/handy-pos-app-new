@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -73,6 +74,8 @@ interface TakeOrder {
   customer_notes?: string;
   table_number?: string;
   special_instructions?: string;
+  cancellation_reason?: string;
+  cancellationReason?: string;
   items: TakeOrderItem[];
   created_at: string;
   updated_at: string;
@@ -202,6 +205,8 @@ export default function KitchenPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<TakeOrder | null>(null);
+  const [orderPendingCancellation, setOrderPendingCancellation] = useState<TakeOrder | null>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [activeMobileLane, setActiveMobileLane] = useState<KitchenLaneKey>('New');
 
@@ -258,8 +263,17 @@ export default function KitchenPage() {
   }, [branchId, autoRefresh]);
 
   // Update order status
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  const updateOrderStatus = async (orderId: string, newStatus: string, reason?: string) => {
+    const trimmedReason = String(reason || '').trim();
     try {
+      if (newStatus === 'Cancelled' && !trimmedReason) {
+        toast({
+          variant: 'destructive',
+          title: 'Reason required',
+          description: 'Please enter why this order is being cancelled.',
+        });
+        return;
+      }
       await authFetch.fetch(
         `/orders/take-orders/${orderId}/update_status/`,
         {
@@ -267,7 +281,10 @@ export default function KitchenPage() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ status: newStatus }),
+          body: JSON.stringify({
+            status: newStatus,
+            ...(newStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
+          }),
         }
       );
 
@@ -290,6 +307,10 @@ export default function KitchenPage() {
               _dirty: true,
               _operation: 'update',
               status: newStatus,
+              ...(newStatus === 'Cancelled' ? {
+                cancellationReason: trimmedReason,
+                cancellation_reason: trimmedReason,
+              } : {}),
             });
 
             const { syncService } = await import('@/lib/services/sync-service');
@@ -302,7 +323,10 @@ export default function KitchenPage() {
                 headers: {
                   'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ status: newStatus }),
+                body: JSON.stringify({
+                  status: newStatus,
+                  ...(newStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
+                }),
               }
             );
 
@@ -329,6 +353,19 @@ export default function KitchenPage() {
         });
       }
     }
+  };
+
+  const requestCancelOrder = (order: TakeOrder) => {
+    setOrderPendingCancellation(order);
+    setCancellationReason('');
+  };
+
+  const confirmCancelOrder = async () => {
+    if (!orderPendingCancellation) return;
+    await updateOrderStatus(orderPendingCancellation.id, 'Cancelled', cancellationReason);
+    setOrderPendingCancellation(null);
+    setCancellationReason('');
+    setSelectedOrder(null);
   };
 
   // Group orders by status (exclude Pending orders, show Confirmed as "New Orders")
@@ -540,6 +577,7 @@ export default function KitchenPage() {
                       order={order}
                       inventoryLookup={kitchenInventoryLookup}
                       onStatusChange={updateOrderStatus}
+                      onCancel={requestCancelOrder}
                       onViewDetails={setSelectedOrder}
                     />
                   ))
@@ -558,7 +596,46 @@ export default function KitchenPage() {
           }
         }}
         onStatusChange={updateOrderStatus}
+        onCancel={requestCancelOrder}
       />
+      <Dialog
+        open={Boolean(orderPendingCancellation)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setOrderPendingCancellation(null);
+            setCancellationReason('');
+          }
+        }}
+      >
+        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancel order #{orderPendingCancellation?.order_number}</DialogTitle>
+            <DialogDescription>
+              Add a reason so the team can review why this order was cancelled.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="kitchen-cancellation-reason">
+              Cancellation reason
+            </label>
+            <Textarea
+              id="kitchen-cancellation-reason"
+              value={cancellationReason}
+              onChange={(event) => setCancellationReason(event.target.value)}
+              placeholder="Example: customer changed their mind, duplicate order, item unavailable..."
+              className="min-h-24"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOrderPendingCancellation(null)}>
+              Keep Order
+            </Button>
+            <Button variant="destructive" disabled={!cancellationReason.trim()} onClick={() => void confirmCancelOrder()}>
+              Cancel Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -606,11 +683,13 @@ function OrderCard({
   order,
   inventoryLookup,
   onStatusChange,
+  onCancel,
   onViewDetails,
 }: {
   order: TakeOrder;
   inventoryLookup: KitchenInventoryLookup;
   onStatusChange: (orderId: string, status: string) => void;
+  onCancel: (order: TakeOrder) => void;
   onViewDetails: (order: TakeOrder) => void;
 }) {
   const nextStatus = getNextKitchenStatus(order.status);
@@ -705,7 +784,7 @@ function OrderCard({
             <Button
               variant="outline"
               className="gap-2"
-              onClick={() => onStatusChange(order.id, 'Cancelled')}
+              onClick={() => onCancel(order)}
             >
               <XCircle className="h-4 w-4" />
               Cancel
@@ -722,11 +801,13 @@ function OrderDetailsDialog({
   inventoryLookup,
   onOpenChange,
   onStatusChange,
+  onCancel,
 }: {
   order: TakeOrder | null;
   inventoryLookup: KitchenInventoryLookup;
   onOpenChange: (open: boolean) => void;
   onStatusChange: (orderId: string, status: string) => void;
+  onCancel: (order: TakeOrder) => void;
 }) {
   if (!order) {
     return <Dialog open={false} onOpenChange={onOpenChange} />;
@@ -889,6 +970,12 @@ function OrderDetailsDialog({
               <p className="mt-1 text-muted-foreground">{order.customer_notes}</p>
             </div>
           )}
+          {order.status === 'Cancelled' && (order.cancellation_reason || order.cancellationReason) && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
+              <p className="font-semibold">Cancellation Reason</p>
+              <p className="mt-1 text-muted-foreground">{order.cancellation_reason || order.cancellationReason}</p>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="shrink-0 gap-2 border-t p-3 sm:justify-between sm:p-4">
@@ -910,7 +997,7 @@ function OrderDetailsDialog({
               </Button>
             )}
             {order.status !== 'Completed' && (
-              <Button variant="outline" className="gap-2" onClick={() => onStatusChange(order.id, 'Cancelled')}>
+              <Button variant="outline" className="gap-2" onClick={() => onCancel(order)}>
                 <XCircle className="h-4 w-4" />
                 Cancel
               </Button>

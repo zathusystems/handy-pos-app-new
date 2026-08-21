@@ -46,6 +46,7 @@ class TakeOrder(models.Model):
     
     # Order details
     special_instructions = models.TextField(blank=True, null=True)
+    cancellation_reason = models.TextField(blank=True, null=True)
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)

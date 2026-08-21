@@ -46,6 +46,8 @@ export const markTakeOrdersCompleted = async (
     try {
       await db.takeOrders.update(takeOrderId, {
         status: 'Completed',
+        cancellationReason: '',
+        cancellation_reason: '',
         completedAt,
         updatedAt: completedAt,
         _dirty: !backendUpdated,

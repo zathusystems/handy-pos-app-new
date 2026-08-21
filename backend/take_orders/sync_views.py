@@ -16,6 +16,7 @@ TAKE_ORDER_SYNC_ALIASES = {
     'customerNotes': 'customer_notes',
     'tableNumber': 'table_number',
     'specialInstructions': 'special_instructions',
+    'cancellationReason': 'cancellation_reason',
     'createdAt': 'created_at',
     'updatedAt': 'updated_at',
     'completedAt': 'completed_at',

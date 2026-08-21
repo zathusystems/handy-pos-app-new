@@ -1521,6 +1521,7 @@ class SyncService {
       ['customerEmail', 'customer_email'],
       ['customerAddress', 'customer_address'],
       ['customerNotes', 'customer_notes'],
+      ['cancellationReason', 'cancellation_reason'],
       ['buyerName', 'buyer_name'],
       ['buyerTin', 'buyer_tin'],
       ['laybuyDeposit', 'laybuy_deposit'],

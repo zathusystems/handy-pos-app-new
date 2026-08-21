@@ -377,6 +377,8 @@ export interface TakeOrder {
     customerNotes?: string;
     tableNumber?: string;
     specialInstructions?: string;
+    cancellationReason?: string;
+    cancellation_reason?: string;
     items: TakeOrderItem[];
     createdBy?: string;
     createdByName?: string;
