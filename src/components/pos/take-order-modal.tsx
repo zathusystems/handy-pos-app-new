@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type InventoryItem, type TakeOrder } from '@/lib/db';
 import {
@@ -45,6 +45,12 @@ type OrderCartItem = {
     quantity: number;
     price: number;
     notes?: string;
+    recipe?: InventoryItem['recipe'];
+    isPreparedMenuItem?: boolean;
+    is_prepared_menu_item?: boolean;
+    menuItemId?: string;
+    menu_item_id?: string;
+    menuEntryId?: string;
     isSoldInPortions?: boolean;
     portionName?: string;
     portionsPerUnit?: number;
@@ -78,13 +84,96 @@ const getBranchIdCandidates = (branchId?: string | number | null): string[] => {
     return Array.from(candidates).filter(Boolean);
 };
 
+const getBackendBranchId = (branchId?: string | number | null): number | null => {
+    const normalized = String(branchId ?? '').trim();
+    if (!normalized) return null;
+
+    const branchIdMatch = normalized.match(/\d+/);
+    const parsed = branchIdMatch ? Number.parseInt(branchIdMatch[0], 10) : Number.parseInt(normalized, 10);
+
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+const firstNonEmpty = (...values: Array<unknown>): string | undefined => {
+    for (const value of values) {
+        const normalized = String(value ?? '').trim();
+        if (normalized) return normalized;
+    }
+    return undefined;
+};
+
+const toNumber = (...values: Array<unknown>): number | undefined => {
+    for (const value of values) {
+        if (value === null || value === undefined || value === '') continue;
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
+};
+
+const getMenuEntryInventoryId = (entry: any): string => String(
+    entry?.inventory_item ??
+    entry?.inventory_item_id ??
+    entry?.item_details?.id ??
+    ''
+).trim();
+
+const getMenuEntryId = (entry: any): string => String(entry?.id ?? entry?.menu_id ?? '').trim();
+
+const buildTakeOrderMenuItem = (
+    entry: any,
+    localItem: InventoryItem | undefined,
+    branchId: string
+): InventoryItem | null => {
+    const details = entry?.item_details || {};
+    const prepared = Boolean(entry?.is_prepared_item ?? entry?.isPreparedMenuItem) || !getMenuEntryInventoryId(entry);
+    const menuEntryId = getMenuEntryId(entry);
+    const id = prepared
+        ? firstNonEmpty(menuEntryId, localItem?.id)
+        : firstNonEmpty(localItem?.id, details.id, entry?.inventory_item, entry?.inventory_item_id);
+
+    if (!id) return null;
+
+    const recipe = Array.isArray(prepared ? entry?.recipe : details.recipe)
+        ? (prepared ? entry.recipe : details.recipe)
+        : localItem?.recipe;
+
+    return {
+        ...(localItem || {}),
+        id,
+        branchId: localItem?.branchId || branchId,
+        name: firstNonEmpty(prepared ? entry?.name : undefined, details.name, localItem?.name, entry?.item_name) || 'Unnamed Item',
+        category: firstNonEmpty(prepared ? entry?.category : undefined, details.category, localItem?.category) || 'Uncategorized',
+        itemType: 'sellable',
+        price: toNumber(prepared ? entry?.price : undefined, details.price, localItem?.price) ?? 0,
+        recipe,
+        description: firstNonEmpty(entry?.description, localItem?.description),
+        isPreparedMenuItem: prepared,
+        is_prepared_menu_item: prepared,
+        menuItemId: menuEntryId || localItem?.menuItemId,
+        menu_item_id: menuEntryId || localItem?.menu_item_id,
+        menuEntryId: firstNonEmpty(entry?.id, localItem?.menuEntryId),
+        onMenu: true,
+        menuIsVisible: entry && Object.prototype.hasOwnProperty.call(entry, 'is_visible')
+            ? Boolean(entry.is_visible)
+            : localItem?.menuIsVisible !== false,
+        image: prepared ? firstNonEmpty(entry?.image, localItem?.image) : firstNonEmpty(localItem?.image, details.image),
+        isSoldInPortions: Boolean(details.is_sold_in_portions ?? localItem?.isSoldInPortions),
+        portionName: firstNonEmpty(details.portion_name, localItem?.portionName),
+        portionsPerUnit: toNumber(details.portions_per_unit, localItem?.portionsPerUnit),
+        portionPrice: toNumber(details.portion_price, localItem?.portionPrice),
+        unitType: firstNonEmpty(details.unit_type, localItem?.unitType),
+    };
+};
+
 export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }: TakeOrderModalProps) {
     const { format: formatCurrency } = useCurrency();
     const [cart, setCart] = useState<OrderCartItem[]>([]);
     const [selectedPortionItem, setSelectedPortionItem] = useState<InventoryItem | null>(null);
+    const [backendMenuItems, setBackendMenuItems] = useState<InventoryItem[]>([]);
     const kitchenEnabled = isKitchenBusinessType(businessType);
     
-    const menuItems = useLiveQuery(
+    const localMenuItems = useLiveQuery(
         () => {
             if (!branchId) return [];
             const branchCandidates = getBranchIdCandidates(branchId);
@@ -98,6 +187,73 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
         },
         [branchId]
     ) || [];
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const fetchMenuEntries = async () => {
+            if (!isOpen || !branchId) {
+                setBackendMenuItems([]);
+                return;
+            }
+
+            const backendBranchId = getBackendBranchId(branchId);
+            if (backendBranchId === null) {
+                setBackendMenuItems([]);
+                return;
+            }
+
+            try {
+                const menuData = await authFetch.fetch<any>(`/digital-menu/menu/by_branch/?branch_id=${backendBranchId}`);
+                const menuEntries = Array.isArray(menuData)
+                    ? menuData
+                    : Array.isArray(menuData?.results)
+                        ? menuData.results
+                        : [];
+                const localById = new Map(localMenuItems.map((item) => [String(item.id), item]));
+                const normalizedItems = menuEntries
+                    .map((entry: any) => buildTakeOrderMenuItem(
+                        entry,
+                        localById.get(getMenuEntryInventoryId(entry)),
+                        String(branchId)
+                    ))
+                    .filter((item: InventoryItem | null): item is InventoryItem => Boolean(item))
+                    .filter((item: InventoryItem) => item.menuIsVisible !== false);
+
+                if (!cancelled) {
+                    setBackendMenuItems(normalizedItems);
+                }
+            } catch (error) {
+                console.warn('[TakeOrderModal] Could not load backend menu entries:', error);
+                if (!cancelled) {
+                    setBackendMenuItems([]);
+                }
+            }
+        };
+
+        fetchMenuEntries();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [branchId, isOpen, localMenuItems]);
+
+    const menuItems = useMemo(() => {
+        const mergedByKey = new Map<string, InventoryItem>();
+
+        localMenuItems
+            .filter((item) => item.menuIsVisible !== false)
+            .forEach((item) => {
+                mergedByKey.set(String(item.id), item);
+            });
+
+        backendMenuItems.forEach((item) => {
+            const key = String(item.isPreparedMenuItem || item.is_prepared_menu_item ? item.menuEntryId || item.id : item.id);
+            mergedByKey.set(key, item);
+        });
+
+        return Array.from(mergedByKey.values());
+    }, [backendMenuItems, localMenuItems]);
 
     const categories = useMemo(() => {
         const uniqueCategories = [...new Set(menuItems.map(item => item.category || 'Uncategorized'))];
@@ -145,6 +301,12 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
                 quantity,
                 price: unitPrice,
                 notes: '',
+                recipe: item.recipe,
+                isPreparedMenuItem: item.isPreparedMenuItem,
+                is_prepared_menu_item: item.is_prepared_menu_item,
+                menuItemId: item.menuItemId,
+                menu_item_id: item.menu_item_id,
+                menuEntryId: item.menuEntryId,
                 isSoldInPortions: isPortionSale,
                 portionName: item.portionName,
                 portionsPerUnit: item.portionsPerUnit,
@@ -238,22 +400,29 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
                 customer_name: customerName || undefined,
                 customer_phone: customerPhone || undefined,
                 customer_notes: customerNotes || undefined,
-                items: cart.map(item => ({
-                    inventory_item_id: item.id,
-                    name: item.name,
-                    quantity: item.quantity,
-                    price: item.price,
-                    notes: item.notes || undefined,
-                    selected_options: item.isSoldInPortions ? [{
-                        type: 'portion_sale',
-                        name: item.portionDisplay || item.portionName || 'Portion',
-                        group_name: 'Portion',
-                        quantity: 1,
-                        price_delta: 0,
-                        portion_name: item.portionName,
-                        portions_per_unit: item.portionsPerUnit,
-                    }] : [],
-                })),
+                items: cart.map(item => {
+                    const isPreparedMenuItem = Boolean(item.isPreparedMenuItem || item.is_prepared_menu_item);
+                    const menuItemId = item.menuItemId || item.menu_item_id || item.menuEntryId || (isPreparedMenuItem ? item.id : undefined);
+                    return {
+                        inventory_item_id: isPreparedMenuItem ? undefined : item.id,
+                        menu_item_id: menuItemId,
+                        is_prepared_menu_item: isPreparedMenuItem,
+                        name: item.name,
+                        quantity: item.quantity,
+                        price: item.price,
+                        recipe: Array.isArray(item.recipe) ? item.recipe : [],
+                        notes: item.notes || undefined,
+                        selected_options: item.isSoldInPortions ? [{
+                            type: 'portion_sale',
+                            name: item.portionDisplay || item.portionName || 'Portion',
+                            group_name: 'Portion',
+                            quantity: 1,
+                            price_delta: 0,
+                            portion_name: item.portionName,
+                            portions_per_unit: item.portionsPerUnit,
+                        }] : [],
+                    };
+                }),
             };
 
             // Send to backend API
@@ -285,10 +454,13 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
                 customerNotes: createdOrder.customer_notes,
                 items: cart.map(item => ({
                     id: item.id,
-                    inventoryItemId: item.id,
+                    inventoryItemId: item.isPreparedMenuItem || item.is_prepared_menu_item ? undefined : item.id,
+                    menuItemId: item.menuItemId || item.menu_item_id || item.menuEntryId || ((item.isPreparedMenuItem || item.is_prepared_menu_item) ? item.id : undefined),
                     name: item.name,
                     quantity: item.quantity,
                     price: item.price,
+                    recipe: Array.isArray(item.recipe) ? item.recipe : [],
+                    isPreparedMenuItem: Boolean(item.isPreparedMenuItem || item.is_prepared_menu_item),
                     notes: item.notes,
                     selectedOptions: item.isSoldInPortions ? [{
                         type: 'portion_sale',
