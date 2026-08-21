@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from business.models import Branch, Business
-from digitalmenu.models import Menu, MenuOptionGroup
+from digitalmenu.models import Menu, MenuOption, MenuOptionGroup
 from staff.models import Staff, StaffRole
 
 
@@ -65,6 +65,30 @@ class MenuOptionManagementTests(TestCase):
         rows = response.data if isinstance(response.data, list) else response.data['results']
         self.assertEqual(len(rows), 1)
         self.assertEqual(str(rows[0]['id']), str(self.menu.id))
+
+    def test_active_staff_can_completely_delete_menu_item(self):
+        group = MenuOptionGroup.objects.create(
+            menu=self.menu,
+            name='Choose a side',
+            group_type='side',
+            max_select=1,
+        )
+        MenuOption.objects.create(group=group, name='Chips')
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.post(
+            '/api/digital-menu/menu/delete_item/',
+            {
+                'branch_id': self.branch.id,
+                'menu_item_id': str(self.menu.id),
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(Menu.objects.filter(id=self.menu.id).exists())
+        self.assertFalse(MenuOptionGroup.objects.filter(id=group.id).exists())
+        self.assertEqual(response.data['deleted'], True)
 
     def test_active_staff_can_create_menu_option_group(self):
         self.client.force_authenticate(user=self.staff_user)

@@ -257,6 +257,54 @@ class MenuViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=False, methods=['post'])
+    def delete_item(self, request):
+        """Completely delete a menu entry, including its option groups and choices."""
+        try:
+            branch_id = request.data.get('branch_id')
+            inventory_item_id = request.data.get('inventory_item_id')
+            menu_item_id = request.data.get('menu_item_id')
+
+            if not branch_id or (not inventory_item_id and not menu_item_id):
+                return Response(
+                    {'error': 'branch_id and inventory_item_id or menu_item_id are required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            lookup = {
+                'branch_id': branch_id,
+                'business_id__in': get_accessible_business_ids(request.user),
+            }
+            if menu_item_id:
+                lookup['id'] = menu_item_id
+            else:
+                lookup['inventory_item_id'] = inventory_item_id
+
+            menu_item = Menu.objects.get(**lookup)
+            deleted_name = menu_item.display_name
+            menu_item.delete()
+
+            return Response(
+                {
+                    'deleted': True,
+                    'name': deleted_name,
+                    'menu_item_id': str(menu_item_id or ''),
+                    'inventory_item_id': str(inventory_item_id or ''),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Menu.DoesNotExist:
+            return Response(
+                {'error': 'Menu item not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
 
 class MenuOptionGroupViewSet(viewsets.ModelViewSet):
     """Manage option/side groups for menu items."""

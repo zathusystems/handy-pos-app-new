@@ -813,13 +813,16 @@ const MenuItemCard = ({
   onItemUpdated,
   onVisibilityChange,
   onManageOptions,
+  onDelete,
 }: {
   item: InventoryItem;
   onItemUpdated: (itemId: string, updates: Partial<InventoryItem>) => void;
   onVisibilityChange: (item: InventoryItem, isVisible: boolean) => void;
   onManageOptions: (item: InventoryItem) => void;
+  onDelete: (item: InventoryItem) => void;
 }) => {
   const [isEditingImage, setIsEditingImage] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const imageSrc = resolveMenuItemImageSrc(item.image);
   const visible = isMenuItemVisible(item);
@@ -844,6 +847,19 @@ const MenuItemCard = ({
     await db.inventory.update(item.id, { image: '', _dirty: true, _operation: 'update' });
     await syncService.markAsDirty('InventoryItem', item.id, 'update');
     onItemUpdated(item.id, { image: '', _dirty: true, _operation: 'update' });
+  };
+
+  const handleDelete = async () => {
+    if (isDeleting) return;
+    const confirmed = window.confirm(`Delete ${item.name} from the menu completely? This also removes its options and sides.`);
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      await onDelete(item);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -932,6 +948,20 @@ const MenuItemCard = ({
             aria-label={`Show ${item.name} on customer menu`}
           />
         </div>
+        <Button
+          variant="destructive"
+          size="sm"
+          className="mt-3 w-full"
+          onClick={handleDelete}
+          disabled={isDeleting}
+        >
+          {isDeleting ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="mr-2 h-4 w-4" />
+          )}
+          Delete from menu
+        </Button>
       </CardContent>
     </Card>
   );
@@ -2582,6 +2612,53 @@ export default function MenuBuilderPage() {
     }
   };
 
+  const handleMenuItemDelete = async (item: InventoryItem) => {
+    try {
+      if (!activeBranchId) {
+        throw new Error('No active branch selected');
+      }
+
+      const branchIdInt = getBackendBranchId(activeBranchId);
+      if (branchIdInt === null) {
+        throw new Error('Invalid branch selected');
+      }
+
+      const isPrepared = Boolean(item.isPreparedMenuItem || item.is_prepared_menu_item);
+      const menuItemId = item.menuEntryId || item.menuItemId || item.menu_item_id;
+
+      await authFetch.fetch('/digital-menu/menu/delete_item/', {
+        method: 'POST',
+        body: JSON.stringify({
+          branch_id: branchIdInt,
+          inventory_item_id: isPrepared ? undefined : item.id,
+          menu_item_id: menuItemId,
+        }),
+      });
+
+      setMenuItems((currentItems) => currentItems.filter((currentItem) => currentItem.id !== item.id));
+
+      if (!isPrepared) {
+        await db.inventory.update(item.id, { onMenu: false, menuIsVisible: false });
+        setAvailableItems((currentItems) => {
+          if (currentItems.some((currentItem) => currentItem.id === item.id)) return currentItems;
+          return [...currentItems, { ...item, onMenu: false, menuIsVisible: false }];
+        });
+      }
+
+      toast({
+        title: 'Menu item deleted',
+        description: `${item.name} was removed from the menu.`,
+      });
+    } catch (error) {
+      console.error('[Menu] Error deleting menu item:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Could not delete menu item',
+        description: error instanceof Error ? error.message : 'Failed to delete menu item',
+      });
+    }
+  };
+
   if (isLoadingMenuAccess) {
     return (
         <div className="flex h-full items-center justify-center">
@@ -2667,6 +2744,7 @@ export default function MenuBuilderPage() {
 	                      onItemUpdated={handleMenuItemUpdated}
 	                      onVisibilityChange={handleMenuItemVisibilityChange}
 	                      onManageOptions={setOptionsItem}
+	                      onDelete={handleMenuItemDelete}
 	                    />
                   ))}
                 </div>
