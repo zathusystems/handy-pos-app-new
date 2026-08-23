@@ -1344,6 +1344,17 @@ const AddToMenuModal = ({
 
       const preparedItem = buildMenuInventoryItem(response, undefined, activeBranchId);
       if (preparedItem) {
+        if (!preparedItem.isPreparedMenuItem) {
+          await db.inventory.put({
+            ...preparedItem,
+            branchId: activeBranchId,
+            itemType: 'sellable',
+            onMenu: true,
+            menuIsVisible: true,
+            _dirty: false,
+            _synced_at: new Date().toISOString(),
+          });
+        }
         onItemAdded(preparedItem);
       }
       resetPreparedForm();
@@ -2717,6 +2728,7 @@ export default function MenuBuilderPage() {
         // Split items into menu and available
         const onMenu: InventoryItem[] = [];
         const notOnMenu: InventoryItem[] = [];
+        const backendInventoryItemsToCache: InventoryItem[] = [];
         
         const localItemIds = new Set<string>();
         allItems.forEach(item => {
@@ -2733,13 +2745,29 @@ export default function MenuBuilderPage() {
         menuEntriesByItemId.forEach((entry, itemId) => {
           if (localItemIds.has(itemId)) return;
           const menuItem = buildMenuInventoryItem(entry, undefined, activeBranchId);
-          if (menuItem) onMenu.push(menuItem);
+          if (menuItem) {
+            onMenu.push(menuItem);
+            if (!menuItem.isPreparedMenuItem) {
+              backendInventoryItemsToCache.push({
+                ...menuItem,
+                branchId: activeBranchId,
+                itemType: 'sellable',
+                onMenu: true,
+                _dirty: false,
+                _synced_at: new Date().toISOString(),
+              });
+            }
+          }
         });
 
         preparedMenuEntries.forEach((entry) => {
           const menuItem = buildMenuInventoryItem(entry, undefined, activeBranchId);
           if (menuItem) onMenu.push(menuItem);
         });
+
+        if (backendInventoryItemsToCache.length > 0) {
+          await db.inventory.bulkPut(backendInventoryItemsToCache);
+        }
         
         console.log('[Menu] Split items - onMenu:', onMenu.length, 'available:', notOnMenu.length);
         setMenuItems(onMenu);

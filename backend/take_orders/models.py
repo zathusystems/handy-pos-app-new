@@ -69,6 +69,11 @@ class TakeOrder(models.Model):
     def __str__(self):
         return f"Take Order #{self.order_number} - {self.status} ({self.get_order_type_display()})"
 
+    @classmethod
+    def next_order_number_for_branch(cls, branch):
+        last_order = cls.objects.filter(branch=branch).order_by('-order_number').first()
+        return (last_order.order_number + 1) if last_order else 1
+
 
 class TakeOrderItem(models.Model):
     """Individual items in a take order"""

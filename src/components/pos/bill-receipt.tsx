@@ -50,6 +50,14 @@ type BillReceiptProps = {
   taxLabel?: string;
   cartTitle?: string;
   billNumber?: string;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  tableNumber?: string | null;
+  status?: string | null;
+  orderNotes?: string | null;
+  specialInstructions?: string | null;
+  createdAt?: string | null;
+  createdByName?: string | null;
   paperWidth?: '80mm' | '58mm';
   rootId?: string;
   receiptFontSize?: number;
@@ -136,6 +144,14 @@ export function BillReceipt({
   taxLabel = 'VAT Amount',
   cartTitle,
   billNumber,
+  customerName,
+  customerPhone,
+  tableNumber,
+  status,
+  orderNotes,
+  specialInstructions,
+  createdAt,
+  createdByName,
   paperWidth = '80mm',
   rootId = 'bill-printable-area',
   receiptFontSize,
@@ -149,14 +165,17 @@ export function BillReceipt({
 }: BillReceiptProps) {
   const offlineBusiness = useLiveQuery(async () => getOfflineBusinessProfile(), []);
   const resolvedBusiness = business || offlineBusiness || undefined;
-  const businessName = toTrimmedString(resolvedBusiness?.name) || 'Handy POS';
+  const businessName = (toTrimmedString(resolvedBusiness?.name) || 'Handy POS').toUpperCase();
   const businessPhone = toTrimmedString(resolvedBusiness?.phone);
   const businessEmail = toTrimmedString(resolvedBusiness?.email);
   const businessAddress = toTrimmedString(resolvedBusiness?.address);
   const printedAt = new Date();
   const resolvedBillNumber =
     toTrimmedString(billNumber) ||
-    `BILL-${format(printedAt, 'yyyyMMdd-HHmmss')}`;
+    `Bill ${format(printedAt, 'HHmmss')}`;
+  const orderCreatedAt = toTrimmedString(createdAt);
+  const orderDate = orderCreatedAt ? new Date(orderCreatedAt) : printedAt;
+  const validOrderDate = Number.isFinite(orderDate.getTime()) ? orderDate : printedAt;
   const resolvedPaperWidth = paperWidth === '58mm' ? '58mm' : '80mm';
   const isCompactPaper = resolvedPaperWidth === '58mm';
   const sheetWidth = resolvedPaperWidth;
@@ -196,7 +215,7 @@ export function BillReceipt({
           width: ${sheetWidth};
           box-sizing: border-box;
           margin: 0 auto;
-          padding: ${isCompactPaper ? 10 : 12}px ${horizontalPadding}px ${isCompactPaper ? 12 : 14}px;
+          padding: ${isCompactPaper ? 10 : 12}px ${horizontalPadding}px ${isCompactPaper ? 34 : 42}px;
           background: #fff;
           color: #000;
           font-family: "Courier New", "Liberation Mono", "Lucida Console", monospace;
@@ -259,7 +278,7 @@ export function BillReceipt({
           column-gap: 8px;
           align-items: start;
           min-height: ${Math.ceil(fontSize * lineHeight)}px;
-          white-space: nowrap;
+          white-space: normal;
         }
         .bill-row span:first-child {
           min-width: 0;
@@ -267,7 +286,9 @@ export function BillReceipt({
           text-overflow: clip;
         }
         .bill-row span:last-child {
+          min-width: 0;
           text-align: right;
+          overflow-wrap: anywhere;
         }
         .bill-item {
           margin-bottom: 5px;
@@ -302,9 +323,13 @@ export function BillReceipt({
           font-weight: 800;
         }
         .bill-footer {
-          margin-top: 8px;
+          margin-top: 10px;
+          margin-bottom: 10px;
           text-align: center;
           font-size: ${Math.max(9, fontSize - 2)}px;
+        }
+        .bill-bottom-space {
+          height: ${isCompactPaper ? 28 : 36}px;
         }
         @media print {
           @page {
@@ -320,7 +345,7 @@ export function BillReceipt({
           .bill-sheet {
             width: ${resolvedPaperWidth};
             margin: 0 auto !important;
-            padding: 2mm ${printPaddingXmm}mm ${isCompactPaper ? 3 : 4}mm !important;
+            padding: 2mm ${printPaddingXmm}mm ${isCompactPaper ? 10 : 12}mm !important;
           }
         }
       `}</style>
@@ -346,27 +371,73 @@ export function BillReceipt({
         )}
 
         <div className="bill-label">CUSTOMER BILL</div>
-        <div className="bill-note">PAYMENT PENDING - NOT A FISCAL RECEIPT</div>
+        <div className="bill-note">FOR PAYMENT - NOT A FISCAL RECEIPT</div>
 
         <div className="bill-rule">{rule}</div>
         <div className="bill-row">
-          <span>BILL NO</span>
+          <span>ORDER</span>
           <span>{resolvedBillNumber}</span>
         </div>
         {toTrimmedString(cartTitle) && (
           <div className="bill-row">
-            <span>CART</span>
+            <span>REFERENCE</span>
             <span>{toTrimmedString(cartTitle)}</span>
           </div>
         )}
+        {toTrimmedString(status) && (
+          <div className="bill-row">
+            <span>STATUS</span>
+            <span>{toTrimmedString(status)}</span>
+          </div>
+        )}
+        {toTrimmedString(tableNumber) && (
+          <div className="bill-row">
+            <span>ADDRESS / TABLE</span>
+            <span>{toTrimmedString(tableNumber)}</span>
+          </div>
+        )}
+        {toTrimmedString(customerName) && (
+          <div className="bill-row">
+            <span>CUSTOMER</span>
+            <span>{toTrimmedString(customerName)}</span>
+          </div>
+        )}
+        {toTrimmedString(customerPhone) && (
+          <div className="bill-row">
+            <span>PHONE</span>
+            <span>{toTrimmedString(customerPhone)}</span>
+          </div>
+        )}
+        {toTrimmedString(createdByName) && (
+          <div className="bill-row">
+            <span>TAKEN BY</span>
+            <span>{toTrimmedString(createdByName)}</span>
+          </div>
+        )}
         <div className="bill-row">
-          <span>DATE</span>
-          <span>{format(printedAt, 'dd-MM-yyyy')}</span>
+          <span>ORDER DATE</span>
+          <span>{format(validOrderDate, 'dd-MM-yyyy')}</span>
         </div>
         <div className="bill-row">
-          <span>TIME</span>
-          <span>{format(printedAt, 'HH:mm:ss')}</span>
+          <span>ORDER TIME</span>
+          <span>{format(validOrderDate, 'HH:mm:ss')}</span>
         </div>
+        <div className="bill-row">
+          <span>PRINTED</span>
+          <span>{format(printedAt, 'dd-MM-yyyy HH:mm')}</span>
+        </div>
+
+        {(toTrimmedString(orderNotes) || toTrimmedString(specialInstructions)) && (
+          <>
+            <div className="bill-rule">{rule}</div>
+            {toTrimmedString(orderNotes) && (
+              <div className="bill-note">CUSTOMER NOTE: {toTrimmedString(orderNotes)}</div>
+            )}
+            {toTrimmedString(specialInstructions) && (
+              <div className="bill-note">ORDER NOTE: {toTrimmedString(specialInstructions)}</div>
+            )}
+          </>
+        )}
 
         <div className="bill-rule">{rule}</div>
         {cart.map((item) => {
@@ -406,6 +477,7 @@ export function BillReceipt({
         <div className="bill-footer">
           Please present this bill to the cashier for payment.
         </div>
+        <div className="bill-bottom-space" />
       </div>
     </div>
   );

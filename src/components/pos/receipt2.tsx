@@ -48,6 +48,7 @@ interface Receipt2Props {
   receiptLegalMarkerFontWeight?: ReceiptFontWeight;
   receiptLegalMarkerScaleX?: number;
   receiptQrCodeSize?: number;
+  fiscalMode?: boolean;
 }
 
 type BranchLike = {
@@ -444,6 +445,7 @@ export const Receipt2 = ({
   receiptLegalMarkerFontWeight,
   receiptLegalMarkerScaleX,
   receiptQrCodeSize,
+  fiscalMode = false,
 }: Receipt2Props) => {
   const offlineBusiness = useLiveQuery(async () => getOfflineBusinessProfile(), []);
   const receiptSession = useLiveQuery(async () => {
@@ -638,16 +640,12 @@ export const Receipt2 = ({
   const legalMarkerMaxWidth = `${Math.floor(100 / legalMarkerScale)}%`;
   const qrCodeUrl =
     `https://api.qrserver.com/v1/create-qr-code/?size=${qrPixelSize}x${qrPixelSize}&ecc=M&margin=0&data=${encodeURIComponent(qrPayload)}`;
-  const shouldShowHeader = true;
-  const shouldShowTaxBreakdown = true;
-  const shouldShowQRCode = true;
-  const shouldShowFooter = true;
+  const shouldShowHeader = showHeader;
+  const shouldShowTaxBreakdown = fiscalMode && showTaxBreakdown;
+  const shouldShowQRCode = fiscalMode && showQRCode;
+  const shouldShowFooter = showFooter;
 
   void currencyFormatter;
-  void showHeader;
-  void showTaxBreakdown;
-  void showQRCode;
-  void showFooter;
 
   return (
     <div id={rootId}>
@@ -793,11 +791,15 @@ export const Receipt2 = ({
         data-receipt-legal-marker-scale-x={legalMarkerScale}
         data-receipt-qr-code-size={qrPixelSize}
       >
-        <div className="receipt2-center">
-          <span className="receipt2-legal-marker">*** START OF LEGAL RECEIPT ***</span>
-        </div>
-        <div className="receipt2-break" />
-        <div className="receipt2-break" />
+        {fiscalMode && (
+          <>
+            <div className="receipt2-center">
+              <span className="receipt2-legal-marker">*** START OF LEGAL RECEIPT ***</span>
+            </div>
+            <div className="receipt2-break" />
+            <div className="receipt2-break" />
+          </>
+        )}
         {copyNumber > 1 && (
           <div className="receipt2-center receipt2-copy">*** COPY #{copyNumber} ***</div>
         )}
@@ -818,26 +820,35 @@ export const Receipt2 = ({
             <div className="receipt2-center">
               <span className="receipt2-header-detail">EMAIL: {businessEmail || 'N/A'}</span>
             </div>
-            <div className="receipt2-center">
-              <span className="receipt2-header-detail">TIN: {businessTin || 'N/A'}</span>
-            </div>
+            {fiscalMode && (
+              <div className="receipt2-center">
+                <span className="receipt2-header-detail">TIN: {businessTin || 'N/A'}</span>
+              </div>
+            )}
             <div className="receipt2-center">
               <span className="receipt2-header-detail">{branchOfficeLine}</span>
             </div>
-            <div className="receipt2-break" />
-            <div className="receipt2-break" />
-         
-            <div className="receipt2-center">**{isVatRegistered ? 'VAT REGISTERED' : 'NON VAT REGISTERED'}**</div>
-            <div className="receipt2-break" />
-            <div className="receipt2-break" />
+            {fiscalMode && (
+              <>
+                <div className="receipt2-break" />
+                <div className="receipt2-break" />
+                <div className="receipt2-center">**{isVatRegistered ? 'VAT REGISTERED' : 'NON VAT REGISTERED'}**</div>
+                <div className="receipt2-break" />
+                <div className="receipt2-break" />
+              </>
+            )}
    
           </>
         )}
         
         
-        <div className="receipt2-line">BUYER&apos;S TIN : {buyerTin}</div>
-        <div className="receipt2-line">BUYER&apos;S NAME : {buyerName}</div>
-        <div className="receipt2-line">RECEIPT NUMBER : {receiptNumber}</div>
+        {fiscalMode && (
+          <>
+            <div className="receipt2-line">BUYER&apos;S TIN : {buyerTin}</div>
+            <div className="receipt2-line">BUYER&apos;S NAME : {buyerName}</div>
+          </>
+        )}
+        <div className="receipt2-line">{fiscalMode ? 'RECEIPT NUMBER' : 'RECEIPT NO'} : {receiptNumber}</div>
 
         {showItemDetails && (
           <>
@@ -910,7 +921,11 @@ export const Receipt2 = ({
 
         {shouldShowFooter && (
           <div className="receipt2-center">
-            <span className="receipt2-legal-marker">*** END OF LEGAL RECEIPT ***</span>
+            {fiscalMode ? (
+              <span className="receipt2-legal-marker">*** END OF LEGAL RECEIPT ***</span>
+            ) : (
+              <span>Thank you for your purchase</span>
+            )}
           </div>
         )}
       </div>

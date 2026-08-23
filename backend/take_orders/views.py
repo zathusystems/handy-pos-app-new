@@ -416,9 +416,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Get the next order number
-        last_order = TakeOrder.objects.filter(branch=branch).order_by('-order_number').first()
-        next_order_number = (last_order.order_number + 1) if last_order else 1001
+        next_order_number = TakeOrder.next_order_number_for_branch(branch)
         
         # Create the take order (self-service, so no created_by user)
         take_order = TakeOrder.objects.create(
@@ -488,9 +486,7 @@ def self_service_order(request):
         except Branch.DoesNotExist:
             return JsonResponse({'error': 'Branch not found'}, status=404)
 
-        # Get the next order number
-        last_order = TakeOrder.objects.filter(branch=branch).order_by('-order_number').first()
-        next_order_number = (last_order.order_number + 1) if last_order else 1001
+        next_order_number = TakeOrder.next_order_number_for_branch(branch)
         
         # Create the take order (self-service, so no created_by user)
         take_order = TakeOrder.objects.create(

@@ -499,7 +499,7 @@ export function TakeOrderModal({
                 window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
                 toast({
                     title: 'Items added',
-                    description: `Order #${existingOrder.orderNumber} has been updated.`,
+                    description: `Order ${existingOrder.orderNumber} has been updated.`,
                 });
                 handleClearCart();
                 onOpenChange(false);
@@ -556,8 +556,8 @@ export function TakeOrderModal({
             toast({
                 title: resolvedDestination === 'pos' ? 'Order Ready for Sale' : 'Order Sent to Kitchen',
                 description: resolvedDestination === 'pos'
-                    ? `Take Order #${createdOrder.order_number} is ready for sale processing from Orders.`
-                    : `Take Order #${createdOrder.order_number} has been created successfully.`,
+                    ? `Order ${createdOrder.order_number} is ready for sale processing from Orders.`
+                    : `Order ${createdOrder.order_number} has been created successfully.`,
             });
 
             // Reset form
@@ -588,7 +588,7 @@ export function TakeOrderModal({
       <DialogContent className="max-w-[95vw] w-full h-[90vh] flex flex-col p-0">
         <DialogHeader className="p-4 sm:p-6 pb-2 sm:pb-2 shrink-0">
           <DialogTitle className="text-xl sm:text-2xl">
-            {isAddingToExistingOrder ? `Add Items to Order #${existingOrder?.orderNumber}` : 'Take a New Order'}
+            {isAddingToExistingOrder ? `Add Items to Order ${existingOrder?.orderNumber}` : 'Take a New Order'}
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
             {isAddingToExistingOrder

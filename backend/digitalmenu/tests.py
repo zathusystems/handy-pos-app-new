@@ -161,6 +161,58 @@ class MenuOptionManagementTests(TestCase):
         self.assertEqual(inventory_menu.description, 'Chilled bottle')
         self.assertFalse(inventory_menu.is_visible)
 
+    def test_create_prepared_item_creates_produced_sellable_inventory_product(self):
+        ingredient = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Beef',
+            category='Ingredients',
+            item_type='ingredient',
+            stock_units=Decimal('10.000'),
+            unit_type='kg',
+            price=Decimal('0.00'),
+            is_recipe_ingredient=True,
+        )
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.post(
+            '/api/digital-menu/menu/create_prepared_item/',
+            {
+                'branch_id': self.branch.id,
+                'name': 'Nsima Beef',
+                'category': 'Meals',
+                'description': 'Served with vegetables',
+                'price': '6500.00',
+                'recipe': [
+                    {
+                        'ingredientId': str(ingredient.id),
+                        'inventoryItemId': str(ingredient.id),
+                        'name': 'Beef',
+                        'quantity': 0.25,
+                        'unit': 'kg',
+                    }
+                ],
+                'is_visible': True,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        menu_item = Menu.objects.get(id=response.data['id'])
+        self.assertIsNotNone(menu_item.inventory_item)
+        self.assertFalse(menu_item.is_prepared_item)
+        self.assertEqual(menu_item.description, 'Served with vegetables')
+
+        inventory_item = menu_item.inventory_item
+        self.assertEqual(inventory_item.name, 'Nsima Beef')
+        self.assertEqual(inventory_item.category, 'Meals')
+        self.assertEqual(inventory_item.item_type, 'sellable')
+        self.assertTrue(inventory_item.is_produced)
+        self.assertTrue(inventory_item.on_menu)
+        self.assertEqual(inventory_item.price, Decimal('6500.00'))
+        self.assertEqual(inventory_item.recipe[0]['name'], 'Beef')
+        self.assertEqual(str(response.data['item_details']['id']), str(inventory_item.id))
+
     def test_active_staff_can_create_menu_option_group(self):
         self.client.force_authenticate(user=self.staff_user)
 

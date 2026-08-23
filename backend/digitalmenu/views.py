@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from decimal import Decimal, InvalidOperation
+from django.db import IntegrityError, transaction
 
 from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup
 from .serializers import (
@@ -122,9 +123,10 @@ class MenuViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def create_prepared_item(self, request):
-        """Create a menu-only prepared item whose recipe consumes inventory ingredients."""
+        """Create a produced sellable inventory item and place it on the menu."""
         try:
             from business.models import Business, Branch
+            from inventory.models import InventoryItem
 
             branch_id = request.data.get('branch_id')
             if not branch_id:
@@ -145,20 +147,73 @@ class MenuViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            serializer = self.get_serializer(data={
-                'business': business.id,
-                'branch': branch.id,
-                'name': request.data.get('name'),
-                'category': request.data.get('category', ''),
-                'description': request.data.get('description', ''),
-                'price': request.data.get('price', 0),
-                'image': request.data.get('image') or '',
-                'recipe': request.data.get('recipe') or [],
-                'is_prepared_item': True,
-                'is_visible': request.data.get('is_visible', True),
-            })
-            serializer.is_valid(raise_exception=True)
-            menu_item = serializer.save(business=business, branch=branch, is_prepared_item=True)
+            name = str(request.data.get('name') or '').strip()
+            if not name:
+                return Response(
+                    {'name': 'Menu item name is required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                price = Decimal(str(request.data.get('price') or '0'))
+            except (InvalidOperation, TypeError, ValueError):
+                return Response(
+                    {'price': 'Enter a valid selling price.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if price < 0:
+                return Response(
+                    {'price': 'Selling price cannot be negative.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            recipe = request.data.get('recipe') or []
+            if not isinstance(recipe, list):
+                return Response(
+                    {'recipe': 'Recipe must be a list of inventory ingredients.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            raw_is_visible = request.data.get('is_visible', True)
+            if isinstance(raw_is_visible, str):
+                is_visible = raw_is_visible.strip().lower() not in ('false', '0', 'no', 'off')
+            else:
+                is_visible = bool(raw_is_visible)
+
+            try:
+                with transaction.atomic():
+                    inventory_item = InventoryItem.objects.create(
+                        business=business,
+                        branch=branch,
+                        name=name,
+                        category=str(request.data.get('category') or '').strip(),
+                        item_type='sellable',
+                        stock_units=Decimal('0.000'),
+                        unit_type='unit',
+                        reorder_level=Decimal('0.000'),
+                        cost=Decimal('0.00'),
+                        price=price,
+                        is_recipe_ingredient=False,
+                        is_produced=True,
+                        recipe=recipe,
+                        image=request.data.get('image') or None,
+                        on_menu=True,
+                    )
+
+                    menu_item = Menu.objects.create(
+                        business=business,
+                        branch=branch,
+                        inventory_item=inventory_item,
+                        description=str(request.data.get('description') or '').strip(),
+                        is_prepared_item=False,
+                        is_visible=is_visible,
+                    )
+            except IntegrityError:
+                return Response(
+                    {'name': 'A sellable product with this name already exists in this branch.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(self.get_serializer(menu_item).data, status=status.HTTP_201_CREATED)
 
         except serializers.ValidationError as exc:

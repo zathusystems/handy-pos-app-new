@@ -166,10 +166,8 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop('items', [])
         status = validated_data.pop('status', 'Pending')
         
-        # Get the next order number
         branch = self.context['branch']
-        last_order = TakeOrder.objects.filter(branch=branch).order_by('-order_number').first()
-        next_order_number = (last_order.order_number + 1) if last_order else 1001
+        next_order_number = TakeOrder.next_order_number_for_branch(branch)
         
         customer = validated_data.get('customer')
         if customer and customer.business_id != branch.business_id:

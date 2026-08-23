@@ -97,7 +97,7 @@ class PublicOrderTrackingTests(TestCase):
         payload = response.json()
         self.assertIn('id', payload)
         self.assertEqual(payload['branch_id'], str(self.branch.id))
-        self.assertEqual(payload['order_number'], 1001)
+        self.assertEqual(payload['order_number'], 1)
         self.assertEqual(payload['status'], 'Pending')
         self.assertEqual(payload['currency'], 'MWK')
         self.assertEqual(payload['total'], 17.0)

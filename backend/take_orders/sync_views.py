@@ -144,9 +144,7 @@ def sync_push(request):
                         **change_data
                     }
                     
-                    # Get next order number
-                    last_order = TakeOrder.objects.filter(branch_id=branch_id).order_by('-order_number').first()
-                    take_order_data['order_number'] = (last_order.order_number + 1) if last_order else 1001
+                    take_order_data['order_number'] = TakeOrder.next_order_number_for_branch(branch)
                     
                     take_order_data.pop('completed_by', None)
                     take_order_data.pop('completedBy', None)
@@ -173,7 +171,7 @@ def sync_push(request):
                                 'branch_id': branch_id,
                                 'business_id': branch.business_id,
                                 'created_by_id': request.user.id,
-                                'order_number': 1001,  # Will be updated below if provided
+                                'order_number': 1,  # Will be updated below if provided
                             }
                         )
                         
@@ -187,7 +185,7 @@ def sync_push(request):
                             last_order = TakeOrder.objects.filter(
                                 branch_id=branch_id
                             ).exclude(id=change_id).order_by('-order_number').first()
-                            take_order.order_number = (last_order.order_number + 1) if last_order else 1001
+                            take_order.order_number = (last_order.order_number + 1) if last_order else 1
                         
                         _apply_completion_audit(take_order, request.user)
                         take_order.save()

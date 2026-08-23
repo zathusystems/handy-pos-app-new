@@ -61,7 +61,7 @@ const TakeOrderCard = ({
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div>
-            <CardTitle className="text-lg">Order #{order.orderNumber}</CardTitle>
+            <CardTitle className="text-lg">Order {order.orderNumber}</CardTitle>
             <p className="text-sm text-muted-foreground">{minutesAgo} min ago</p>
           </div>
           <Badge className="bg-green-100 text-green-800">

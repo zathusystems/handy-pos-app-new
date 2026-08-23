@@ -421,7 +421,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
 
       const selectedPaperWidth = (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
       setBillPaperWidth(selectedPaperWidth);
-      setBillNumber(`ORDER-${order.orderNumber}`);
+      setBillNumber(`Order ${order.orderNumber}`);
       setBillOrder(order);
       await new Promise((resolve) => setTimeout(resolve, 150));
 
@@ -474,7 +474,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
 
       toast({
         title: 'Bill Printed',
-        description: `Order #${order.orderNumber} is still ready for sale processing.`,
+        description: `Order ${order.orderNumber} is still ready for sale processing.`,
       });
     } catch (error) {
       console.error('[Orders Bill Print] Failed to print bill:', error);
@@ -569,7 +569,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0 flex-1 space-y-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <p className="min-w-0 break-words text-base font-semibold text-foreground">Order #{order.orderNumber}</p>
+              <p className="min-w-0 break-words text-base font-semibold text-foreground">Order {order.orderNumber}</p>
               <Badge className={`${getStatusColor(order.status)} flex items-center gap-1 border`}>
                 {getStatusIcon(order.status)}
                 <span className="text-xs font-semibold">{order.status}</span>
@@ -685,7 +685,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           <DialogContent className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4">
             <DialogHeader className="shrink-0 border-b bg-muted/30 px-4 pb-3 pt-5 text-left sm:px-6 sm:pt-6">
               <div className="flex min-w-0 flex-wrap items-center gap-2 pr-8">
-                <DialogTitle className="min-w-0 break-words text-xl sm:text-2xl">Order #{order.orderNumber}</DialogTitle>
+                <DialogTitle className="min-w-0 break-words text-xl sm:text-2xl">Order {order.orderNumber}</DialogTitle>
                 <Badge className={`${getStatusColor(order.status)} flex items-center gap-1 border`}>
                   {getStatusIcon(order.status)}
                   <span className="text-xs font-semibold">{order.status}</span>
@@ -924,7 +924,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             <AlertDialogHeader>
               <AlertDialogTitle>Cancel this order?</AlertDialogTitle>
               <AlertDialogDescription>
-                This moves order #{orderPendingCancellation?.orderNumber} to Cancelled. The order will stay available under Cancelled and All Orders, where it can be reopened later.
+                This moves Order {orderPendingCancellation?.orderNumber} to Cancelled. The order will stay available under Cancelled and All Orders, where it can be reopened later.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <div className="space-y-2">
@@ -1088,8 +1088,16 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               sum + toFiniteNumber(item.quantity, 0) * toFiniteNumber(item.price, 0)
             ), 0)}
             taxLabel="Tax"
-            cartTitle={`Order #${billOrder.orderNumber}`}
+            cartTitle={`Order ${billOrder.orderNumber}`}
             billNumber={billNumber}
+            customerName={billOrder.customerName}
+            customerPhone={billOrder.customerPhone}
+            tableNumber={billOrder.tableNumber}
+            status={billOrder.status}
+            orderNotes={billOrder.customerNotes}
+            specialInstructions={billOrder.specialInstructions}
+            createdAt={billOrder.createdAt}
+            createdByName={billOrder.createdByName}
             paperWidth={billPaperWidth}
           />
         </div>

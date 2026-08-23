@@ -238,6 +238,7 @@ const InvoiceForm = ({
 }) => {
   const [activeBranchId, setActiveBranchId] = useState('main');
   const [isLoading, setIsLoading] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
   const { format: formatCurrency } = useCurrency();
 
   useEffect(() => {
@@ -260,6 +261,21 @@ const InvoiceForm = ({
   
   const taxRate = defaultTaxRate ? defaultTaxRate.rate / 100 : 0;
   const taxLabel = defaultTaxRate ? `${defaultTaxRate.name} (${defaultTaxRate.rate}%)` : 'Tax';
+  const filteredProducts = useMemo(() => {
+    const query = productSearchQuery.trim().toLowerCase();
+    const sortedProducts = [...products].sort((a, b) => a.name.localeCompare(b.name));
+    if (!query) return sortedProducts;
+    return sortedProducts.filter((product) => {
+      const haystack = [
+        product.name,
+        product.category,
+        product.sku,
+        product.barcode,
+        product.productCode,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [products, productSearchQuery]);
 
   const { subtotal, tax, total } = useMemo(() => {
     const items = form.watch('items');
@@ -419,7 +435,18 @@ const InvoiceForm = ({
         <Separator />
         
         <div>
-            <h3 className="text-lg font-medium mb-2">{documentType} Items</h3>
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h3 className="text-lg font-medium">{documentType} Items</h3>
+                <p className="text-sm text-muted-foreground">Search by product name, category, SKU, barcode, or product code.</p>
+              </div>
+              <Input
+                value={productSearchQuery}
+                onChange={(event) => setProductSearchQuery(event.target.value)}
+                placeholder="Search items..."
+                className="sm:max-w-xs"
+              />
+            </div>
             <div className="space-y-3">
               {fields.map((field, index) => (
                 <div key={field.id} className="grid grid-cols-12 gap-2 p-3 border rounded-lg items-start">
@@ -430,7 +457,7 @@ const InvoiceForm = ({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel className="sr-only">Product</FormLabel>
-                          <Select onValueChange={(value) => {
+                          <Select value={field.value} onValueChange={(value) => {
                             const product = products.find(p => p.id === value);
                             if (product) {
                                 field.onChange(value);
@@ -438,7 +465,25 @@ const InvoiceForm = ({
                             }
                           }}>
                             <FormControl><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger></FormControl>
-                            <SelectContent>{products.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+                            <SelectContent>
+                              {(() => {
+                                const selectedProduct = products.find((product) => product.id === field.value);
+                                const rowProducts = selectedProduct && !filteredProducts.some((product) => product.id === selectedProduct.id)
+                                  ? [selectedProduct, ...filteredProducts]
+                                  : filteredProducts;
+                                return rowProducts.length > 0
+                                  ? rowProducts.map(p => (
+                                    <SelectItem key={p.id} value={p.id}>
+                                      {p.name}{p.category ? ` · ${p.category}` : ''}
+                                    </SelectItem>
+                                  ))
+                                  : (
+                                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                                      No items match your search.
+                                    </div>
+                                  );
+                              })()}
+                            </SelectContent>
                           </Select>
                         </FormItem>
                       )}

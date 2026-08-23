@@ -612,7 +612,7 @@ export default function KitchenPage() {
       >
         <DialogContent className="w-[calc(100vw-1.5rem)] max-w-md">
           <DialogHeader>
-            <DialogTitle>Cancel order #{orderPendingCancellation?.order_number}</DialogTitle>
+            <DialogTitle>Cancel Order {orderPendingCancellation?.order_number}</DialogTitle>
             <DialogDescription>
               Add a reason so the team can review why this order was cancelled.
             </DialogDescription>
@@ -712,7 +712,7 @@ function OrderCard({
       <CardHeader className="space-y-3 p-3 pb-2.5 sm:p-4 sm:pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <CardTitle className="truncate text-base sm:text-lg">Order #{order.order_number}</CardTitle>
+            <CardTitle className="truncate text-base sm:text-lg">Order {order.order_number}</CardTitle>
             <CardDescription className="flex items-center gap-1 text-xs">
               <Clock className="h-3.5 w-3.5" />
               {getMinutesAgo(order.created_at)}
@@ -831,7 +831,7 @@ function OrderDetailsDialog({
       <DialogContent className="tauri-android-safe-bottom flex h-[calc(100dvh-1rem)] w-[calc(100vw-0.75rem)] max-w-2xl flex-col overflow-hidden p-0 sm:h-auto sm:max-h-[85dvh] sm:w-[calc(100vw-2rem)]">
         <DialogHeader className="shrink-0 border-b px-4 py-3 pr-10 sm:px-6 sm:py-4">
           <div className="flex flex-wrap items-center gap-2">
-            <DialogTitle>Order #{order.order_number}</DialogTitle>
+            <DialogTitle>Order {order.order_number}</DialogTitle>
             <Badge className={cn('gap-1 text-[11px] sm:text-xs', statusColors[order.status])}>
               {statusIcons[order.status]}
               {order.status}
