@@ -925,6 +925,7 @@ const PaymentDialog = ({
     const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>(null);
     const [cashPaid, setCashPaid] = useState<number | string>('');
+    const [recordChangeAsTip, setRecordChangeAsTip] = useState(false);
     const [laybuyDeposit, setLaybuyDeposit] = useState<number | string>('');
     const [laybuyPaymentMethod, setLaybuyPaymentMethod] = useState('Cash');
     const [showBuyerDetails, setShowBuyerDetails] = useState(false);
@@ -1022,6 +1023,7 @@ const PaymentDialog = ({
         setCompletedOrder(null);
         setSelectedPaymentMethod(null);
         setCashPaid('');
+        setRecordChangeAsTip(false);
         setLaybuyDeposit('');
         setLaybuyPaymentMethod('Cash');
         setShowBuyerDetails(false);
@@ -1615,6 +1617,12 @@ const PaymentDialog = ({
         (businessSettings as any)?.allowNegativeIngredientStock === true ||
         (businessSettings as any)?.allow_negative_ingredient_stock === true;
     const change = typeof cashPaid === 'number' && cashPaid > 0 ? cashPaid - total : 0;
+    const tipFromChange = selectedPaymentMethod === 'Cash' && recordChangeAsTip
+        ? Math.max(0, change)
+        : 0;
+    const displayedChange = selectedPaymentMethod === 'Cash' && recordChangeAsTip
+        ? 0
+        : Math.max(0, change);
     const selectedCustomerCreditLimit = toFiniteNumber(selectedCustomer?.creditLimit, 0);
     const selectedCustomerCurrentBalance = toFiniteNumber(selectedCustomer?.currentBalance, 0);
     const selectedCustomerAvailableCredit = Math.max(0, selectedCustomerCreditLimit - selectedCustomerCurrentBalance);
@@ -1770,7 +1778,8 @@ const PaymentDialog = ({
                 laybuyDeposit: method === 'Laybuy' ? normalizedLaybuyDeposit : undefined,
                 laybuyPaymentMethod: method === 'Laybuy' ? laybuyPaymentMethod : undefined,
             });
-            const order = await onCheckout(method, 0, buyerDetails);
+            const checkoutTip = method === 'Cash' ? tipFromChange : 0;
+            const order = await onCheckout(method, checkoutTip, buyerDetails);
             if (order) {
                 const orderWithLocalReceiptNumber = withLocalReceiptNumber(order);
                 const normalizedCashPaid =
@@ -1779,35 +1788,39 @@ const PaymentDialog = ({
                         : Number.parseFloat(String(cashPaid ?? ''));
                 const hasCashPaid = Number.isFinite(normalizedCashPaid) && normalizedCashPaid > 0;
                 const cashChange = hasCashPaid ? Math.max(0, normalizedCashPaid - total) : 0;
+                const cashTip = method === 'Cash' && recordChangeAsTip ? cashChange : 0;
+                const displayedCashChange = cashTip > 0 ? 0 : cashChange;
 
                 const orderWithPaymentDetails: Order =
                     method === 'Cash' && hasCashPaid
                         ? ({
                               ...orderWithLocalReceiptNumber,
+                              tip: cashTip,
                               cashPaid: normalizedCashPaid,
                               cash_paid: normalizedCashPaid,
                               amountTendered: normalizedCashPaid,
                               amount_tendered: normalizedCashPaid,
                               amountReceived: normalizedCashPaid,
                               amount_received: normalizedCashPaid,
-                              change: cashChange,
-                              changeAmount: cashChange,
-                              change_amount: cashChange,
+                              change: displayedCashChange,
+                              changeAmount: displayedCashChange,
+                              change_amount: displayedCashChange,
                           } as Order)
                         : (orderWithLocalReceiptNumber as Order);
 
                 if (method === 'Cash' && hasCashPaid) {
                     try {
                         await db.orders.update(order.id, {
+                            tip: cashTip,
                             cashPaid: normalizedCashPaid,
                             cash_paid: normalizedCashPaid,
                             amountTendered: normalizedCashPaid,
                             amount_tendered: normalizedCashPaid,
                             amountReceived: normalizedCashPaid,
                             amount_received: normalizedCashPaid,
-                            change: cashChange,
-                            changeAmount: cashChange,
-                            change_amount: cashChange,
+                            change: displayedCashChange,
+                            changeAmount: displayedCashChange,
+                            change_amount: displayedCashChange,
                         } as any);
                     } catch (paymentMetaError) {
                         console.warn('[PaymentDialog] Failed to persist cash payment metadata on order:', paymentMetaError);
@@ -2755,8 +2768,28 @@ const PaymentDialog = ({
                             </div>
                             <div className={cn("flex justify-between text-lg font-bold", change >= 0 ? 'text-green-600' : 'text-red-600')}>
                                 <span>Change</span>
-                                <span>{currencyFormatter(Math.max(0, change))}</span>
+                                <span>{currencyFormatter(displayedChange)}</span>
                             </div>
+                            {change > 0 && (
+                                <div className="rounded-md border bg-background p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div className="space-y-1">
+                                            <Label htmlFor="record-change-tip" className="text-sm font-medium">
+                                                Record change as tip
+                                            </Label>
+                                            <p className="text-xs text-muted-foreground">
+                                                Tip: {currencyFormatter(tipFromChange)}
+                                            </p>
+                                        </div>
+                                        <Switch
+                                            id="record-change-tip"
+                                            checked={recordChangeAsTip}
+                                            onCheckedChange={setRecordChangeAsTip}
+                                            disabled={hasBlockingUnmapped || isProcessingPayment}
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         <Button 
                             size="lg" 

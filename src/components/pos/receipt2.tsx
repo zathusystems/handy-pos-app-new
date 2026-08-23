@@ -537,6 +537,7 @@ export const Receipt2 = ({
     (order as any).total ?? (order as any).grossAmount ?? (order as any).gross_amount,
     normalizedOrderNet + normalizedOrderVat
   );
+  const tipAmount = Math.max(0, toFiniteNumber((order as any).tip, 0));
   const fallbackTaxRate = toFiniteNumber(
     (order as any).taxRateValue ?? (order as any).tax_rate_value,
     normalizedOrderNet > 0 && normalizedOrderVat > 0
@@ -900,6 +901,9 @@ export const Receipt2 = ({
 
         <div className="receipt2-rule">{dotRule}</div>
         <LegalRow left="TOTAL" right={formatAmount(normalizedOrderTotal)} strong />
+        {tipAmount > 0 && (
+          <LegalRow left="TIP" right={formatAmount(tipAmount)} />
+        )}
         <LegalRow left="AMOUNT TENDERED" right={formatAmount(amountTendered)} />
         <LegalRow left="CHANGE" right={formatAmount(changeAmount)} />
       

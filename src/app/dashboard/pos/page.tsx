@@ -1032,8 +1032,7 @@ export default function PosPage() {
   };
 
   const handleCreateOrder = async (paymentMethod: PaymentMethod, tip: number, buyerDetails?: BuyerDetails): Promise<Order | null> => {
-    void tip;
-    const appliedTip = 0;
+    const appliedTip = Math.max(0, toNonNegativeNumber(tip, 0));
     if (!cart.length) {
       toast({ variant: 'destructive', title: 'Cart is empty' });
       return null;
@@ -1462,7 +1461,7 @@ export default function PosPage() {
         // 3. Update the session with sync flags
         const sessionUpdate: Partial<Session> = {
             totalSales: (sessionForOrder.totalSales || 0) + subtotal,
-            totalTips: sessionForOrder.totalTips || 0,
+            totalTips: (sessionForOrder.totalTips || 0) + appliedTip,
             _dirty: true,
             _operation: 'update'
         };
@@ -1471,7 +1470,7 @@ export default function PosPage() {
         switch(paymentMethod) {
             case 'Cash':
                 sessionUpdate.totalCashSales = (sessionForOrder.totalCashSales || 0) + saleAmount;
-                sessionUpdate.expectedCash = (sessionForOrder.expectedCash || 0) + saleAmount;
+                sessionUpdate.expectedCash = (sessionForOrder.expectedCash || 0) + saleAmount + appliedTip;
                 break;
             case 'Card':
                  sessionUpdate.totalCardSales = (sessionForOrder.totalCardSales || 0) + saleAmount;

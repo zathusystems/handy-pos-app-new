@@ -2043,8 +2043,7 @@ export function PosModal({
   }, [isOpen, allInventory, handleAddToCart, toast]);
 
   const handleCreateOrder = async (paymentMethod: PaymentMethod, tip: number, buyerDetails?: BuyerDetails): Promise<Order | null> => {
-    void tip;
-    const appliedTip = 0;
+    const appliedTip = Math.max(0, toNonNegativeNumber(tip, 0));
     const checkoutCartId = activeCart?.id ?? activeCartId ?? null;
     if (!cart.length) {
       toast({ variant: 'destructive', title: 'Cart is empty' });
@@ -2752,14 +2751,14 @@ export function PosModal({
 
         const sessionUpdate: Partial<Session> = {
             totalSales: (sessionForOrder.totalSales || 0) + subtotal,
-            totalTips: sessionForOrder.totalTips || 0,
+            totalTips: (sessionForOrder.totalTips || 0) + appliedTip,
         };
 
         const saleAmount = total;
         switch(paymentMethod) {
             case 'Cash':
                 sessionUpdate.totalCashSales = (sessionForOrder.totalCashSales || 0) + saleAmount;
-                sessionUpdate.expectedCash = (sessionForOrder.expectedCash || 0) + saleAmount;
+                sessionUpdate.expectedCash = (sessionForOrder.expectedCash || 0) + saleAmount + appliedTip;
                 break;
             case 'Card':
                  sessionUpdate.totalCardSales = (sessionForOrder.totalCardSales || 0) + saleAmount;
