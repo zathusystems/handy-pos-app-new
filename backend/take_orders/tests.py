@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 
 from business.models import Branch, Business, BusinessSettings
 from inventory.models import InventoryItem
+from staff.models import Staff, StaffRole
 from .models import TakeOrder, TakeOrderItem
 
 
@@ -353,6 +354,118 @@ class TakeOrderStatusManagementTests(TestCase):
         self.assertEqual(reopen_response.status_code, 200)
         self.assertEqual(reopen_response.data['status'], 'Pending')
         self.assertFalse(reopen_response.data['cancellation_reason'])
+
+    def test_non_admin_staff_cannot_cancel_order(self):
+        staff_user = User.objects.create_user(email='waiter@example.com', password='test12345')
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=staff_user,
+            name='Waiter',
+            email='waiter@example.com',
+            role=StaffRole.WAITER,
+            is_active=True,
+        )
+        self.client.force_authenticate(staff_user)
+        order = self._create_order(status='Pending')
+
+        response = self.client.patch(
+            f'/api/orders/take-orders/{order.id}/update_status/',
+            {'status': 'Cancelled', 'cancellation_reason': 'Wrong table'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 403)
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'Pending')
+
+    def test_admin_staff_can_cancel_order(self):
+        staff_user = User.objects.create_user(email='admin-staff@example.com', password='test12345')
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=staff_user,
+            name='Admin Staff',
+            email='admin-staff@example.com',
+            role=StaffRole.ADMIN,
+            is_active=True,
+        )
+        self.client.force_authenticate(staff_user)
+        order = self._create_order(status='Pending')
+
+        response = self.client.patch(
+            f'/api/orders/take-orders/{order.id}/update_status/',
+            {'status': 'Cancelled', 'cancellation_reason': 'Duplicate order'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['status'], 'Cancelled')
+        self.assertEqual(response.data['cancellation_reason'], 'Duplicate order')
+
+    def test_items_can_be_added_to_open_order_before_sale_processing(self):
+        order = self._create_order(status='Ready')
+        extra_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Orange Juice',
+            category='Drinks',
+            item_type='sellable',
+            stock_units=Decimal('5.000'),
+            reorder_level=Decimal('1.000'),
+            cost=Decimal('1.00'),
+            price=Decimal('3.00'),
+            value=Decimal('5.00'),
+        )
+
+        response = self.client.post(
+            f'/api/orders/take-orders/{order.id}/add_items/',
+            {
+                'status': 'Ready',
+                'items': [
+                    {
+                        'inventory_item_id': str(extra_item.id),
+                        'name': extra_item.name,
+                        'quantity': '2.000',
+                        'price': '3.00',
+                        'notes': 'No ice',
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['status'], 'Ready')
+        self.assertEqual(len(response.data['items']), 2)
+        self.assertTrue(
+            TakeOrderItem.objects.filter(
+                take_order=order,
+                inventory_item_id=str(extra_item.id),
+                quantity=Decimal('2.000'),
+                notes='No ice',
+            ).exists()
+        )
+
+    def test_items_cannot_be_added_to_completed_order(self):
+        order = self._create_order(status='Completed')
+
+        response = self.client.post(
+            f'/api/orders/take-orders/{order.id}/add_items/',
+            {
+                'items': [
+                    {
+                        'inventory_item_id': str(self.item.id),
+                        'name': self.item.name,
+                        'quantity': '1.000',
+                        'price': '8.50',
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
 
     def test_completed_order_records_cashier_name(self):
         order = self._create_order(status='Ready')

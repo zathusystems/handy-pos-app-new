@@ -862,6 +862,7 @@ function CashierWaiterDashboard({
   router,
   activeBranchId,
   businessType,
+  currentUserRole,
 }: any) {
   const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
   const currentDaySession = useMemo(
@@ -992,6 +993,7 @@ function CashierWaiterDashboard({
           isOpen={isOrdersModalOpen}
           onOpenChange={setIsOrdersModalOpen}
           businessType={businessType}
+          currentUserRole={currentUserRole ?? null}
         />
       )}
     </div>
@@ -1270,6 +1272,7 @@ export default function DashboardPage() {
         router={router}
         activeBranchId={activeBranchId}
         businessType={business?.type}
+        currentUserRole={user?.role ?? null}
       />
     );
   }
@@ -1284,6 +1287,7 @@ export default function DashboardPage() {
         router={router}
         activeBranchId={activeBranchId}
         businessType={business?.type}
+        currentUserRole={user?.role ?? null}
       />
     );
   }

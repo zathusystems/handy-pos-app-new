@@ -11,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from .models import TakeOrder, TakeOrderItem
-from .serializers import TakeOrderSerializer, TakeOrderCreateSerializer
+from .serializers import TakeOrderSerializer, TakeOrderCreateSerializer, TakeOrderItemSerializer
 from business.models import Branch
 from inventory.models import InventoryItem
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
@@ -80,6 +80,25 @@ def _django_validation_payload(exc):
     if hasattr(exc, 'messages'):
         return {'error': ' '.join(str(message) for message in exc.messages)}
     return {'error': str(exc)}
+
+
+def _user_can_cancel_take_order(user, take_order):
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    if take_order.business.owner_id == user.id:
+        return True
+    try:
+        from staff.models import Staff, StaffRole
+        return Staff.objects.filter(
+            user=user,
+            business=take_order.business,
+            is_active=True,
+            role=StaffRole.ADMIN,
+        ).exists()
+    except Exception:
+        return False
 
 
 def _normalize_phone_lookup(value):
@@ -205,6 +224,11 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         cancellation_reason = str(
             request.data.get('cancellation_reason') or request.data.get('cancellationReason') or ''
         ).strip()
+        if resolved_status == 'Cancelled' and not _user_can_cancel_take_order(request.user, take_order):
+            return Response(
+                {'error': 'Only admin users can cancel orders.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         if resolved_status == 'Cancelled' and not cancellation_reason:
             return Response(
                 {'cancellation_reason': 'Cancellation reason is required.'},
@@ -248,6 +272,74 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
             TakeOrderSerializer(take_order).data,
             status=status.HTTP_200_OK
         )
+
+    @action(detail=True, methods=['post'])
+    def add_items(self, request, pk=None):
+        """Append items to an open take order before sale processing."""
+        try:
+            take_order = TakeOrder.objects.prefetch_related('items').get(pk=pk)
+        except TakeOrder.DoesNotExist:
+            return Response(
+                {'error': 'Take order not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if take_order.status in {'Completed', 'Cancelled'}:
+            return Response(
+                {'error': 'Items cannot be added to completed or cancelled orders.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        items_data = request.data.get('items', [])
+        if not isinstance(items_data, list) or len(items_data) == 0:
+            return Response(
+                {'items': 'At least one item is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        item_serializer = TakeOrderItemSerializer(data=items_data, many=True)
+        item_serializer.is_valid(raise_exception=True)
+        validated_items = item_serializer.validated_data
+
+        try:
+            validate_stock_available_for_order_lines(validated_items, take_order.business, take_order.branch)
+        except DjangoValidationError as exc:
+            return Response(_django_validation_payload(exc), status=status.HTTP_400_BAD_REQUEST)
+
+        for item_data in validated_items:
+            TakeOrderItem.objects.create(take_order=take_order, **item_data)
+
+        requested_status = request.data.get('status') or take_order.status
+        if requested_status in dict(TakeOrder.STATUS_CHOICES):
+            resolved_status = _resolve_take_order_status(take_order, requested_status)
+            if resolved_status in {'Sent to Kitchen', 'Preparing', 'Ready'}:
+                order_lines = [
+                    {
+                        'inventory_item_id': item.inventory_item_id,
+                        'menu_item_id': item.menu_item_id,
+                        'name': item.name,
+                        'quantity': item.quantity,
+                        'recipe': item.recipe or [],
+                        'is_prepared_menu_item': item.is_prepared_menu_item,
+                        'selected_options': item.selected_options or [],
+                    }
+                    for item in take_order.items.all()
+                ]
+                try:
+                    validate_stock_available_for_order_lines(order_lines, take_order.business, take_order.branch)
+                except DjangoValidationError as exc:
+                    return Response(_django_validation_payload(exc), status=status.HTTP_400_BAD_REQUEST)
+
+            take_order.status = resolved_status
+            take_order.completed_at = None
+            take_order.completed_by = None
+            take_order.save(update_fields=['status', 'completed_at', 'completed_by', 'updated_at'])
+        else:
+            take_order.save(update_fields=['updated_at'])
+
+        take_order.refresh_from_db()
+        serializer = TakeOrderSerializer(take_order)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def pending(self, request):

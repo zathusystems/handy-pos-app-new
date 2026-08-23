@@ -34,6 +34,9 @@ type TakeOrderModalProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   businessType?: BusinessType | string | null;
+  existingOrder?: TakeOrder | null;
+  mode?: 'create' | 'add-items';
+  onOrderUpdated?: (order: TakeOrder) => void;
 };
 
 type OrderDestination = 'kitchen' | 'pos';
@@ -166,7 +169,15 @@ const buildTakeOrderMenuItem = (
     };
 };
 
-export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }: TakeOrderModalProps) {
+export function TakeOrderModal({
+    branchId,
+    isOpen,
+    onOpenChange,
+    businessType,
+    existingOrder = null,
+    mode = 'create',
+    onOrderUpdated,
+}: TakeOrderModalProps) {
     const { format: formatCurrency } = useCurrency();
     const [cart, setCart] = useState<OrderCartItem[]>([]);
     const [selectedPortionItem, setSelectedPortionItem] = useState<InventoryItem | null>(null);
@@ -368,9 +379,15 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
     );
     const hasKitchenCartItems = kitchenEnabled && kitchenCartItemCount > 0;
 
+    const isAddingToExistingOrder = mode === 'add-items' && Boolean(existingOrder);
+
     const handleSendOrderClick = (destination: OrderDestination) => {
         if (cart.length === 0) {
             toast({ variant: 'destructive', title: 'Empty order', description: 'Please add items to the order.' });
+            return;
+        }
+        if (isAddingToExistingOrder) {
+            void handleSubmitOrder(destination);
             return;
         }
         const resolvedDestination = destination === 'kitchen' && (!kitchenEnabled || !hasKitchenCartItems) ? 'pos' : destination;
@@ -386,12 +403,109 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
         setShowCustomerForm(true);
     };
 
-    const handleSubmitOrder = async () => {
+    const buildOrderItemsPayload = () => cart.map(item => {
+        const isPreparedMenuItem = Boolean(item.isPreparedMenuItem || item.is_prepared_menu_item);
+        const menuItemId = item.menuItemId || item.menu_item_id || item.menuEntryId || (isPreparedMenuItem ? item.id : undefined);
+        return {
+            inventory_item_id: isPreparedMenuItem ? undefined : item.id,
+            menu_item_id: menuItemId,
+            is_prepared_menu_item: isPreparedMenuItem,
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+            recipe: Array.isArray(item.recipe) ? item.recipe : [],
+            notes: item.notes || undefined,
+            selected_options: item.isSoldInPortions ? [{
+                type: 'portion_sale',
+                name: item.portionDisplay || item.portionName || 'Portion',
+                group_name: 'Portion',
+                quantity: 1,
+                price_delta: 0,
+                portion_name: item.portionName,
+                portions_per_unit: item.portionsPerUnit,
+            }] : [],
+        };
+    });
+
+    const mapCartItemsToLocalOrderItems = () => cart.map(item => ({
+        id: item.id,
+        inventoryItemId: item.isPreparedMenuItem || item.is_prepared_menu_item ? undefined : item.id,
+        menuItemId: item.menuItemId || item.menu_item_id || item.menuEntryId || ((item.isPreparedMenuItem || item.is_prepared_menu_item) ? item.id : undefined),
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        recipe: Array.isArray(item.recipe) ? item.recipe : [],
+        isPreparedMenuItem: Boolean(item.isPreparedMenuItem || item.is_prepared_menu_item),
+        notes: item.notes,
+        selectedOptions: item.isSoldInPortions ? [{
+            type: 'portion_sale',
+            name: item.portionDisplay || item.portionName || 'Portion',
+            group_name: 'Portion',
+            quantity: 1,
+            price_delta: 0,
+            portion_name: item.portionName,
+            portions_per_unit: item.portionsPerUnit,
+        }] : [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+    }));
+
+    const handleSubmitOrder = async (forcedDestination?: OrderDestination) => {
         setIsSubmitting(true);
 
         try {
-            const resolvedDestination = orderDestination === 'kitchen' && kitchenEnabled && hasKitchenCartItems ? 'kitchen' : 'pos';
+            const selectedDestination = forcedDestination || orderDestination;
+            const resolvedDestination = selectedDestination === 'kitchen' && kitchenEnabled && hasKitchenCartItems ? 'kitchen' : 'pos';
             const orderStatus: TakeOrder['status'] = resolvedDestination === 'pos' ? 'Ready' : 'Sent to Kitchen';
+            const itemsPayload = buildOrderItemsPayload();
+
+            if (isAddingToExistingOrder && existingOrder) {
+                const updatedOrder = await authFetch.fetch<any>(`/orders/take-orders/${existingOrder.id}/add_items/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        status: orderStatus,
+                        items: itemsPayload,
+                    }),
+                });
+
+                const localNewItems = mapCartItemsToLocalOrderItems();
+                const mergedOrder: TakeOrder = {
+                    ...existingOrder,
+                    status: updatedOrder?.status || orderStatus,
+                    items: Array.isArray(updatedOrder?.items)
+                        ? updatedOrder.items.map((item: any) => ({
+                            id: item.id || item.inventory_item_id || item.menu_item_id || crypto.randomUUID(),
+                            inventoryItemId: item.inventory_item_id,
+                            menuItemId: item.menu_item_id,
+                            name: item.name,
+                            quantity: Number(item.quantity || 0),
+                            price: Number(item.price || 0),
+                            recipe: Array.isArray(item.recipe) ? item.recipe : [],
+                            isPreparedMenuItem: Boolean(item.is_prepared_menu_item),
+                            notes: item.notes,
+                            selectedOptions: Array.isArray(item.selected_options) ? item.selected_options : [],
+                            createdAt: item.created_at || new Date().toISOString(),
+                            updatedAt: item.updated_at || new Date().toISOString(),
+                        }))
+                        : [...(existingOrder.items || []), ...localNewItems],
+                    updatedAt: updatedOrder?.updated_at || new Date().toISOString(),
+                };
+
+                await db.takeOrders.put(mergedOrder);
+                onOrderUpdated?.(mergedOrder);
+                window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+                toast({
+                    title: 'Items added',
+                    description: `Order #${existingOrder.orderNumber} has been updated.`,
+                });
+                handleClearCart();
+                onOpenChange(false);
+                return;
+            }
+
             // Prepare the take order payload
             const payload = {
                 branch_id: normalizeBranchId(branchId),
@@ -400,29 +514,7 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
                 customer_name: customerName || undefined,
                 customer_phone: customerPhone || undefined,
                 customer_notes: customerNotes || undefined,
-                items: cart.map(item => {
-                    const isPreparedMenuItem = Boolean(item.isPreparedMenuItem || item.is_prepared_menu_item);
-                    const menuItemId = item.menuItemId || item.menu_item_id || item.menuEntryId || (isPreparedMenuItem ? item.id : undefined);
-                    return {
-                        inventory_item_id: isPreparedMenuItem ? undefined : item.id,
-                        menu_item_id: menuItemId,
-                        is_prepared_menu_item: isPreparedMenuItem,
-                        name: item.name,
-                        quantity: item.quantity,
-                        price: item.price,
-                        recipe: Array.isArray(item.recipe) ? item.recipe : [],
-                        notes: item.notes || undefined,
-                        selected_options: item.isSoldInPortions ? [{
-                            type: 'portion_sale',
-                            name: item.portionDisplay || item.portionName || 'Portion',
-                            group_name: 'Portion',
-                            quantity: 1,
-                            price_delta: 0,
-                            portion_name: item.portionName,
-                            portions_per_unit: item.portionsPerUnit,
-                        }] : [],
-                    };
-                }),
+                items: itemsPayload,
             };
 
             // Send to backend API
@@ -452,28 +544,7 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
                 customerName: createdOrder.customer_name,
                 customerPhone: createdOrder.customer_phone,
                 customerNotes: createdOrder.customer_notes,
-                items: cart.map(item => ({
-                    id: item.id,
-                    inventoryItemId: item.isPreparedMenuItem || item.is_prepared_menu_item ? undefined : item.id,
-                    menuItemId: item.menuItemId || item.menu_item_id || item.menuEntryId || ((item.isPreparedMenuItem || item.is_prepared_menu_item) ? item.id : undefined),
-                    name: item.name,
-                    quantity: item.quantity,
-                    price: item.price,
-                    recipe: Array.isArray(item.recipe) ? item.recipe : [],
-                    isPreparedMenuItem: Boolean(item.isPreparedMenuItem || item.is_prepared_menu_item),
-                    notes: item.notes,
-                    selectedOptions: item.isSoldInPortions ? [{
-                        type: 'portion_sale',
-                        name: item.portionDisplay || item.portionName || 'Portion',
-                        group_name: 'Portion',
-                        quantity: 1,
-                        price_delta: 0,
-                        portion_name: item.portionName,
-                        portions_per_unit: item.portionsPerUnit,
-                    }] : [],
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString(),
-                })),
+                items: mapCartItemsToLocalOrderItems(),
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
                 orderType: 'staff',
@@ -501,8 +572,8 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
             console.error('Failed to send order:', error);
             toast({
                 variant: 'destructive',
-                title: 'Failed to Send Order',
-                description: error instanceof Error ? error.message : 'An error occurred while sending the order.',
+                title: isAddingToExistingOrder ? 'Failed to Add Items' : 'Failed to Send Order',
+                description: error instanceof Error ? error.message : 'An error occurred while saving the order.',
             });
         } finally {
             setIsSubmitting(false);
@@ -516,8 +587,14 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[95vw] w-full h-[90vh] flex flex-col p-0">
         <DialogHeader className="p-4 sm:p-6 pb-2 sm:pb-2 shrink-0">
-          <DialogTitle className="text-xl sm:text-2xl">Take a New Order</DialogTitle>
-          <DialogDescription className="text-xs sm:text-sm">Select items from the menu to build the customer's order.</DialogDescription>
+          <DialogTitle className="text-xl sm:text-2xl">
+            {isAddingToExistingOrder ? `Add Items to Order #${existingOrder?.orderNumber}` : 'Take a New Order'}
+          </DialogTitle>
+          <DialogDescription className="text-xs sm:text-sm">
+            {isAddingToExistingOrder
+                ? 'Add more items to this open order before processing one final sale.'
+                : "Select items from the menu to build the customer's order."}
+          </DialogDescription>
         </DialogHeader>
         
         {/* Mobile: Stacked layout, Desktop: Side-by-side */}
@@ -718,7 +795,7 @@ export function TakeOrderModal({ branchId, isOpen, onOpenChange, businessType }:
                 </Button>
                 <Button
                   className="flex-1 bg-green-600 hover:bg-green-700"
-                  onClick={handleSubmitOrder}
+                  onClick={() => void handleSubmitOrder()}
                   disabled={isSubmitting}
                 >
                   {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

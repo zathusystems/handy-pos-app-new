@@ -556,6 +556,7 @@ export function DashboardHeader({
           onOpenChange={setShowOrdersModal}
           onRequestProcessSale={onProcessSaleOrder ? (order) => onProcessSaleOrder(order.id) : undefined}
           businessType={business?.type}
+          currentUserRole={user?.role ?? null}
         />
       )}
 

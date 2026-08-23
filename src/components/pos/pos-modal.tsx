@@ -3027,6 +3027,7 @@ export function PosModal({
           isOpen={showViewOrdersModal}
           onOpenChange={setShowViewOrdersModal}
           businessType={currentBusinessType}
+          currentUserRole={user?.role ?? null}
         />
       </>
     );
@@ -3303,6 +3304,7 @@ export function PosModal({
         onOpenChange={setShowViewOrdersModal}
         onProcessSale={handleProcessTakeOrderForSale}
         businessType={currentBusinessType}
+        currentUserRole={user?.role ?? null}
       />
       <Dialog open={isCreateCartOpen} onOpenChange={setIsCreateCartOpen}>
         <DialogContent className="max-w-sm" onOpenAutoFocus={(e) => e.preventDefault()}>

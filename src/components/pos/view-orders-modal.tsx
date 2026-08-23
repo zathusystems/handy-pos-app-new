@@ -52,6 +52,7 @@ import { useToast } from '@/hooks/use-toast';
 import { format, parseISO } from 'date-fns';
 import { TakeOrderModal } from './take-order-modal';
 import { BillReceipt } from './bill-receipt';
+import { syncService } from '@/lib/services/sync-service';
 
 type ViewOrdersModalProps = {
   branchId: string;
@@ -60,6 +61,7 @@ type ViewOrdersModalProps = {
   onProcessSale?: (order: TakeOrder) => Promise<boolean | void> | boolean | void;
   onRequestProcessSale?: (order: TakeOrder) => void;
   businessType?: BusinessType | string | null;
+  currentUserRole?: string | null;
 };
 
 type OrderFilter = 'attention' | 'kitchen' | 'ready' | 'cancelled' | 'all';
@@ -129,11 +131,12 @@ const formatOptionPrice = (option: Record<string, any>, formatCurrency: (value: 
   return `${delta > 0 ? '+' : ''}${formatCurrency(delta)}`;
 };
 
-export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale, onRequestProcessSale, businessType }: ViewOrdersModalProps) {
+export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale, onRequestProcessSale, businessType, currentUserRole }: ViewOrdersModalProps) {
   const { format: formatCurrency } = useCurrency();
   const { toast } = useToast();
   const [selectedOrder, setSelectedOrder] = useState<TakeOrder | null>(null);
   const [orderPendingCancellation, setOrderPendingCancellation] = useState<TakeOrder | null>(null);
+  const [orderPendingItems, setOrderPendingItems] = useState<TakeOrder | null>(null);
   const [cancellationReason, setCancellationReason] = useState('');
   const [showTakeOrderModal, setShowTakeOrderModal] = useState(false);
   const [activeFilter, setActiveFilter] = useState<OrderFilter>('attention');
@@ -156,6 +159,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     (order: TakeOrder): boolean => kitchenEnabled && orderHasKitchenPrepItems(order, kitchenInventoryLookup),
     [kitchenEnabled, kitchenInventoryLookup]
   );
+  const canCancelOrders = !currentUserRole || currentUserRole === 'Admin';
 
   // Fetch all take orders for this branch
   const allOrders = useLiveQuery(
@@ -835,6 +839,16 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                   <Printer className="h-4 w-4" />
                   {isPrintingBill ? 'Printing...' : 'Print Bill'}
                 </Button>
+                {order.status !== 'Cancelled' && order.status !== 'Completed' && (
+                  <Button
+                    className="w-full gap-2 sm:w-auto"
+                    variant="outline"
+                    onClick={() => setOrderPendingItems(order)}
+                  >
+                    <Utensils className="h-4 w-4" />
+                    Add Items
+                  </Button>
+                )}
               </div>
               <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
                 {order.status === 'Cancelled' && (
@@ -881,13 +895,15 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                         Process Sale
                       </Button>
                     )}
-                    <Button
-                      className="w-full sm:w-auto"
-                      onClick={() => setOrderPendingCancellation(order)}
-                      variant="destructive"
-                    >
-                      Cancel Order
-                    </Button>
+                    {canCancelOrders && (
+                      <Button
+                        className="w-full sm:w-auto"
+                        onClick={() => setOrderPendingCancellation(order)}
+                        variant="destructive"
+                      >
+                        Cancel Order
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
@@ -1034,6 +1050,21 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         isOpen={showTakeOrderModal}
         onOpenChange={handleTakeOrderOpenChange}
         businessType={businessType}
+      />
+      <TakeOrderModal
+        branchId={branchId}
+        isOpen={Boolean(orderPendingItems)}
+        onOpenChange={(open) => {
+          if (!open) setOrderPendingItems(null);
+        }}
+        businessType={businessType}
+        existingOrder={orderPendingItems}
+        mode="add-items"
+        onOrderUpdated={(order) => {
+          setSelectedOrder(order);
+          setOrderPendingItems(null);
+          void syncService.fetchAllTakeOrdersFromBackend(branchId);
+        }}
       />
       {billOrder && (
         <div className="hidden">

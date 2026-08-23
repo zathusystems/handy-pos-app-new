@@ -1809,6 +1809,7 @@ export default function PosPage() {
               onOpenChange={setShowViewOrdersModal}
               onProcessSale={handleProcessTakeOrderForSale}
               businessType={currentBusinessType}
+              currentUserRole={user?.role ?? null}
             />
           </>
         )}
@@ -1931,6 +1932,7 @@ export default function PosPage() {
           onOpenChange={setShowViewOrdersModal}
           onProcessSale={handleProcessTakeOrderForSale}
           businessType={currentBusinessType}
+          currentUserRole={user?.role ?? null}
         />
       </>
     )}

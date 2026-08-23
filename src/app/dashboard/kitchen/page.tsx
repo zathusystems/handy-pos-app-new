@@ -190,7 +190,7 @@ type KitchenLaneKey = 'New' | 'Preparing' | 'Ready';
 
 export default function KitchenPage() {
   const { toast } = useToast();
-  const { business, loading: isAuthLoading } = useAuth();
+  const { business, user, loading: isAuthLoading } = useAuth();
   const {
     accessCheck: kitchenAccess,
     isLoading: isLoadingKitchenAccess,
@@ -209,6 +209,7 @@ export default function KitchenPage() {
   const [cancellationReason, setCancellationReason] = useState('');
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [activeMobileLane, setActiveMobileLane] = useState<KitchenLaneKey>('New');
+  const canCancelOrders = user?.role === 'Admin';
 
   // Get active branch from localStorage
   useEffect(() => {
@@ -578,6 +579,7 @@ export default function KitchenPage() {
                       inventoryLookup={kitchenInventoryLookup}
                       onStatusChange={updateOrderStatus}
                       onCancel={requestCancelOrder}
+                      canCancel={canCancelOrders}
                       onViewDetails={setSelectedOrder}
                     />
                   ))
@@ -597,6 +599,7 @@ export default function KitchenPage() {
         }}
         onStatusChange={updateOrderStatus}
         onCancel={requestCancelOrder}
+        canCancel={canCancelOrders}
       />
       <Dialog
         open={Boolean(orderPendingCancellation)}
@@ -684,12 +687,14 @@ function OrderCard({
   inventoryLookup,
   onStatusChange,
   onCancel,
+  canCancel,
   onViewDetails,
 }: {
   order: TakeOrder;
   inventoryLookup: KitchenInventoryLookup;
   onStatusChange: (orderId: string, status: string) => void;
   onCancel: (order: TakeOrder) => void;
+  canCancel: boolean;
   onViewDetails: (order: TakeOrder) => void;
 }) {
   const nextStatus = getNextKitchenStatus(order.status);
@@ -780,7 +785,7 @@ function OrderCard({
               Ready for Sale
             </Button>
           )}
-          {order.status !== 'Completed' && (
+          {canCancel && order.status !== 'Completed' && (
             <Button
               variant="outline"
               className="gap-2"
@@ -802,12 +807,14 @@ function OrderDetailsDialog({
   onOpenChange,
   onStatusChange,
   onCancel,
+  canCancel,
 }: {
   order: TakeOrder | null;
   inventoryLookup: KitchenInventoryLookup;
   onOpenChange: (open: boolean) => void;
   onStatusChange: (orderId: string, status: string) => void;
   onCancel: (order: TakeOrder) => void;
+  canCancel: boolean;
 }) {
   if (!order) {
     return <Dialog open={false} onOpenChange={onOpenChange} />;
@@ -996,7 +1003,7 @@ function OrderDetailsDialog({
                 Ready for Sale
               </Button>
             )}
-            {order.status !== 'Completed' && (
+            {canCancel && order.status !== 'Completed' && (
               <Button variant="outline" className="gap-2" onClick={() => onCancel(order)}>
                 <XCircle className="h-4 w-4" />
                 Cancel
