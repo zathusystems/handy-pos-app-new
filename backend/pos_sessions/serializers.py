@@ -84,8 +84,10 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 
 class OrderSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(required=False)
     items = OrderItemSerializer(many=True, required=False)
     eis_sync_state = serializers.SerializerMethodField()
+    tip = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, write_only=True)
 
     class Meta:
         model = Order
@@ -113,6 +115,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'buyer_tin',
             'subtotal',
             'total',
+            'tip',
             'cogs',
             # Tax snapshot fields (MRA compliance)
             'tax_rate_name',
@@ -204,6 +207,9 @@ class OrderSerializer(serializers.ModelSerializer):
 
             # Extract items before creating order
             items_data = validated_data.pop('items', [])
+            tip_amount = Decimal(str(validated_data.pop('tip', 0) or 0))
+            if tip_amount < 0:
+                tip_amount = Decimal('0.00')
 
             # Get business from branch if not provided
             branch = validated_data.get('branch')
@@ -340,6 +346,14 @@ class OrderSerializer(serializers.ModelSerializer):
 
             # Once used in a transaction, lock the tax rate for fiscal immutability.
             lock_tax_rate_on_use(applied_tax_rate)
+
+            if tip_amount > 0 and order.session_id:
+                order.session.total_tips = (order.session.total_tips or Decimal('0.00')) + tip_amount
+                if str(order.payment_method or '').strip().lower() == 'cash':
+                    order.session.expected_cash = (order.session.expected_cash or Decimal('0.00')) + tip_amount
+                    order.session.save(update_fields=['total_tips', 'expected_cash', 'updated_at'])
+                else:
+                    order.session.save(update_fields=['total_tips', 'updated_at'])
 
             return order
 

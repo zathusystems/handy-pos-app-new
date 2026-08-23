@@ -358,10 +358,10 @@ def ensure_invoice_for_account_order(order, account_tx=None, created_by=None):
             quantity = _quantity(getattr(item, 'quantity', None))
             unit_price = _money(getattr(item, 'price', None))
             tax_amount = _money(getattr(item, 'tax_amount', None))
-            total_amount = _money(
-                getattr(item, 'total', None)
-                or (unit_price * quantity)
-            )
+            stored_subtotal = _money(getattr(item, 'subtotal', None))
+            line_subtotal = stored_subtotal if stored_subtotal > 0 else _money(unit_price * quantity)
+            stored_total = _money(getattr(item, 'total', None))
+            total_amount = stored_total if stored_total > 0 else _money(line_subtotal + tax_amount)
 
             InvoiceLine.objects.create(
                 invoice=invoice,
@@ -377,7 +377,11 @@ def ensure_invoice_for_account_order(order, account_tx=None, created_by=None):
 
         if order_items:
             subtotal = sum(
-                _money(getattr(item, 'subtotal', None))
+                (
+                    _money(getattr(item, 'subtotal', None))
+                    if _money(getattr(item, 'subtotal', None)) > 0
+                    else _money(_money(getattr(item, 'price', None)) * _quantity(getattr(item, 'quantity', None)))
+                )
                 for item in order_items
             )
             tax = sum(
@@ -385,7 +389,18 @@ def ensure_invoice_for_account_order(order, account_tx=None, created_by=None):
                 for item in order_items
             )
             total = sum(
-                _money(getattr(item, 'total', None))
+                (
+                    _money(getattr(item, 'total', None))
+                    if _money(getattr(item, 'total', None)) > 0
+                    else _money(
+                        (
+                            _money(getattr(item, 'subtotal', None))
+                            if _money(getattr(item, 'subtotal', None)) > 0
+                            else _money(_money(getattr(item, 'price', None)) * _quantity(getattr(item, 'quantity', None)))
+                        )
+                        + _money(getattr(item, 'tax_amount', None))
+                    )
+                )
                 for item in order_items
             )
             invoice.subtotal = subtotal

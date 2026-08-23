@@ -277,6 +277,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                         from business.customer_accounts import record_credit_sale_for_order
 
                         account_tx = record_credit_sale_for_order(order, created_by=request.user)
+                        order.refresh_from_db()
                         print(
                             f"[Order] Customer account debit created for order {order.id}: "
                             f"{account_tx.amount if account_tx else 'n/a'}"

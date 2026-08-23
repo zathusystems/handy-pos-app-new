@@ -84,7 +84,7 @@ def recompute_session_totals(session):
     session.total_on_account_sales = totals['on_account']
     session.total_other_sales = totals['other']
     session.total_tips = total_tips
-    session.expected_cash = session.opening_float + totals['cash']
+    session.expected_cash = session.opening_float + totals['cash'] + total_tips
 
     session.save(update_fields=[
         'total_sales',

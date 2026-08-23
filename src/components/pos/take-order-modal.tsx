@@ -466,7 +466,6 @@ export function TakeOrderModal({
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        status: orderStatus,
                         items: itemsPayload,
                     }),
                 });
@@ -474,7 +473,7 @@ export function TakeOrderModal({
                 const localNewItems = mapCartItemsToLocalOrderItems();
                 const mergedOrder: TakeOrder = {
                     ...existingOrder,
-                    status: updatedOrder?.status || orderStatus,
+                    status: updatedOrder?.status || existingOrder.status,
                     items: Array.isArray(updatedOrder?.items)
                         ? updatedOrder.items.map((item: any) => ({
                             id: item.id || item.inventory_item_id || item.menu_item_id || crypto.randomUUID(),

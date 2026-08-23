@@ -447,6 +447,43 @@ class TakeOrderStatusManagementTests(TestCase):
             ).exists()
         )
 
+    def test_adding_items_does_not_change_existing_order_status(self):
+        order = self._create_order(status='Pending')
+        extra_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Still Water',
+            category='Drinks',
+            item_type='sellable',
+            stock_units=Decimal('5.000'),
+            reorder_level=Decimal('1.000'),
+            cost=Decimal('1.00'),
+            price=Decimal('2.00'),
+            value=Decimal('5.00'),
+        )
+
+        response = self.client.post(
+            f'/api/orders/take-orders/{order.id}/add_items/',
+            {
+                'status': 'Ready',
+                'items': [
+                    {
+                        'inventory_item_id': str(extra_item.id),
+                        'name': extra_item.name,
+                        'quantity': '1.000',
+                        'price': '2.00',
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['status'], 'Pending')
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'Pending')
+        self.assertEqual(order.items.count(), 2)
+
     def test_items_cannot_be_added_to_completed_order(self):
         order = self._create_order(status='Completed')
 

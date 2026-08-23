@@ -380,6 +380,9 @@ def sync_push(request):
                             'customer_notes',
                             'buyer_name',
                             'buyer_tin',
+                            'is_invoice_sale',
+                            'invoice_id',
+                            'is_paid',
                             'fiscal_invoice_number',
                             'eis_status',
                             'eis_uuid',
@@ -1462,6 +1465,7 @@ def handle_create_order(order_id, data, business, branch_id, user):
         if str(order.payment_method or '').strip().lower() == 'on account':
             try:
                 account_tx = record_credit_sale_for_order(order, created_by=user)
+                order.refresh_from_db()
                 print(
                     f"[Sync Sessions] Customer account debit created for order {order.id}: "
                     f"{account_tx.amount if account_tx else 'n/a'}"
@@ -1497,6 +1501,15 @@ def handle_create_order(order_id, data, business, branch_id, user):
                     'success': False,
                     'error': _validation_error_message(laybuy_exc),
                 }
+
+        tip_amount = _quantize_money(_to_decimal(data.get('tip'), Decimal('0')))
+        if tip_amount > 0 and order.session_id:
+            order.session.total_tips = (order.session.total_tips or Decimal('0.00')) + tip_amount
+            if str(order.payment_method or '').strip().lower() == 'cash':
+                order.session.expected_cash = (order.session.expected_cash or Decimal('0.00')) + tip_amount
+                order.session.save(update_fields=['total_tips', 'expected_cash', 'updated_at'])
+            else:
+                order.session.save(update_fields=['total_tips', 'updated_at'])
 
         # Decrement inventory stock for completed sales using FIFO. Laybuy is
         # reserved now and consumed when the customer collects the goods.

@@ -309,33 +309,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         for item_data in validated_items:
             TakeOrderItem.objects.create(take_order=take_order, **item_data)
 
-        requested_status = request.data.get('status') or take_order.status
-        if requested_status in dict(TakeOrder.STATUS_CHOICES):
-            resolved_status = _resolve_take_order_status(take_order, requested_status)
-            if resolved_status in {'Sent to Kitchen', 'Preparing', 'Ready'}:
-                order_lines = [
-                    {
-                        'inventory_item_id': item.inventory_item_id,
-                        'menu_item_id': item.menu_item_id,
-                        'name': item.name,
-                        'quantity': item.quantity,
-                        'recipe': item.recipe or [],
-                        'is_prepared_menu_item': item.is_prepared_menu_item,
-                        'selected_options': item.selected_options or [],
-                    }
-                    for item in take_order.items.all()
-                ]
-                try:
-                    validate_stock_available_for_order_lines(order_lines, take_order.business, take_order.branch)
-                except DjangoValidationError as exc:
-                    return Response(_django_validation_payload(exc), status=status.HTTP_400_BAD_REQUEST)
-
-            take_order.status = resolved_status
-            take_order.completed_at = None
-            take_order.completed_by = None
-            take_order.save(update_fields=['status', 'completed_at', 'completed_by', 'updated_at'])
-        else:
-            take_order.save(update_fields=['updated_at'])
+        take_order.save(update_fields=['updated_at'])
 
         take_order.refresh_from_db()
         serializer = TakeOrderSerializer(take_order)

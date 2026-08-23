@@ -759,6 +759,31 @@ class SyncPushOrderTests(TestCase):
         self.inventory_item.refresh_from_db()
         self.assertEqual(self.inventory_item.stock_units, Decimal('9.000'))
 
+    def test_sync_push_records_cash_change_tip_in_session_totals(self):
+        order_id = str(uuid.uuid4())
+        payload = self._build_sync_payload(order_id)
+        payload['changes'][0]['data']['tip'] = 1.5
+
+        response = self.client.post('/sessions/sync/push/', payload, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['results']['errors'], [])
+        self.assertEqual(Order.objects.filter(id=order_id).count(), 1)
+
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.total_cash_sales, Decimal('5.00'))
+        self.assertEqual(self.session.total_tips, Decimal('1.50'))
+        self.assertEqual(self.session.expected_cash, Decimal('6.50'))
+
+        second_response = self.client.post('/sessions/sync/push/', payload, format='json')
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.data['results']['errors'], [])
+
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.total_cash_sales, Decimal('5.00'))
+        self.assertEqual(self.session.total_tips, Decimal('1.50'))
+        self.assertEqual(self.session.expected_cash, Decimal('6.50'))
+
     def test_sync_push_variable_price_keeps_unit_price_and_fractional_quantity(self):
         self.inventory_item.is_variable_price = True
         self.inventory_item.price = Decimal('40.00')
