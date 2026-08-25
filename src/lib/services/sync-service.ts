@@ -413,6 +413,46 @@ class SyncService {
     };
   }
 
+  private normalizeChargeRecord(record: any, fallbackBusinessId = ''): any | null {
+    const converted = this.snakeToCamel(record);
+    const id = String(converted.id ?? record?.id ?? '').trim();
+    if (!id) return null;
+
+    const nowIso = new Date().toISOString();
+    const defaultDate = nowIso.split('T')[0];
+    const businessId = String(
+      converted.businessId ??
+      converted.business ??
+      record?.business_id ??
+      record?.business ??
+      fallbackBusinessId ??
+      ''
+    ).trim() || fallbackBusinessId;
+
+    const rawChargeType = String(converted.chargeType ?? record?.charge_type ?? 'LEVY').trim().toUpperCase();
+    const chargeType = rawChargeType === 'SERVICE_CHARGE' || rawChargeType === 'OTHER' ? rawChargeType : 'LEVY';
+    const rawMethod = String(converted.calculationMethod ?? record?.calculation_method ?? 'exclusive').trim().toLowerCase();
+    const calculationMethod = rawMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+    const rawBase = String(converted.calculationBase ?? record?.calculation_base ?? 'net_subtotal').trim().toLowerCase();
+    const calculationBase = rawBase === 'gross_total' ? 'gross_total' : 'net_subtotal';
+
+    return {
+      id,
+      businessId,
+      name: String(converted.name ?? record?.name ?? 'Charge').trim() || 'Charge',
+      chargeType,
+      rate: this.toNumber(converted.rate ?? record?.rate, 0),
+      calculationMethod,
+      calculationBase,
+      autoApply: this.toBoolean(converted.autoApply ?? record?.auto_apply, true),
+      isActive: this.toBoolean(converted.isActive ?? record?.is_active, true),
+      effectiveFrom: String(converted.effectiveFrom ?? record?.effective_from ?? defaultDate).trim() || defaultDate,
+      effectiveTo: String(converted.effectiveTo ?? record?.effective_to ?? '').trim() || undefined,
+      createdAt: String(converted.createdAt ?? record?.created_at ?? nowIso).trim() || nowIso,
+      updatedAt: String(converted.updatedAt ?? record?.updated_at ?? nowIso).trim() || nowIso,
+    };
+  }
+
   private normalizeCustomerRecord(record: any, fallbackBranchId = ''): any | null {
     const converted = this.snakeToCamel(record);
     const id = String(converted.id ?? record?.id ?? '').trim();
@@ -552,12 +592,14 @@ class SyncService {
       const expenseChanges = changes.filter(c => c.entity_type === 'Expense');
       const customerChanges = changes.filter(c => c.entity_type === 'Customer');
       const taxChanges = changes.filter(c => c.entity_type === 'TaxRate');
+      const chargeChanges = changes.filter(c => c.entity_type === 'BusinessCharge');
       const inventoryChanges = changes.filter(c =>
         c.entity_type !== 'TakeOrder' &&
         c.entity_type !== 'Session' &&
         c.entity_type !== 'Order' &&
         c.entity_type !== 'Customer' &&
         c.entity_type !== 'TaxRate' &&
+        c.entity_type !== 'BusinessCharge' &&
         c.entity_type !== 'Expense'
       );
       const takeOrderChanges = changes.filter(c => c.entity_type === 'TakeOrder');
@@ -814,6 +856,35 @@ class SyncService {
           }
         } catch (error) {
           console.error('[Sync] Tax push failed:', error);
+        }
+      }
+
+      if (chargeChanges.length > 0) {
+        try {
+          const businessId = this.resolveBusinessId();
+
+          const result = await authFetch.fetch('/business/sync/push/', {
+            method: 'POST',
+            body: JSON.stringify({
+              last_synced_at: this.syncState.last_synced_at,
+              changes: chargeChanges,
+              business_id: businessId,
+              branch_id: backendBranchId
+            })
+          });
+
+          if (result.results?.acknowledged && Array.isArray(result.results.acknowledged)) {
+            console.log(`[Sync] ${result.results.acknowledged.length} charge changes acknowledged`);
+            for (const ack of result.results.acknowledged) {
+              await this.markChangeAsSynced(ack.id);
+            }
+          }
+
+          if (result.results?.errors && result.results.errors.length > 0) {
+            console.error(`[Sync] ${result.results.errors.length} charge sync errors:`, result.results.errors);
+          }
+        } catch (error) {
+          console.error('[Sync] Charge push failed:', error);
         }
       }
 
@@ -1421,6 +1492,21 @@ class SyncService {
 
       console.log(`[Sync] Collected ${dirtyTaxes.length} dirty tax rates`);
 
+      const charges = await db.charges.toArray();
+      const dirtyCharges = charges.filter((charge) => charge._dirty);
+      for (const charge of dirtyCharges) {
+        const sanitized = this.sanitizeForSync(charge);
+        changes.push({
+          id: charge.id,
+          entity_type: 'BusinessCharge',
+          op: charge._operation || 'update',
+          data: sanitized,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      console.log(`[Sync] Collected ${dirtyCharges.length} dirty business charges`);
+
       // Collect from expenses
       const expenses = await db.expenses
         .where('branchId')
@@ -1465,7 +1551,7 @@ class SyncService {
     }
     
     // ✅ Fields that should NOT be converted to snake_case (backend expects camelCase)
-    const keepCamelCase = ['supplierId', 'supplierName', 'totalItems', 'totalCost', 'paymentStatus', 'amountPaid', 'amountDue', 'createdBy', 'createdByName', 'customerId', 'inventoryItemId', 'quantityOrdered', 'quantityReceived', 'quantityRemaining', 'costPerUnit', 'batchNumber', 'expiryDate', 'branchId', 'businessId', 'supplierTin', 'vatRegistered', 'itemType', 'stockUnits', 'unitType', 'reorderLevel', 'isVariablePrice', 'isProduced', 'isSoldInPortions', 'portionName', 'portionsPerUnit', 'portionPrice', 'isRecipeIngredient', 'onMenu', 'isRecipeIngredient'];
+    const keepCamelCase = ['supplierId', 'supplierName', 'totalItems', 'totalCost', 'paymentStatus', 'amountPaid', 'amountDue', 'createdBy', 'createdByName', 'customerId', 'inventoryItemId', 'quantityOrdered', 'quantityReceived', 'quantityRemaining', 'costPerUnit', 'batchNumber', 'expiryDate', 'branchId', 'businessId', 'supplierTin', 'vatRegistered', 'itemType', 'stockUnits', 'unitType', 'reorderLevel', 'isVariablePrice', 'isProduced', 'isSoldInPortions', 'portionName', 'portionsPerUnit', 'portionPrice', 'isRecipeIngredient', 'onMenu', 'showInCustomSalesSection', 'isRecipeIngredient'];
     
     // Convert camelCase keys to snake_case for backend
     const converted: any = {};
@@ -1513,6 +1599,8 @@ class SyncService {
       ['netAmount', 'net_amount'],
       ['vatAmount', 'vat_amount'],
       ['grossAmount', 'gross_amount'],
+      ['chargesAmount', 'charges_amount'],
+      ['chargesSnapshot', 'charges_snapshot'],
       ['pumpName', 'pump_name'],
       ['customerId', 'customer_id'],
       ['customerName', 'customer_name'],
@@ -2951,6 +3039,50 @@ class SyncService {
         console.log(`[Sync] Applied ${changes.tax_rates.length} tax rate changes`);
       }
 
+      if (changes.charges && Array.isArray(changes.charges) && changes.charges.length > 0) {
+        const fallbackBusinessId = this.resolveBusinessId();
+
+        for (const charge of changes.charges) {
+          try {
+            const normalizedCharge = this.normalizeChargeRecord(charge, fallbackBusinessId);
+            if (!normalizedCharge) {
+              console.warn('[Sync] Skipping charge without id:', charge);
+              continue;
+            }
+
+            const operation = String(charge?._operation ?? charge?.operation ?? '').trim().toLowerCase();
+            const isDeleted =
+              operation === 'delete' ||
+              this.toBoolean(charge?.is_deleted ?? charge?.isDeleted ?? charge?.deleted, false);
+
+            if (isDeleted) {
+              await db.charges.delete(normalizedCharge.id);
+              console.log(`[Sync] Removed charge ${normalizedCharge.id} from server delete`);
+              continue;
+            }
+
+            const existingCharge = await db.charges.get(normalizedCharge.id);
+            if (existingCharge?._dirty) {
+              console.log(`[Sync] Skipping server overwrite for dirty charge ${normalizedCharge.id}`);
+              continue;
+            }
+
+            await db.charges.put({
+              ...(existingCharge || {}),
+              ...normalizedCharge,
+              _dirty: false,
+              _operation: undefined,
+              _synced_at: new Date().toISOString()
+            });
+
+            console.log(`[Sync] Upserted charge ${normalizedCharge.id} from server`);
+          } catch (error) {
+            console.error(`[Sync] Error applying charge ${charge.id}:`, error);
+          }
+        }
+        console.log(`[Sync] Applied ${changes.charges.length} charge changes`);
+      }
+
       // Apply MRA mappings (CRITICAL for POS)
       if (changes.mra_mappings && Array.isArray(changes.mra_mappings) && changes.mra_mappings.length > 0) {
         console.log('[Sync] Processing MRA mappings:', changes.mra_mappings.length);
@@ -3339,11 +3471,12 @@ class SyncService {
       const dirtySuppliers = (await db.suppliers.toArray()).filter(r => r._dirty).length;
       const dirtyTakeOrders = (await db.takeOrders.toArray()).filter(r => r._dirty).length;
       const dirtyTaxes = (await db.taxes.toArray()).filter(r => r._dirty).length;
+      const dirtyCharges = (await db.charges.toArray()).filter(r => r._dirty).length;
 
-      const total = dirtyOrders + dirtySessions + dirtyInventory + dirtyPurchaseOrders + dirtyStockTransfers + dirtyWasteRecords + dirtyPurchaseHistory + dirtySuppliers + dirtyTakeOrders + dirtyTaxes;
+      const total = dirtyOrders + dirtySessions + dirtyInventory + dirtyPurchaseOrders + dirtyStockTransfers + dirtyWasteRecords + dirtyPurchaseHistory + dirtySuppliers + dirtyTakeOrders + dirtyTaxes + dirtyCharges;
       
       if (total > 0) {
-        console.log(`[Sync] Dirty records count: Orders=${dirtyOrders}, Sessions=${dirtySessions}, Inventory=${dirtyInventory}, Taxes=${dirtyTaxes}, Total=${total}`);
+        console.log(`[Sync] Dirty records count: Orders=${dirtyOrders}, Sessions=${dirtySessions}, Inventory=${dirtyInventory}, Taxes=${dirtyTaxes}, Charges=${dirtyCharges}, Total=${total}`);
       }
       
       return total;

@@ -39,9 +39,45 @@ export interface ReportData {
   }[];
   salesByCategory: { name: string; revenue: number; revenueWithTax: number }[];
   salesByStaff: { name: string; sales: number; salesWithTax: number; transactions: number }[];
+  customSalesSection: {
+    enabled: boolean;
+    name: string;
+    quantity: number;
+    revenue: number;
+    revenueWithTax: number;
+    products: { name: string; quantity: number; revenue: number; revenueWithTax: number }[];
+  };
 }
 
 export const useReports = (dateRange?: DateRange) => {
+  const emptyCustomSalesSection = {
+    enabled: false,
+    name: '',
+    quantity: 0,
+    revenue: 0,
+    revenueWithTax: 0,
+    products: [],
+  };
+
+  const resolveCustomSalesSectionSettings = () => {
+    if (typeof window === 'undefined') {
+      return { enabled: false, name: '' };
+    }
+    try {
+      const raw = window.localStorage.getItem('handypos-business-settings');
+      const parsed = raw ? JSON.parse(raw) : null;
+      const enabled = parsed?.enableCustomSalesSection === true ||
+        parsed?.enable_custom_sales_section === true ||
+        parsed?.enableCustomSalesSection === 'true' ||
+        parsed?.enable_custom_sales_section === 'true';
+      const name = String(parsed?.customSalesSectionName ?? parsed?.custom_sales_section_name ?? '').trim();
+      return { enabled: enabled && Boolean(name), name };
+    } catch (error) {
+      console.warn('[Reports] Failed to read custom sales section settings:', error);
+      return { enabled: false, name: '' };
+    }
+  };
+
   const toFiniteNumber = (value: unknown, fallback = 0): number => {
     const parsed = typeof value === 'number' ? value : Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
@@ -139,6 +175,7 @@ export const useReports = (dateRange?: DateRange) => {
     slowMovingProducts: [],
     salesByCategory: [],
     salesByStaff: [],
+    customSalesSection: emptyCustomSalesSection,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -165,6 +202,7 @@ export const useReports = (dateRange?: DateRange) => {
         slowMovingProducts: [],
         salesByCategory: [],
         salesByStaff: [],
+        customSalesSection: emptyCustomSalesSection,
       });
       return;
     }
@@ -178,6 +216,7 @@ export const useReports = (dateRange?: DateRange) => {
         const fromMs = Date.parse(from);
         const toMs = Date.parse(to);
         const branchCandidates = new Set(getBranchIdCandidates(activeBranchId));
+        const customSectionSettings = resolveCustomSalesSectionSettings();
 
         const [orders, allExpenses, inventory, staff] = await Promise.all([
           db.orders
@@ -331,7 +370,7 @@ export const useReports = (dateRange?: DateRange) => {
         // Note: Product prices already include VAT, so:
         // - revenueWithTax = actual price paid (includes VAT)
         // - revenue = price without VAT (calculated by removing tax)
-        const productMap = new Map<string, { name: string; category: string; quantity: number; revenue: number; revenueWithTax: number }>();
+        const productMap = new Map<string, { name: string; category: string; quantity: number; revenue: number; revenueWithTax: number; showInCustomSalesSection: boolean }>();
         normalizedOrders.forEach(order => {
             const totalItemQuantity = order.items.reduce((sum, i) => sum + Math.max(0, toFiniteNumber(i.quantity, 0)), 0);
             if (totalItemQuantity <= 0) return;
@@ -347,7 +386,14 @@ export const useReports = (dateRange?: DateRange) => {
                 if (quantity <= 0) return;
 
                 const productKey = String(product.id);
-                const existing = productMap.get(productKey) || { name: product.name, category: product.category, quantity: 0, revenue: 0, revenueWithTax: 0 };
+                const existing = productMap.get(productKey) || {
+                  name: product.name,
+                  category: product.category,
+                  quantity: 0,
+                  revenue: 0,
+                  revenueWithTax: 0,
+                  showInCustomSalesSection: Boolean(product.showInCustomSalesSection ?? product.show_in_custom_sales_section),
+                };
                 existing.quantity += quantity;
                 
                 // Calculate item revenue WITH tax (actual price paid - includes VAT)
@@ -456,6 +502,28 @@ export const useReports = (dateRange?: DateRange) => {
                 revenueWithTax: c.revenueWithTax
             }));
 
+        const customSectionProducts = customSectionSettings.enabled
+          ? Array.from(productMap.values())
+              .filter((product) => product.showInCustomSalesSection)
+              .sort((a, b) => b.revenueWithTax - a.revenueWithTax)
+              .map((product) => ({
+                name: product.name,
+                quantity: product.quantity,
+                revenue: product.revenue,
+                revenueWithTax: product.revenueWithTax,
+              }))
+          : [];
+        const customSalesSection = customSectionSettings.enabled
+          ? {
+              enabled: true,
+              name: customSectionSettings.name,
+              quantity: customSectionProducts.reduce((sum, product) => sum + product.quantity, 0),
+              revenue: customSectionProducts.reduce((sum, product) => sum + product.revenue, 0),
+              revenueWithTax: customSectionProducts.reduce((sum, product) => sum + product.revenueWithTax, 0),
+              products: customSectionProducts,
+            }
+          : emptyCustomSalesSection;
+
         // STAFF CALCULATIONS - RESPECTING TAX
         const staffMap = new Map<string, { name: string; sales: number; salesWithTax: number; transactions: number }>();
         await Promise.all(normalizedOrders.map(async order => {
@@ -498,6 +566,7 @@ export const useReports = (dateRange?: DateRange) => {
             slowMovingProducts,
             salesByCategory,
             salesByStaff,
+            customSalesSection,
         });
 
       } catch (e: any) {

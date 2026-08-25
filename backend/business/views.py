@@ -20,7 +20,7 @@ from decimal import Decimal
 import re
 
 from .models import (
-    Business, Branch, BusinessSettings, TaxRate, Invoice, InvoiceLine,
+    Business, Branch, BusinessSettings, TaxRate, BusinessCharge, Invoice, InvoiceLine,
     Customer, CustomerAccountTransaction, CustomerLaybuy, Expense
 )
 from .customer_accounts import collect_laybuy, record_customer_payment, record_laybuy_payment
@@ -28,7 +28,8 @@ from .serializers import (
     BusinessSerializer, BusinessDetailSerializer, BusinessCreateSerializer,
     BusinessUpdateSerializer, BranchSerializer, BranchCreateSerializer,
     BusinessSettingsSerializer, TaxRateSerializer, TaxRateCreateSerializer,
-    TaxRateUpdateSerializer, InvoiceSerializer, InvoiceDetailSerializer,
+    TaxRateUpdateSerializer, BusinessChargeSerializer,
+    BusinessChargeCreateUpdateSerializer, InvoiceSerializer, InvoiceDetailSerializer,
     InvoiceCreateSerializer, InvoiceUpdateSerializer, InvoiceLineSerializer,
     CustomerSerializer, CustomerCreateSerializer, CustomerAccountTransactionSerializer,
     CustomerPaymentSerializer, CustomerLaybuySerializer, CustomerLaybuyPaymentSerializer,
@@ -407,6 +408,46 @@ class TaxRateViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
         """Get all active tax rates"""
         tax_rates = self.get_queryset().filter(is_active=True)
         serializer = self.get_serializer(tax_rates, many=True)
+        return Response(serializer.data)
+
+
+class BusinessChargeViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
+    """Manage business-level charges such as levies and service charges."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    required_subscription_feature = 'tax_management'
+    feature_gate_actions = {'create', 'update', 'partial_update', 'destroy'}
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'charge_type']
+    ordering_fields = ['name', 'rate', 'created_at']
+    ordering = ['name']
+
+    def get_queryset(self):
+        business_ids = _accessible_business_ids_for_user(self.request.user)
+        return BusinessCharge.objects.filter(business_id__in=business_ids)
+
+    def get_serializer_class(self):
+        if self.action in {'create', 'update', 'partial_update'}:
+            return BusinessChargeCreateUpdateSerializer
+        return BusinessChargeSerializer
+
+    def perform_create(self, serializer):
+        business = Business.objects.filter(id__in=_accessible_business_ids_for_user(self.request.user)).first()
+        if not business:
+            raise serializers.ValidationError('User must have a business')
+        serializer.save(business=business, created_by=self.request.user)
+
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        today = timezone.localdate()
+        charges = self.get_queryset().filter(
+            is_active=True,
+            auto_apply=True,
+            effective_from__lte=today,
+        ).filter(
+            Q(effective_to__isnull=True) | Q(effective_to__gte=today)
+        )
+        serializer = self.get_serializer(charges, many=True)
         return Response(serializer.data)
 
 

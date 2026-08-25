@@ -149,6 +149,10 @@ def handle_create_inventory_item(item_id, data, business, branch_id):
         if is_sold_in_portions_raw is None:
             is_sold_in_portions_raw = data.get('isSoldInPortions', False)
 
+        show_in_custom_sales_section_raw = data.get('show_in_custom_sales_section')
+        if show_in_custom_sales_section_raw is None:
+            show_in_custom_sales_section_raw = data.get('showInCustomSalesSection', False)
+
         portion_name_raw = data.get('portion_name')
         if portion_name_raw is None:
             portion_name_raw = data.get('portionName')
@@ -189,6 +193,7 @@ def handle_create_inventory_item(item_id, data, business, branch_id):
             'is_produced': _parse_bool(is_produced_raw, False),
             'on_menu': _parse_bool(on_menu_raw, False),
             'is_sold_in_portions': _parse_bool(is_sold_in_portions_raw, False),
+            'show_in_custom_sales_section': _parse_bool(show_in_custom_sales_section_raw, False),
             'portion_name': clean_value(portion_name_raw),
             'portions_per_unit': _parse_finite_float(portions_per_unit_raw, 'portions_per_unit', None),
             'portion_price': _parse_finite_float(portion_price_raw, 'portion_price', None),
@@ -363,6 +368,11 @@ def handle_update_inventory_item(item_id, data, business, branch_id):
             item.is_sold_in_portions = _parse_bool(
                 data.get('is_sold_in_portions', data.get('isSoldInPortions')),
                 item.is_sold_in_portions
+            )
+        if 'show_in_custom_sales_section' in data or 'showInCustomSalesSection' in data:
+            item.show_in_custom_sales_section = _parse_bool(
+                data.get('show_in_custom_sales_section', data.get('showInCustomSalesSection')),
+                item.show_in_custom_sales_section
             )
         if 'portion_name' in data or 'portionName' in data:
             item.portion_name = data.get('portion_name') if 'portion_name' in data else data.get('portionName')

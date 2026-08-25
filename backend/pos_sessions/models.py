@@ -153,6 +153,12 @@ class Order(models.Model):
     vat_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     net_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     gross_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    charges_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    charges_snapshot = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Immutable snapshot of additional charges/levies applied to this order."
+    )
     
     # Cost tracking
     cogs = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -310,6 +316,17 @@ class OrderItem(models.Model):
         decimal_places=2,
         default=0,
         help_text="Tax amount for this item"
+    )
+    charges_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Additional charge/levy amount for this item"
+    )
+    charges_snapshot = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Immutable snapshot of additional charges/levies applied to this order line."
     )
     total = models.DecimalField(
         max_digits=12,

@@ -477,7 +477,7 @@ export const Receipt2 = ({
     (order as any).branchId ?? (order as any).branch_id ?? (receiptSession as any)?.branchId
   );
 
-  const businessName = toTrimmedString(resolvedBusiness?.name) || 'Handy POS';
+  const businessName = (toTrimmedString(resolvedBusiness?.name) || 'Handy POS').toUpperCase();
   const businessNameLength = businessName.replace(/\s+/g, '').length;
   const branchName = toTrimmedString(activeBranch?.name);
   const businessPhone = toTrimmedString(resolvedBusiness?.phone);
@@ -642,7 +642,7 @@ export const Receipt2 = ({
   const qrCodeUrl =
     `https://api.qrserver.com/v1/create-qr-code/?size=${qrPixelSize}x${qrPixelSize}&ecc=M&margin=0&data=${encodeURIComponent(qrPayload)}`;
   const shouldShowHeader = showHeader;
-  const shouldShowTaxBreakdown = fiscalMode && showTaxBreakdown;
+  const shouldShowTaxBreakdown = false;
   const shouldShowQRCode = fiscalMode && showQRCode;
   const shouldShowFooter = showFooter;
 
@@ -655,7 +655,7 @@ export const Receipt2 = ({
           width: ${sheetWidth};
           box-sizing: border-box;
           margin: 0 auto;
-          padding: ${isCompactPaper ? 10 : 12}px ${horizontalPadding}px ${isCompactPaper ? 12 : 14}px;
+          padding: ${isCompactPaper ? 10 : 12}px ${horizontalPadding}px ${isCompactPaper ? 46 : 56}px;
           background: #fff;
           color: #000;
           font-family: "Courier New", "Liberation Mono", "Lucida Console", monospace;
@@ -762,6 +762,9 @@ export const Receipt2 = ({
         .receipt2-strong {
           font-weight: 800;
         }
+        .receipt2-bottom-space {
+          height: ${isCompactPaper ? 46 : 58}px;
+        }
         @media print {
           @page {
             size: ${resolvedPaperWidth} auto;
@@ -776,7 +779,7 @@ export const Receipt2 = ({
           .receipt2-sheet {
             width: ${resolvedPaperWidth};
             margin: 0 auto !important;
-            padding: 2mm ${printPaddingXmm}mm ${isCompactPaper ? 3 : 4}mm !important;
+            padding: 2mm ${printPaddingXmm}mm ${isCompactPaper ? 16 : 18}mm !important;
           }
         }
       `}</style>
@@ -792,15 +795,10 @@ export const Receipt2 = ({
         data-receipt-legal-marker-scale-x={legalMarkerScale}
         data-receipt-qr-code-size={qrPixelSize}
       >
-        {fiscalMode && (
-          <>
-            <div className="receipt2-center">
-              <span className="receipt2-legal-marker">*** START OF LEGAL RECEIPT ***</span>
-            </div>
-            <div className="receipt2-break" />
-            <div className="receipt2-break" />
-          </>
-        )}
+        <div className="receipt2-center">
+          <span className="receipt2-legal-marker">*** START OF RECEIPT ***</span>
+        </div>
+        <div className="receipt2-break" />
         {copyNumber > 1 && (
           <div className="receipt2-center receipt2-copy">*** COPY #{copyNumber} ***</div>
         )}
@@ -861,7 +859,7 @@ export const Receipt2 = ({
                 </div>
                 <LegalRow
                   left={item.name}
-                  right={`${formatAmount(item.grossAmount)} ${item.taxCategory}`}
+                  right={formatAmount(item.grossAmount)}
                 />
                 {item.optionLines.map((line, index) => (
                   <div className="receipt2-option" key={`${item.id}-option-${index}`}>
@@ -925,13 +923,10 @@ export const Receipt2 = ({
 
         {shouldShowFooter && (
           <div className="receipt2-center">
-            {fiscalMode ? (
-              <span className="receipt2-legal-marker">*** END OF LEGAL RECEIPT ***</span>
-            ) : (
-              <span>Thank you for your purchase</span>
-            )}
+            <span className="receipt2-legal-marker">*** END OF RECEIPT ***</span>
           </div>
         )}
+        <div className="receipt2-bottom-space" />
       </div>
     </div>
   );

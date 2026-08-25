@@ -1088,7 +1088,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               sum + toFiniteNumber(item.quantity, 0) * toFiniteNumber(item.price, 0)
             ), 0)}
             taxLabel="Tax"
-            cartTitle={`Order ${billOrder.orderNumber}`}
             billNumber={billNumber}
             customerName={billOrder.customerName}
             customerPhone={billOrder.customerPhone}

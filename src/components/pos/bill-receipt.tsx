@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { format } from 'date-fns';
 import type { Business } from '@/lib/db';
 import { getOfflineBusinessProfile } from '@/lib/business-profile';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -46,6 +45,7 @@ type BillReceiptProps = {
   currencyFormatter: (amount: number) => string;
   subtotal: number;
   tax: number;
+  charges?: number;
   total: number;
   taxLabel?: string;
   cartTitle?: string;
@@ -140,6 +140,7 @@ export function BillReceipt({
   currencyFormatter,
   subtotal,
   tax,
+  charges = 0,
   total,
   taxLabel = 'VAT Amount',
   cartTitle,
@@ -150,7 +151,6 @@ export function BillReceipt({
   status,
   orderNotes,
   specialInstructions,
-  createdAt,
   createdByName,
   paperWidth = '80mm',
   rootId = 'bill-printable-area',
@@ -169,13 +169,7 @@ export function BillReceipt({
   const businessPhone = toTrimmedString(resolvedBusiness?.phone);
   const businessEmail = toTrimmedString(resolvedBusiness?.email);
   const businessAddress = toTrimmedString(resolvedBusiness?.address);
-  const printedAt = new Date();
-  const resolvedBillNumber =
-    toTrimmedString(billNumber) ||
-    `Bill ${format(printedAt, 'HHmmss')}`;
-  const orderCreatedAt = toTrimmedString(createdAt);
-  const orderDate = orderCreatedAt ? new Date(orderCreatedAt) : printedAt;
-  const validOrderDate = Number.isFinite(orderDate.getTime()) ? orderDate : printedAt;
+  const resolvedBillNumber = toTrimmedString(billNumber);
   const resolvedPaperWidth = paperWidth === '58mm' ? '58mm' : '80mm';
   const isCompactPaper = resolvedPaperWidth === '58mm';
   const sheetWidth = resolvedPaperWidth;
@@ -205,6 +199,7 @@ export function BillReceipt({
   const headerDetailMaxWidth = `${Math.floor(100 / headerDetailScale)}%`;
   const ruleLength = isCompactPaper ? 32 : 42;
   const rule = '-'.repeat(ruleLength);
+  const itemsTotal = cart.reduce((sum, item) => sum + resolveLineTotal(item), 0);
 
   const formatBillAmount = (value: unknown): string => currencyFormatter(toFiniteNumber(value, 0));
 
@@ -215,7 +210,7 @@ export function BillReceipt({
           width: ${sheetWidth};
           box-sizing: border-box;
           margin: 0 auto;
-          padding: ${isCompactPaper ? 10 : 12}px ${horizontalPadding}px ${isCompactPaper ? 34 : 42}px;
+          padding: ${isCompactPaper ? 10 : 12}px ${horizontalPadding}px ${isCompactPaper ? 48 : 58}px;
           background: #fff;
           color: #000;
           font-family: "Courier New", "Liberation Mono", "Lucida Console", monospace;
@@ -329,7 +324,7 @@ export function BillReceipt({
           font-size: ${Math.max(9, fontSize - 2)}px;
         }
         .bill-bottom-space {
-          height: ${isCompactPaper ? 28 : 36}px;
+          height: ${isCompactPaper ? 48 : 60}px;
         }
         @media print {
           @page {
@@ -345,12 +340,14 @@ export function BillReceipt({
           .bill-sheet {
             width: ${resolvedPaperWidth};
             margin: 0 auto !important;
-            padding: 2mm ${printPaddingXmm}mm ${isCompactPaper ? 10 : 12}mm !important;
+            padding: 2mm ${printPaddingXmm}mm ${isCompactPaper ? 16 : 18}mm !important;
           }
         }
       `}</style>
 
       <div className="bill-sheet">
+        <div className="bill-center">*** START OF BILL ***</div>
+        <div className="bill-rule">{rule}</div>
         <div className="bill-business">
           <span className="bill-business-text">{businessName}</span>
         </div>
@@ -374,10 +371,12 @@ export function BillReceipt({
         <div className="bill-note">FOR PAYMENT - NOT A FISCAL RECEIPT</div>
 
         <div className="bill-rule">{rule}</div>
-        <div className="bill-row">
-          <span>ORDER</span>
-          <span>{resolvedBillNumber}</span>
-        </div>
+        {resolvedBillNumber && (
+          <div className="bill-row">
+            <span>ORDER</span>
+            <span>{resolvedBillNumber}</span>
+          </div>
+        )}
         {toTrimmedString(cartTitle) && (
           <div className="bill-row">
             <span>REFERENCE</span>
@@ -414,19 +413,6 @@ export function BillReceipt({
             <span>{toTrimmedString(createdByName)}</span>
           </div>
         )}
-        <div className="bill-row">
-          <span>ORDER DATE</span>
-          <span>{format(validOrderDate, 'dd-MM-yyyy')}</span>
-        </div>
-        <div className="bill-row">
-          <span>ORDER TIME</span>
-          <span>{format(validOrderDate, 'HH:mm:ss')}</span>
-        </div>
-        <div className="bill-row">
-          <span>PRINTED</span>
-          <span>{format(printedAt, 'dd-MM-yyyy HH:mm')}</span>
-        </div>
-
         {(toTrimmedString(orderNotes) || toTrimmedString(specialInstructions)) && (
           <>
             <div className="bill-rule">{rule}</div>
@@ -462,12 +448,8 @@ export function BillReceipt({
 
         <div className="bill-rule">{rule}</div>
         <div className="bill-row">
-          <span>SUBTOTAL</span>
-          <span>{formatBillAmount(subtotal)}</span>
-        </div>
-        <div className="bill-row">
-          <span>{taxLabel}</span>
-          <span>{formatBillAmount(tax)}</span>
+          <span>ITEMS TOTAL</span>
+          <span>{formatBillAmount(itemsTotal || subtotal)}</span>
         </div>
         <div className="bill-row bill-total">
           <span>AMOUNT DUE</span>
@@ -477,6 +459,7 @@ export function BillReceipt({
         <div className="bill-footer">
           Please present this bill to the cashier for payment.
         </div>
+        <div className="bill-center">*** END OF BILL ***</div>
         <div className="bill-bottom-space" />
       </div>
     </div>

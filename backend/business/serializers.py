@@ -15,7 +15,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q, Sum
 
 from .models import (
-    Business, Branch, BusinessSettings, TaxRate, Invoice, InvoiceLine,
+    Business, Branch, BusinessSettings, TaxRate, BusinessCharge, Invoice, InvoiceLine,
     Customer, CustomerAccountTransaction, CustomerLaybuy, CustomerLaybuyPayment,
     CustomerLaybuyReservation, Expense
 )
@@ -512,6 +512,50 @@ class TaxRateUpdateSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
+class BusinessChargeSerializer(serializers.ModelSerializer):
+    """Serializer for additional charges such as levies and service charges."""
+    created_by_name = serializers.CharField(
+        source='created_by.get_full_name',
+        read_only=True,
+        allow_null=True
+    )
+
+    class Meta:
+        model = BusinessCharge
+        fields = [
+            'id', 'business', 'name', 'charge_type', 'rate',
+            'calculation_method', 'calculation_base', 'auto_apply',
+            'is_active', 'effective_from', 'effective_to',
+            'created_by', 'created_by_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'business', 'created_by', 'created_by_name',
+            'created_at', 'updated_at'
+        ]
+
+    def validate_rate(self, value):
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Charge rate must be between 0 and 100")
+        return value
+
+
+class BusinessChargeCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/update serializer for business charges."""
+
+    class Meta:
+        model = BusinessCharge
+        fields = [
+            'name', 'charge_type', 'rate', 'calculation_method',
+            'calculation_base', 'auto_apply', 'is_active',
+            'effective_from', 'effective_to'
+        ]
+
+    def validate_rate(self, value):
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Charge rate must be between 0 and 100")
+        return value
+
+
 # ============================================================================
 # BUSINESS SETTINGS SERIALIZERS (Enhanced for MRA EIS)
 # ============================================================================
@@ -531,7 +575,8 @@ class BusinessSettingsSerializer(serializers.ModelSerializer):
             # MRA EIS fields
             'enable_eis', 'eis_environment', 'block_sales_if_eis_down',
             'block_sales_if_tax_mapping_missing', 'allow_negative_ingredient_stock',
-            'allow_negative_stock',
+            'allow_negative_stock', 'enable_custom_sales_section',
+            'custom_sales_section_name',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -625,6 +670,8 @@ class BusinessSerializer(serializers.ModelSerializer):
     block_sales_if_tax_mapping_missing = serializers.SerializerMethodField()
     allow_negative_ingredient_stock = serializers.SerializerMethodField()
     allow_negative_stock = serializers.SerializerMethodField()
+    enable_custom_sales_section = serializers.SerializerMethodField()
+    custom_sales_section_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Business
@@ -638,7 +685,8 @@ class BusinessSerializer(serializers.ModelSerializer):
             # EIS settings
             'enable_eis', 'eis_environment', 'block_sales_if_eis_down',
             'block_sales_if_tax_mapping_missing', 'allow_negative_ingredient_stock',
-            'allow_negative_stock',
+            'allow_negative_stock', 'enable_custom_sales_section',
+            'custom_sales_section_name',
             # Relations
             'branches', 'settings', 'tax_rates',
             'created_at', 'updated_at'
@@ -670,6 +718,12 @@ class BusinessSerializer(serializers.ModelSerializer):
     def get_allow_negative_stock(self, obj):
         """Clear API alias for allow_negative_ingredient_stock."""
         return self.get_allow_negative_ingredient_stock(obj)
+
+    def get_enable_custom_sales_section(self, obj):
+        return obj.settings.enable_custom_sales_section if hasattr(obj, 'settings') else False
+
+    def get_custom_sales_section_name(self, obj):
+        return obj.settings.custom_sales_section_name if hasattr(obj, 'settings') else ''
 
     def get_tax_pin(self, obj):
         return obj.tin
@@ -822,6 +876,8 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
     block_sales_if_tax_mapping_missing = serializers.BooleanField(required=False, allow_null=True)
     allow_negative_ingredient_stock = serializers.BooleanField(required=False, allow_null=True)
     allow_negative_stock = serializers.BooleanField(required=False, allow_null=True)
+    enable_custom_sales_section = serializers.BooleanField(required=False, allow_null=True)
+    custom_sales_section_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     fuel_pumps = serializers.ListField(
         child=serializers.CharField(),
         required=False,
@@ -838,7 +894,8 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
             # EIS settings
             'enable_eis', 'eis_environment', 'block_sales_if_eis_down',
             'block_sales_if_tax_mapping_missing', 'allow_negative_ingredient_stock',
-            'allow_negative_stock', 'fuel_pumps',
+            'allow_negative_stock', 'enable_custom_sales_section',
+            'custom_sales_section_name', 'fuel_pumps',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -854,6 +911,8 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
             data['block_sales_if_tax_mapping_missing'] = instance.settings.block_sales_if_tax_mapping_missing
             data['allow_negative_ingredient_stock'] = instance.settings.allow_negative_ingredient_stock
             data['allow_negative_stock'] = instance.settings.allow_negative_ingredient_stock
+            data['enable_custom_sales_section'] = instance.settings.enable_custom_sales_section
+            data['custom_sales_section_name'] = instance.settings.custom_sales_section_name
             data['fuel_pumps'] = instance.settings.fuel_pumps
         else:
             data['enable_eis'] = False
@@ -862,6 +921,8 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
             data['block_sales_if_tax_mapping_missing'] = False
             data['allow_negative_ingredient_stock'] = False
             data['allow_negative_stock'] = False
+            data['enable_custom_sales_section'] = False
+            data['custom_sales_section_name'] = ''
             data['fuel_pumps'] = []
         return data
 
@@ -874,6 +935,8 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
         block_sales_if_tax_mapping_missing = validated_data.pop('block_sales_if_tax_mapping_missing', None)
         allow_negative_ingredient_stock = validated_data.pop('allow_negative_ingredient_stock', None)
         allow_negative_stock = validated_data.pop('allow_negative_stock', None)
+        enable_custom_sales_section = validated_data.pop('enable_custom_sales_section', None)
+        custom_sales_section_name = validated_data.pop('custom_sales_section_name', None)
         fuel_pumps = validated_data.pop('fuel_pumps', None)
         if allow_negative_stock is not None:
             allow_negative_ingredient_stock = allow_negative_stock
@@ -882,7 +945,7 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
         instance = super().update(instance, validated_data)
 
         # Update BusinessSettings if provided
-        if any(v is not None for v in [enable_eis, eis_environment, block_sales_if_eis_down, block_sales_if_tax_mapping_missing, allow_negative_ingredient_stock, fuel_pumps]):
+        if any(v is not None for v in [enable_eis, eis_environment, block_sales_if_eis_down, block_sales_if_tax_mapping_missing, allow_negative_ingredient_stock, enable_custom_sales_section, custom_sales_section_name, fuel_pumps]):
             settings = instance.settings
             if enable_eis is not None:
                 settings.enable_eis = enable_eis
@@ -894,6 +957,10 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
                 settings.block_sales_if_tax_mapping_missing = block_sales_if_tax_mapping_missing
             if allow_negative_ingredient_stock is not None:
                 settings.allow_negative_ingredient_stock = allow_negative_ingredient_stock
+            if enable_custom_sales_section is not None:
+                settings.enable_custom_sales_section = enable_custom_sales_section
+            if custom_sales_section_name is not None:
+                settings.custom_sales_section_name = str(custom_sales_section_name or '').strip()
             if fuel_pumps is not None:
                 normalized_pumps = []
                 for pump in fuel_pumps or []:

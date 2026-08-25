@@ -158,7 +158,17 @@ const businessSettingsSchema = z.object({
   blockSalesIfEisDown: z.boolean().default(true),
   blockSalesIfTaxMappingMissing: z.boolean().default(false),
   allowNegativeIngredientStock: z.boolean().default(false),
+  enableCustomSalesSection: z.boolean().default(false),
+  customSalesSectionName: z.string().max(80, 'Section name must be 80 characters or less.').default(''),
   fuelPumps: z.array(z.string().trim().min(1)).default([]),
+}).superRefine((values, context) => {
+  if (values.enableCustomSalesSection && !values.customSalesSectionName.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['customSalesSectionName'],
+      message: 'Enter the section name to show in reports.',
+    });
+  }
 });
 
 type BusinessSettingsFormValues = z.infer<typeof businessSettingsSchema>;
@@ -203,10 +213,13 @@ export default function BusinessSettingsPage() {
       blockSalesIfEisDown: true,
       blockSalesIfTaxMappingMissing: false,
       allowNegativeIngredientStock: false,
+      enableCustomSalesSection: false,
+      customSalesSectionName: '',
       fuelPumps: [],
     },
   });
   const fuelPumps = businessForm.watch('fuelPumps');
+  const enableCustomSalesSection = businessForm.watch('enableCustomSalesSection');
 
   // Load business settings from backend
   useEffect(() => {
@@ -261,6 +274,20 @@ export default function BusinessSettingsPage() {
                     backendBusiness.settings?.allowNegativeIngredientStock,
                   false
                 );
+                const enableCustomSalesSectionValue = toBoolean(
+                  backendBusiness.enable_custom_sales_section ??
+                    backendBusiness.enableCustomSalesSection ??
+                    backendBusiness.settings?.enable_custom_sales_section ??
+                    backendBusiness.settings?.enableCustomSalesSection,
+                  false
+                );
+                const customSalesSectionNameValue = String(
+                  backendBusiness.custom_sales_section_name ??
+                    backendBusiness.customSalesSectionName ??
+                    backendBusiness.settings?.custom_sales_section_name ??
+                    backendBusiness.settings?.customSalesSectionName ??
+                    ''
+                ).trim();
                 
                 console.log('[DEBUG SETTINGS] Converted boolean values:', {
                   enableEis: enableEisValue,
@@ -291,6 +318,8 @@ export default function BusinessSettingsPage() {
                     blockSalesIfEisDown: blockSalesValue,
                     blockSalesIfTaxMappingMissing: blockTaxMappingValue,
                     allowNegativeIngredientStock: allowNegativeIngredientStockValue,
+                    enableCustomSalesSection: enableCustomSalesSectionValue,
+                    customSalesSectionName: customSalesSectionNameValue,
                     fuelPumps: normalizePumpList(
                       backendBusiness.settings?.fuel_pumps ??
                         backendBusiness.settings?.fuelPumps ??
@@ -333,6 +362,8 @@ export default function BusinessSettingsPage() {
                     blockSalesIfEisDown: true,
                     blockSalesIfTaxMappingMissing: false,
                     allowNegativeIngredientStock: false,
+                    enableCustomSalesSection: false,
+                    customSalesSectionName: '',
                     fuelPumps: cachedFuelPumps,
                 });
               }
@@ -348,6 +379,13 @@ export default function BusinessSettingsPage() {
                   (settings as any).allowNegativeIngredientStock ?? (settings as any).allow_negative_ingredient_stock,
                   false
                 );
+                const enableCustomSalesSectionValue = toBoolean(
+                  (settings as any).enableCustomSalesSection ?? (settings as any).enable_custom_sales_section,
+                  false
+                );
+                const customSalesSectionNameValue = String(
+                  (settings as any).customSalesSectionName ?? (settings as any).custom_sales_section_name ?? ''
+                ).trim();
                 const formData: BusinessSettingsFormValues = {
                     businessName: name || '',
                     businessType: resolveBusinessTypeFormValue(type, business?.type),
@@ -367,6 +405,8 @@ export default function BusinessSettingsPage() {
                     blockSalesIfEisDown: true,
                     blockSalesIfTaxMappingMissing: false,
                     allowNegativeIngredientStock: allowNegativeIngredientStockValue,
+                    enableCustomSalesSection: enableCustomSalesSectionValue,
+                    customSalesSectionName: customSalesSectionNameValue,
                     fuelPumps: cachedFuelPumps,
                 };
                 businessForm.reset(formData);
@@ -390,6 +430,8 @@ export default function BusinessSettingsPage() {
                     blockSalesIfEisDown: true,
                     blockSalesIfTaxMappingMissing: false,
                     allowNegativeIngredientStock: false,
+                    enableCustomSalesSection: false,
+                    customSalesSectionName: '',
                     fuelPumps: cachedFuelPumps,
                 });
               }
@@ -514,6 +556,8 @@ export default function BusinessSettingsPage() {
         address: data.address || '',
         website: data.website || '',
         allowNegativeIngredientStock: data.allowNegativeIngredientStock,
+        enableCustomSalesSection: data.enableCustomSalesSection,
+        customSalesSectionName: data.customSalesSectionName.trim(),
     };
 
     try {
@@ -527,9 +571,12 @@ export default function BusinessSettingsPage() {
         LOCAL_STORAGE_KEYS.BUSINESS_SETTINGS,
         JSON.stringify({
           ...data,
+          enable_custom_sales_section: data.enableCustomSalesSection,
+          custom_sales_section_name: data.customSalesSectionName.trim(),
           fuelPumps: resolvedFuelPumps,
         })
       );
+      window.dispatchEvent(new CustomEvent('handypos-business-settings-changed'));
 
       // Step 3: Attempt to sync with backend
       const isOnline = authFetch.getOnlineStatus();
@@ -554,6 +601,8 @@ export default function BusinessSettingsPage() {
         block_sales_if_tax_mapping_missing: data.blockSalesIfTaxMappingMissing,
         allow_negative_ingredient_stock: data.allowNegativeIngredientStock,
         allow_negative_stock: data.allowNegativeIngredientStock,
+        enable_custom_sales_section: data.enableCustomSalesSection,
+        custom_sales_section_name: data.customSalesSectionName.trim(),
         fuel_pumps: resolvedFuelPumps,
       };
 
@@ -585,18 +634,33 @@ export default function BusinessSettingsPage() {
           const blockTaxMappingValue = rawBlockTaxMapping === undefined
             ? data.blockSalesIfTaxMappingMissing
             : rawBlockTaxMapping !== false && rawBlockTaxMapping !== 'false';
-          const allowNegativeIngredientStockValue = toBoolean(
-            response.allow_negative_ingredient_stock ??
-              response.allow_negative_stock ??
+	          const allowNegativeIngredientStockValue = toBoolean(
+	            response.allow_negative_ingredient_stock ??
+	              response.allow_negative_stock ??
               response.allowNegativeIngredientStock ??
               response.allowNegativeStock ??
               response.settings?.allow_negative_ingredient_stock ??
               response.settings?.allow_negative_stock ??
-              response.settings?.allowNegativeIngredientStock,
-            data.allowNegativeIngredientStock
-          );
-          
-            businessForm.reset({
+	              response.settings?.allowNegativeIngredientStock,
+	            data.allowNegativeIngredientStock
+	          );
+	          const enableCustomSalesSectionValue = toBoolean(
+	            response.enable_custom_sales_section ??
+	              response.enableCustomSalesSection ??
+	              response.settings?.enable_custom_sales_section ??
+	              response.settings?.enableCustomSalesSection,
+	            data.enableCustomSalesSection
+	          );
+	          const customSalesSectionNameValue = String(
+	            response.custom_sales_section_name ??
+	              response.customSalesSectionName ??
+	              response.settings?.custom_sales_section_name ??
+	              response.settings?.customSalesSectionName ??
+	              data.customSalesSectionName ??
+	              ''
+	          ).trim();
+	          
+	            businessForm.reset({
             businessName: response.name || data.businessName,
             businessType: normalizeBusinessTypeForForm(response.business_type || data.businessType),
             currency: response.settings?.currency || data.currency,
@@ -613,9 +677,11 @@ export default function BusinessSettingsPage() {
             enableEis: enableEisValue,
             eisEnvironment: eisEnvironmentValue,
             blockSalesIfEisDown: blockSalesValue,
-            blockSalesIfTaxMappingMissing: blockTaxMappingValue,
-            allowNegativeIngredientStock: allowNegativeIngredientStockValue,
-            fuelPumps: normalizePumpList(
+	            blockSalesIfTaxMappingMissing: blockTaxMappingValue,
+	            allowNegativeIngredientStock: allowNegativeIngredientStockValue,
+	            enableCustomSalesSection: enableCustomSalesSectionValue,
+	            customSalesSectionName: customSalesSectionNameValue,
+	            fuelPumps: normalizePumpList(
               response.settings?.fuel_pumps ?? response.fuel_pumps ?? data.fuelPumps
             ),
           });
@@ -802,7 +868,7 @@ export default function BusinessSettingsPage() {
               Control how Handy POS handles stock shortages during sales and orders.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <FormField
               control={businessForm.control}
               name="allowNegativeIngredientStock"
@@ -823,6 +889,44 @@ export default function BusinessSettingsPage() {
                 </FormItem>
               )}
             />
+            <FormField
+              control={businessForm.control}
+              name="enableCustomSalesSection"
+              render={({ field }) => (
+                <FormItem className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <FormLabel>Custom sales section</FormLabel>
+                    <FormDescription>
+                      Create an internal section for selected products in reports, such as a drinks counter or beer sales area.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            {enableCustomSalesSection && (
+              <FormField
+                control={businessForm.control}
+                name="customSalesSectionName"
+                render={({ field }) => (
+                  <FormItem className="rounded-lg border p-4">
+                    <FormLabel>Section name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g. Bar, Drinks, Beer Counter" {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      This label is used inside Handy POS only. It does not rename customer-facing menu categories.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
           </CardContent>
           <CardFooter className="border-t px-6 py-4">
             <Button type="submit">Save Stock Rules</Button>

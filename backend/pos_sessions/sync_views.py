@@ -208,6 +208,8 @@ def _build_order_sync_payload(order):
         'net_amount': float(order.net_amount) if order.net_amount is not None else None,
         'vat_amount': float(order.vat_amount) if order.vat_amount is not None else None,
         'gross_amount': float(order.gross_amount) if order.gross_amount is not None else None,
+        'charges_amount': float(order.charges_amount) if order.charges_amount is not None else 0,
+        'charges_snapshot': order.charges_snapshot or [],
         'updated_at': order.updated_at.isoformat() if order.updated_at else None,
     }
 
@@ -392,6 +394,8 @@ def sync_push(request):
                             'net_amount',
                             'vat_amount',
                             'gross_amount',
+                            'charges_amount',
+                            'charges_snapshot',
                             'updated_at',
                         ]:
                             if key in result:
@@ -1065,6 +1069,13 @@ def handle_create_order(order_id, data, business, branch_id, user):
             print(f"[Sync Sessions] Final calculated totals - subtotal: {subtotal}, vat: {vat_amount}, total: {total}")
         else:
             print(f"[Sync Sessions] No items in order, using provided totals")
+
+        charges_amount = _quantize_money(
+            _to_decimal(data.get('chargesAmount') or data.get('charges_amount'), Decimal('0'))
+        )
+        charges_snapshot = data.get('chargesSnapshot') or data.get('charges_snapshot') or []
+        if charges_amount > 0:
+            total = float(_quantize_money(_to_decimal(total, Decimal('0')) + charges_amount))
         
         normalized_payment_method = str(payment_method or '').strip().lower()
         payment_method_is_credit = normalized_payment_method == 'on account'
@@ -1174,6 +1185,8 @@ def handle_create_order(order_id, data, business, branch_id, user):
         order_data['vat_amount'] = _quantize_money(vat_amount)
         order_data['net_amount'] = _quantize_money(subtotal)
         order_data['gross_amount'] = _quantize_money(total)
+        order_data['charges_amount'] = charges_amount
+        order_data['charges_snapshot'] = charges_snapshot
         
         print(f"[Sync Sessions] Order totals - subtotal: {subtotal}, vat_amount: {vat_amount}, total: {total}")
         
@@ -1344,6 +1357,9 @@ def handle_create_order(order_id, data, business, branch_id, user):
 
                 item_subtotal = tax_values['subtotal']
                 item_tax_amount = tax_values['tax_amount']
+                item_charges_amount = _quantize_money(
+                    _to_decimal(item_data.get('chargesAmount') or item_data.get('charges_amount'), Decimal('0'))
+                )
                 item_total = tax_values['total']
                 tax_calculation_method = tax_values['tax_method']
                 tax_type = tax_values['tax_type']
@@ -1373,6 +1389,8 @@ def handle_create_order(order_id, data, business, branch_id, user):
                     # Calculated tax amounts (Immutable snapshot for audit trail)
                     subtotal=item_subtotal,
                     tax_amount=item_tax_amount,
+                    charges_amount=item_charges_amount,
+                    charges_snapshot=item_data.get('chargesSnapshot') or item_data.get('charges_snapshot') or [],
                     total=item_total
                 )
 

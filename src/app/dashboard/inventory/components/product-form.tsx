@@ -70,6 +70,8 @@ const formatPortionStockQuantity = (item: InventoryItem): string => {
 };
 
 const VARIABLE_PRICE_BUSINESS_TYPES = new Set<BusinessType>([
+    'Restaurant',
+    'Bar & Liquor',
     'Grocery',
     'Supermarket',
     'Clothing & Fashion',
@@ -128,6 +130,10 @@ const getSkuPlaceholder = (businessType: BusinessType): string => {
 
 const getVariablePriceDescription = (businessType: BusinessType): string => {
     switch (businessType) {
+    case 'Restaurant':
+        return 'Enable for sellable items priced by weight, portion size, or custom service amount.';
+    case 'Bar & Liquor':
+        return 'Enable for sellable drinks priced by volume, custom pour, or negotiated amount.';
     case 'Clothing & Fashion':
         return 'Enable for fabric or trims sold by meter, yard, or weight.';
     case 'Hardware':
@@ -180,6 +186,7 @@ export const AddProductForm = ({
           reorderLevel: DEFAULT_REORDER_LEVEL,
           isVariablePrice: false,
           isFuel: false,
+          showInCustomSalesSection: false,
           portionPrice: undefined,
       }
     });
@@ -199,12 +206,17 @@ export const AddProductForm = ({
     const isVariablePrice = useWatch({ control, name: 'isVariablePrice' });
     const isProduced = useWatch({ control, name: 'isProduced' });
     const isSoldInPortions = useWatch({ control, name: 'isSoldInPortions' });
+    const showInCustomSalesSection = useWatch({ control, name: 'showInCustomSalesSection' });
     const portionName = useWatch({ control, name: 'portionName' });
     const portionsPerUnit = useWatch({ control, name: 'portionsPerUnit' });
     const portionPrice = useWatch({ control, name: 'portionPrice' });
     const price = useWatch({ control, name: 'price' });
     const unitType = useWatch({ control, name: 'unitType' });
     const [portionPricingMode, setPortionPricingMode] = React.useState<'auto' | 'custom'>('auto');
+    const [customSalesSectionSettings, setCustomSalesSectionSettings] = React.useState({
+        enabled: false,
+        name: '',
+    });
     const hasSelectedUnit = Boolean((unitType || '').trim());
     const canConfigurePortions = isRestaurantOrBar && itemType === 'sellable' && !isProduced;
     const categoryOptions = React.useMemo(() => {
@@ -229,6 +241,7 @@ export const AddProductForm = ({
         portionPricingMode === 'custom' && customPortionPrice > 0
             ? customPortionPrice
             : computedPortionPrice;
+    const customSalesSectionName = customSalesSectionSettings.name || 'Custom section';
 
     const resetPortionFields = React.useCallback(() => {
         setValue('isSoldInPortions', false);
@@ -246,6 +259,29 @@ export const AddProductForm = ({
             resetPortionFields();
         }
     }, [canConfigurePortions, isSoldInPortions, portionName, portionsPerUnit, portionPrice, resetPortionFields]);
+
+    React.useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const raw = window.localStorage.getItem('handypos-business-settings');
+            const parsed = raw ? JSON.parse(raw) : null;
+            const enabled = parsed?.enableCustomSalesSection === true ||
+                parsed?.enable_custom_sales_section === true ||
+                parsed?.enableCustomSalesSection === 'true' ||
+                parsed?.enable_custom_sales_section === 'true';
+            const name = String(parsed?.customSalesSectionName ?? parsed?.custom_sales_section_name ?? '').trim();
+            setCustomSalesSectionSettings({ enabled, name });
+        } catch (error) {
+            console.warn('[ProductForm] Failed to read custom sales section settings:', error);
+            setCustomSalesSectionSettings({ enabled: false, name: '' });
+        }
+    }, []);
+
+    React.useEffect(() => {
+        if (!customSalesSectionSettings.enabled && showInCustomSalesSection) {
+            setValue('showInCustomSalesSection', false);
+        }
+    }, [customSalesSectionSettings.enabled, setValue, showInCustomSalesSection]);
 
     // Log suppliers for debugging
     React.useEffect(() => {
@@ -324,6 +360,7 @@ export const AddProductForm = ({
                 reorderLevel: normalizeReorderLevelForForm(defaultValues.reorderLevel),
                 isVariablePrice: defaultValues.isVariablePrice ?? false,
                 isFuel: defaultValues.isFuel ?? false,
+                showInCustomSalesSection: defaultValues.showInCustomSalesSection ?? false,
                 isProduced: defaultValues.isProduced ?? false,
                 isSoldInPortions: defaultValues.isSoldInPortions ?? false,
                 portionPrice: defaultValues.portionPrice ?? undefined,
@@ -346,6 +383,7 @@ export const AddProductForm = ({
                 reorderLevel: DEFAULT_REORDER_LEVEL,
                 isVariablePrice: false,
                 isFuel: false,
+                showInCustomSalesSection: false,
                 isProduced: false,
                 isSoldInPortions: false,
                 portionPrice: undefined,
@@ -453,6 +491,10 @@ export const AddProductForm = ({
                     .filter((recipeItem) => recipeItem.ingredientId && Number(recipeItem.quantity) > 0)
                 : [];
             const normalizedIsFuel = SHOW_FUEL_FEATURES ? Boolean(data.isFuel) : false;
+            const normalizedShowInCustomSalesSection =
+                customSalesSectionSettings.enabled &&
+                finalItemType === 'sellable' &&
+                Boolean(data.showInCustomSalesSection);
 
             const normalizedCategory = String(data.category || '').trim();
             const normalizedStatus: InventoryItem['status'] = normalizedIsProduced
@@ -485,6 +527,7 @@ export const AddProductForm = ({
                 recipe: normalizedRecipe,
                 isVariablePrice: data.isVariablePrice || false,
                 isFuel: normalizedIsFuel,
+                showInCustomSalesSection: normalizedShowInCustomSalesSection,
                 isProduced: normalizedIsProduced,
                 isSoldInPortions: normalizedIsSoldInPortions,
                 portionName: normalizedPortionName || undefined,
@@ -692,6 +735,29 @@ export const AddProductForm = ({
                     />
                 </div>
 
+                {customSalesSectionSettings.enabled && itemType === 'sellable' && (
+                    <FormField
+                        control={form.control}
+                        name="showInCustomSalesSection"
+                        render={({ field }) => (
+                            <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                                <div className="space-y-0.5">
+                                    <FormLabel>Show in {customSalesSectionName}</FormLabel>
+                                    <FormDescription>
+                                        Include this product in the internal {customSalesSectionName} section and reporting.
+                                    </FormDescription>
+                                </div>
+                                <FormControl>
+                                    <Switch
+                                        checked={field.value}
+                                        onCheckedChange={field.onChange}
+                                    />
+                                </FormControl>
+                            </FormItem>
+                        )}
+                    />
+                )}
+
                 {!isRestaurantOrBar && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <FormField
@@ -776,7 +842,7 @@ export const AddProductForm = ({
                     />
                 </div>
 
-                {supportsVariablePrice && !isRestaurantOrBar && itemType === 'sellable' && (
+                {supportsVariablePrice && itemType === 'sellable' && (
                      <FormField
                         control={form.control}
                         name="isVariablePrice"

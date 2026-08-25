@@ -8,7 +8,7 @@ ensuring all changes are tracked for syncing to cloud backend
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from business.models import (
-    Business, Branch, TaxRate, BusinessSettings,
+    Business, Branch, TaxRate, BusinessCharge, BusinessSettings,
     Customer, InvoiceLine, Invoice, Expense
 )
 
@@ -32,6 +32,14 @@ def mark_branch_dirty_on_update(sender, instance, created, **kwargs):
 @receiver(post_save, sender=TaxRate)
 def mark_taxrate_dirty_on_update(sender, instance, created, **kwargs):
     """Mark TaxRate dirty on update"""
+    if not created and instance.is_dirty is False:
+        instance.is_dirty = True
+        instance.save(update_fields=['is_dirty'])
+
+
+@receiver(post_save, sender=BusinessCharge)
+def mark_businesscharge_dirty_on_update(sender, instance, created, **kwargs):
+    """Mark BusinessCharge dirty on update"""
     if not created and instance.is_dirty is False:
         instance.is_dirty = True
         instance.save(update_fields=['is_dirty'])

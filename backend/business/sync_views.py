@@ -12,6 +12,7 @@ from .sync_views_invoices import sync_push as invoice_sync_push, sync_pull as in
 from .sync_views_expenses import sync_push as expense_sync_push, sync_pull as expense_sync_pull, _get_expense_changes
 from .sync_views_customers import sync_push as customer_sync_push, sync_pull as customer_sync_pull, _get_customer_changes
 from .sync_views_taxes import sync_push as tax_sync_push, sync_pull as tax_sync_pull, _get_tax_changes
+from .sync_views_charges import _get_charge_changes, _process_charge_changes
 
 
 @api_view(['POST'])
@@ -29,6 +30,7 @@ def sync_push(request):
         expense_changes = [c for c in changes if c.get('entity_type') == 'Expense']
         customer_changes = [c for c in changes if c.get('entity_type') == 'Customer']
         tax_changes = [c for c in changes if c.get('entity_type') == 'TaxRate']
+        charge_changes = [c for c in changes if c.get('entity_type') == 'BusinessCharge']
         
         all_results = {
             'acknowledged': [],
@@ -101,6 +103,28 @@ def sync_push(request):
                 traceback.print_exc()
                 all_results['errors'].append({
                     'error': f'Tax rate sync failed: {str(e)}'
+                })
+
+        if charge_changes:
+            try:
+                business_id = request.data.get('business_id')
+                if not business_id:
+                    from .models import Branch
+                    branch_id = request.data.get('branch_id')
+                    if branch_id:
+                        business_id = Branch.objects.get(id=branch_id).business_id
+
+                if business_id:
+                    acknowledged, errors = _process_charge_changes(business_id, charge_changes)
+                    all_results['acknowledged'].extend(acknowledged)
+                    all_results['errors'].extend(errors)
+                else:
+                    all_results['errors'].append({
+                        'error': 'business_id or branch_id is required for charge sync'
+                    })
+            except Exception as e:
+                all_results['errors'].append({
+                    'error': f'Charge sync failed: {str(e)}'
                 })
         
         return Response({
@@ -175,6 +199,17 @@ def sync_pull(request):
                 all_changes['tax_rates'] = tax_rates
         except Exception as e:
             print(f'[Sync] Error pulling tax rates: {e}')
+
+        try:
+            from .models import Branch
+            branch = Branch.objects.get(id=branch_id)
+            charges, error = _get_charge_changes(branch.business_id, since)
+            if error:
+                print(f'[Sync] Error pulling charges: {error}')
+            else:
+                all_changes['charges'] = charges
+        except Exception as e:
+            print(f'[Sync] Error pulling charges: {e}')
         
         return Response({
             'changes': all_changes

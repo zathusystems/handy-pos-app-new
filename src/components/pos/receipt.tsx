@@ -443,7 +443,7 @@ export const Receipt = ({
             transform: translateX(-50%);
             width: ${printContentWidth};
             margin: 0;
-            padding: 0;
+            padding: 0 0 ${isCompactPaper ? '16mm' : '18mm'};
           }
           @page {
             margin: 0;
@@ -451,6 +451,9 @@ export const Receipt = ({
           }
         }
       `}</style>
+
+      <div className="text-center mb-1 font-semibold">*** START OF RECEIPT ***</div>
+      {renderDotRuleLine()}
 
       {/* Receipt copy indicator (hidden for first/original print) */}
       {isCopyReceipt && (
@@ -537,7 +540,6 @@ export const Receipt = ({
             const itemPrice = toFiniteNumber(item.price, 0);
             const itemQuantity = Math.max(1, toFiniteNumber(item.quantity, 1));
             const itemTotal = toFiniteNumber(item.total, itemPrice * itemQuantity);
-            const itemTaxRate = toFiniteNumber(item.tax_rate ?? item.taxRate, 0);
             
             return (
               <div key={`${item.id}-${index}`} className="mb-1.5">
@@ -547,9 +549,6 @@ export const Receipt = ({
                 </div>
                 <div className={`${metaTextClass} text-gray-600 pl-2`}>
                   {itemQuantity} x {formatSafeCurrency(itemPrice)}
-                  {itemTaxRate && itemTaxRate > 0 && (
-                    <span className="ml-1">@ {itemTaxRate.toFixed(2)}%</span>
-                  )}
                 </div>
               </div>
             );
@@ -563,10 +562,6 @@ export const Receipt = ({
         <div className="flex justify-between items-start gap-2">
           <span>Subtotal:</span>
           <span>{formatSafeCurrency(normalizedOrderNet)}</span>
-        </div>
-        <div className="flex justify-between items-start gap-2">
-          <span>VAT Amount:</span>
-          <span>{formatSafeCurrency(receiptVatTotal)}</span>
         </div>
         <div className="pt-1 mt-1">
           {renderDotRuleLine()}
@@ -596,7 +591,7 @@ export const Receipt = ({
       </div>
 
       {/* Tax Breakdown */}
-      {showTaxBreakdown && taxBreakdown.length > 0 && (
+      {false && showTaxBreakdown && taxBreakdown.length > 0 && (
         <div className={`${sectionSpacingClass} ${bodyTextClass}`}>
           <div className="mb-1 space-y-0.5">
             <p className={`text-center ${metaTextClass} font-semibold tracking-wide`}>
@@ -623,6 +618,12 @@ export const Receipt = ({
           {renderDotRuleLine()}
         </div>
       )}
+
+      <div className={`${sectionSpacingClass} ${bodyTextClass}`}>
+        {renderDotRuleLine()}
+        <div className="text-center font-semibold">*** END OF RECEIPT ***</div>
+      </div>
+      <div className={isCompactPaper ? 'h-12' : 'h-16'} />
 
       {/* EIS Verification */}
       {/* <div className={`space-y-0.5 ${sectionSpacingClass} ${bodyTextClass}`}>

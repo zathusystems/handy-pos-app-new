@@ -200,7 +200,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             'expiry', 'on_menu', 'supplier', 'manufacturer', 'batch',
             'brand', 'is_recipe_ingredient', 'is_produced',
             'is_sold_in_portions', 'portion_name', 'portions_per_unit', 'portion_price',
-            'recipe', 'image', 'mra_mapping', 'is_mra_ready',
+            'show_in_custom_sales_section', 'recipe', 'image', 'mra_mapping', 'is_mra_ready',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -238,7 +238,8 @@ class InventoryItemCreateUpdateSerializer(serializers.ModelSerializer):
             'sku', 'barcode', 'product_code', 'expiry', 'on_menu', 'supplier',
             'manufacturer', 'batch', 'brand', 'is_recipe_ingredient',
             'is_produced', 'is_sold_in_portions', 'portion_name',
-            'portions_per_unit', 'portion_price', 'recipe', 'image'
+            'portions_per_unit', 'portion_price', 'show_in_custom_sales_section',
+            'recipe', 'image'
         ]
 
     def validate_price(self, value):

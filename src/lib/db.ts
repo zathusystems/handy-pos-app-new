@@ -15,6 +15,10 @@ export interface Business {
     website?: string;
     allowNegativeIngredientStock?: boolean;
     allow_negative_ingredient_stock?: boolean;
+    enableCustomSalesSection?: boolean;
+    enable_custom_sales_section?: boolean;
+    customSalesSectionName?: string;
+    custom_sales_section_name?: string;
 }
 
 export interface Subscription {
@@ -161,6 +165,8 @@ export interface InventoryItem {
     description?: string;
     isVariablePrice?: boolean; // For items sold by weight/volume
     isFuel?: boolean; // Fuel items for fuel attendants
+    showInCustomSalesSection?: boolean; // Internal reporting/section flag, hidden from customer menu categories
+    show_in_custom_sales_section?: boolean;
     isProduced?: boolean; // For restaurant/bar: true if made in-house, false if purchased
     onMenu?: boolean;
     menuEntryId?: string;
@@ -246,6 +252,10 @@ export interface OrderItem {
     subtotal?: number; // Net amount (before tax)
     tax_amount?: number; // Tax amount for this item
     taxAmount?: number; // Alias for tax_amount (camelCase)
+    charges_amount?: number;
+    chargesAmount?: number;
+    charges_snapshot?: Array<Record<string, unknown>>;
+    chargesSnapshot?: Array<Record<string, unknown>>;
     total?: number; // Gross amount (subtotal + tax)
     // MRA Product Mapping
     mra_product_code?: string; // MRA product code
@@ -308,6 +318,10 @@ export interface Order {
     netAmount?: number; // Alias for net_amount (camelCase)
     gross_amount?: number; // Amount including VAT
     grossAmount?: number; // Alias for gross_amount (camelCase)
+    charges_amount?: number; // Additional charges/levies total
+    chargesAmount?: number;
+    charges_snapshot?: Array<Record<string, unknown>>;
+    chargesSnapshot?: Array<Record<string, unknown>>;
     // MRA EIS Fields
     fiscal_invoice_number?: string; // Fiscal invoice number from MRA
     fiscalInvoiceNumber?: string; // Alias for fiscal_invoice_number (camelCase)
@@ -572,6 +586,25 @@ export interface TaxRate {
     _synced_at?: string;
 }
 
+export interface BusinessCharge {
+    id: string;
+    businessId?: string;
+    name: string;
+    chargeType: 'LEVY' | 'SERVICE_CHARGE' | 'OTHER';
+    rate: number;
+    calculationMethod: 'exclusive' | 'inclusive';
+    calculationBase: 'net_subtotal' | 'gross_total';
+    autoApply: boolean;
+    isActive: boolean;
+    effectiveFrom: string;
+    effectiveTo?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    _dirty?: boolean;
+    _operation?: 'create' | 'update' | 'delete';
+    _synced_at?: string;
+}
+
 export interface StockTransfer {
     id: string;
     branchId?: string;
@@ -779,6 +812,10 @@ export interface BusinessSettings {
     enableEis: boolean;
     allowNegativeIngredientStock?: boolean;
     allow_negative_ingredient_stock?: boolean;
+    enableCustomSalesSection?: boolean;
+    enable_custom_sales_section?: boolean;
+    customSalesSectionName?: string;
+    custom_sales_section_name?: string;
     fuelPumps?: string[];
     productTypes?: string[];
     createdAt: string;
@@ -800,6 +837,7 @@ export class HandyPosDatabase extends Dexie {
     customers!: EntityTable<Customer, 'id'>;
     invoices!: EntityTable<Invoice, 'id'>;
     taxes!: EntityTable<TaxRate, 'id'>;
+    charges!: EntityTable<BusinessCharge, 'id'>;
     business!: EntityTable<Business, 'id'>;
     subscriptions!: EntityTable<Subscription, 'id'>;
     stockTransfers!: EntityTable<StockTransfer, 'id'>;
@@ -815,7 +853,7 @@ export class HandyPosDatabase extends Dexie {
     constructor() {
         super('handypos');
 
-        this.version(38).stores({
+        this.version(39).stores({
             inventory: 'id, name, category, itemType, supplier, status, onMenu, branchId, _dirty, [branchId+itemType], &[branchId+itemType+onMenu]',
             suppliers: 'id, name, businessId, _dirty, [businessId+name]',
             purchaseHistory: '++id, productId, supplierId, receivedDate, branchId, paymentStatus, sessionId, _dirty, &[branchId+receivedDate], [branchId+productId+receivedDate], [sessionId]',
@@ -830,6 +868,7 @@ export class HandyPosDatabase extends Dexie {
             customers: 'id, name, branchId, email, phone, currentBalance, _dirty',
             invoices: 'id, invoiceNumber, documentType, branchId, customerId, status, issueDate',
             taxes: 'id, name, isDefault, businessId, _dirty, [businessId+isDefault]',
+            charges: 'id, name, businessId, chargeType, autoApply, isActive, _dirty, [businessId+isActive]',
             business: 'id',
             subscriptions: 'id, businessId, planId, status',
             stockTransfers: 'id, fromBranchId, toBranchId, itemId, createdAt, _dirty',

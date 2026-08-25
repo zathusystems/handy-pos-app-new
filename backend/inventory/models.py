@@ -327,6 +327,10 @@ class InventoryItem(models.Model):
     portion_name = models.CharField(max_length=50, blank=True, null=True)
     portions_per_unit = models.IntegerField(null=True, blank=True)
     portion_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    show_in_custom_sales_section = models.BooleanField(
+        default=False,
+        help_text="Include this product in the business's internal custom sales section/report."
+    )
     
     # Beauty Salon fields
     brand = models.CharField(max_length=255, blank=True, null=True)

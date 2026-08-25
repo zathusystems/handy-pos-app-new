@@ -38,6 +38,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
             # CALCULATED TAX AMOUNTS (Immutable snapshot for audit trail)
             'subtotal',
             'tax_amount',
+            'charges_amount',
+            'charges_snapshot',
             'total',
             'batch_consumption',
             'created_at',
@@ -67,6 +69,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
             'taxType': 'tax_type',
             'taxCalculationMethod': 'tax_calculation_method',
             'taxAmount': 'tax_amount',
+            'chargesAmount': 'charges_amount',
+            'chargesSnapshot': 'charges_snapshot',
             'selectedOptions': 'selected_options',
             'menuItemId': 'menu_item_id',
             'isPreparedMenuItem': 'is_prepared_menu_item',
@@ -124,6 +128,8 @@ class OrderSerializer(serializers.ModelSerializer):
             'vat_amount',
             'net_amount',
             'gross_amount',
+            'charges_amount',
+            'charges_snapshot',
             # MRA EIS fields (NEW)
             'fiscal_invoice_number',
             'eis_uuid',
@@ -171,6 +177,8 @@ class OrderSerializer(serializers.ModelSerializer):
             'customerNotes': 'customer_notes',
             'buyerName': 'buyer_name',
             'buyerTin': 'buyer_tin',
+            'chargesAmount': 'charges_amount',
+            'chargesSnapshot': 'charges_snapshot',
             'createdAt': 'created_at',
             'updatedAt': 'updated_at',
         }
@@ -308,6 +316,13 @@ class OrderSerializer(serializers.ModelSerializer):
             validated_data['vat_amount'] = tax_snapshot['vat_amount']
             validated_data['net_amount'] = tax_snapshot['net_amount']
             validated_data['gross_amount'] = tax_snapshot['gross_amount']
+            charges_amount = Decimal(str(validated_data.get('charges_amount') or 0))
+            if charges_amount < 0:
+                charges_amount = Decimal('0.00')
+            validated_data['charges_amount'] = charges_amount
+            validated_data['charges_snapshot'] = validated_data.get('charges_snapshot') or []
+            if charges_amount > 0:
+                validated_data['gross_amount'] = validated_data['gross_amount'] + charges_amount
 
             # Create the order with tax snapshot fields
             order = Order.objects.create(id=order_id, **validated_data)

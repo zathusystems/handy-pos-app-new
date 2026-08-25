@@ -75,6 +75,8 @@ export const normalizeKitchenInventoryItem = (item: any): InventoryItem => ({
   itemType: item?.itemType ?? item?.item_type ?? 'sellable',
   branchId: String(item?.branchId ?? item?.branch_id ?? item?.branch ?? '').trim(),
   isProduced: toBoolean(item?.isProduced ?? item?.is_produced),
+  showInCustomSalesSection: toBoolean(item?.showInCustomSalesSection ?? item?.show_in_custom_sales_section),
+  show_in_custom_sales_section: toBoolean(item?.showInCustomSalesSection ?? item?.show_in_custom_sales_section),
   recipe: normalizeRecipe(item?.recipe),
 });
 
@@ -148,6 +150,28 @@ export const getNonKitchenOrderItems = <T extends { items?: any[] }>(
   order: T,
   lookup: KitchenInventoryLookup
 ): any[] => (order.items || []).filter((item) => !isKitchenPrepOrderItem(item, lookup));
+
+export const isCustomSalesSectionOrderItem = (
+  orderItem: any,
+  lookup: KitchenInventoryLookup
+): boolean => {
+  const inventoryItem = resolveKitchenInventoryItem(orderItem, lookup);
+  if (inventoryItem) {
+    return toBoolean(inventoryItem.showInCustomSalesSection ?? inventoryItem.show_in_custom_sales_section);
+  }
+
+  return toBoolean(orderItem?.showInCustomSalesSection ?? orderItem?.show_in_custom_sales_section);
+};
+
+export const getCustomSalesSectionOrderItems = <T extends { items?: any[] }>(
+  order: T,
+  lookup: KitchenInventoryLookup
+): any[] => (order.items || []).filter((item) => isCustomSalesSectionOrderItem(item, lookup));
+
+export const getNonCustomSalesSectionOrderItems = <T extends { items?: any[] }>(
+  order: T,
+  lookup: KitchenInventoryLookup
+): any[] => (order.items || []).filter((item) => !isCustomSalesSectionOrderItem(item, lookup));
 
 export const orderHasKitchenPrepItems = <T extends { items?: any[] }>(
   order: T,

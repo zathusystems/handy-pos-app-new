@@ -27,8 +27,8 @@ class RecipeIngredientInline(admin.TabularInline):
 
 @admin.register(InventoryItem)
 class InventoryItemAdmin(admin.ModelAdmin):
-    list_display = ('name', 'business', 'branch', 'item_type', 'stock_units', 'status', 'price', 'is_produced', 'created_at')
-    list_filter = ('business', 'branch', 'item_type', 'status', 'is_produced', 'is_sold_in_portions', 'created_at')
+    list_display = ('name', 'business', 'branch', 'item_type', 'stock_units', 'status', 'price', 'is_produced', 'show_in_custom_sales_section', 'created_at')
+    list_filter = ('business', 'branch', 'item_type', 'status', 'is_produced', 'is_sold_in_portions', 'show_in_custom_sales_section', 'created_at')
     search_fields = ('name', 'category', 'supplier')
     readonly_fields = ('created_at', 'updated_at', 'value', 'recipe_display')
     fieldsets = (
@@ -55,6 +55,10 @@ class InventoryItemAdmin(admin.ModelAdmin):
         }),
         ('Bar & Liquor - Portions', {
             'fields': ('is_sold_in_portions', 'portion_name', 'portions_per_unit', 'portion_price'),
+            'classes': ('collapse',)
+        }),
+        ('Internal Custom Section', {
+            'fields': ('show_in_custom_sales_section',),
             'classes': ('collapse',)
         }),
         ('Business-Type Specific', {
@@ -235,4 +239,3 @@ class MRAProductMappingAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-

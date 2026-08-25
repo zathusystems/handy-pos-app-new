@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Business, Branch, BusinessSettings, TaxRate, Customer,
+    Business, Branch, BusinessSettings, TaxRate, BusinessCharge, Customer,
     CustomerAccountTransaction, CustomerLaybuy, CustomerLaybuyPayment,
     CustomerLaybuyReservation, Expense
 )
@@ -25,6 +25,14 @@ class TaxRateAdmin(admin.ModelAdmin):
     search_fields = ('name', 'business__name')
     list_filter = ('is_default', 'created_at')
     ordering = ('-is_default', '-created_at')
+
+
+@admin.register(BusinessCharge)
+class BusinessChargeAdmin(admin.ModelAdmin):
+    list_display = ('id', 'name', 'charge_type', 'rate', 'business', 'auto_apply', 'is_active', 'created_at')
+    search_fields = ('name', 'business__name')
+    list_filter = ('charge_type', 'auto_apply', 'is_active', 'created_at')
+    ordering = ('name',)
 
 @admin.register(BusinessSettings)
 class BusinessSettingsAdmin(admin.ModelAdmin):

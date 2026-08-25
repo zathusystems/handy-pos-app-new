@@ -43,7 +43,8 @@ export default function SettingsLayout({
           <TabsTrigger value="business" className="w-full justify-start">Business</TabsTrigger>
           <TabsTrigger value="billing" className="w-full justify-start">Billing</TabsTrigger>
           <TabsTrigger value="branches" className="w-full justify-start">Branches</TabsTrigger>
-            <TabsTrigger value="taxes" className="w-full justify-start">Taxes</TabsTrigger>
+          <TabsTrigger value="taxes" className="w-full justify-start">Taxes</TabsTrigger>
+          <TabsTrigger value="charges" className="w-full justify-start">Charges & Levies</TabsTrigger>
           {/* <TabsTrigger value="eis" className="w-full justify-start">MRA EIS</TabsTrigger> */}
           <TabsTrigger value="printers" className="w-full justify-start">Printers</TabsTrigger>
         </TabsList>

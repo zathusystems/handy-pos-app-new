@@ -258,6 +258,7 @@ const navSections = [
       { href: '/dashboard/customers', icon: BookUser, label: 'Customers', permission: 'view_customers' as Permission },
       { href: '/dashboard/invoicing', icon: FileSignature, label: 'Quotations & Invoices', permission: 'view_invoices' as Permission },
       { href: '/dashboard/sales', icon: BarChart2, label: 'Reports', permission: 'view_reports' as Permission },
+      { href: '/dashboard/custom-section', icon: Boxes, label: 'Custom Section', permission: 'view_reports' as Permission },
       { href: '/dashboard/expenses', icon: CreditCard, label: 'Expenses', permission: 'view_expenses' as Permission },
       { href: '/dashboard/staff', icon: Users, label: 'Staff', permission: 'manage_staff' as Permission },
     ],
@@ -1807,24 +1808,38 @@ function AppSidebar({
   onPosClick,
   multiBranchEnabled,
   kitchenAvailable,
+  customSalesSection,
 }: {
   user: User;
   onPosClick?: () => void;
   multiBranchEnabled: boolean;
   kitchenAvailable: boolean;
+  customSalesSection: { enabled: boolean; name: string };
 }) {
   const pathname = usePathname();
   const { hasPermission } = useRBAC();
   const { setOpenMobile, isMobile } = useSidebar();
 
-  const filteredSections = navSections
-    .map((section) => ({
+  const sidebarSections = React.useMemo(() => navSections.map((section) => {
+    return {
       ...section,
-      items: section.items.filter(item => (
-        hasPermission(item.permission) &&
-        (item.href !== '/dashboard/kitchen' || kitchenAvailable)
+      items: section.items.map((item) => (
+        item.href === '/dashboard/custom-section'
+          ? { ...item, label: customSalesSection.name || item.label }
+          : item
       )),
-    }))
+    };
+  }), [customSalesSection.enabled, customSalesSection.name]);
+
+  const filteredSections = sidebarSections
+	    .map((section) => ({
+	      ...section,
+	      items: section.items.filter(item => (
+	        hasPermission(item.permission) &&
+	        (item.href !== '/dashboard/kitchen' || kitchenAvailable) &&
+	        (item.href !== '/dashboard/custom-section' || customSalesSection.enabled)
+	      )),
+	    }))
     .filter((section) => section.items.length > 0);
   const filteredSettingsItems = user.role === 'Admin'
     ? settingsNav.filter(item => hasPermission(item.permission))
@@ -1866,7 +1881,7 @@ function AppSidebar({
                 };
 
                 return (
-                  <SidebarMenuItem key={item.href}>
+                  <SidebarMenuItem key={`${item.href}-${item.label}`}>
                     <SidebarMenuButton
                       asChild={item.href !== '/dashboard/pos'}
                       isActive={isActive}
@@ -2001,6 +2016,7 @@ export default function DashboardLayout({
   const [isPosModalOpen, setIsPosModalOpen] = useState(false);
   const [pendingProcessTakeOrderId, setPendingProcessTakeOrderId] = useState<string | null>(null);
   const [activeBranchId, setActiveBranchId] = useState<string | null>(() => getStoredPreferredBranchId());
+  const [customSalesSection, setCustomSalesSection] = useState({ enabled: false, name: '' });
   const multiBranchEnabled = isLoadingMultiBranchAccess ? true : multiBranchAccess.allowed;
   const businessRecord = useLiveQuery(
     () => business?.id ? db.business.get(business.id) : undefined,
@@ -2008,6 +2024,36 @@ export default function DashboardLayout({
   );
   const currentBusinessType = normalizeBusinessType(businessRecord?.type ?? business?.type, 'General Retail');
   const kitchenAvailable = isKitchenBusinessType(currentBusinessType);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const readCustomSalesSection = () => {
+      try {
+        const raw = window.localStorage.getItem('handypos-business-settings');
+        const parsed = raw ? JSON.parse(raw) : null;
+        const enabled = parsed?.enableCustomSalesSection === true ||
+          parsed?.enable_custom_sales_section === true ||
+          parsed?.enableCustomSalesSection === 'true' ||
+          parsed?.enable_custom_sales_section === 'true';
+        const name = String(parsed?.customSalesSectionName ?? parsed?.custom_sales_section_name ?? '').trim();
+        setCustomSalesSection({ enabled: enabled && Boolean(name), name });
+      } catch (error) {
+        console.warn('[DashboardLayout] Failed to read custom sales section settings:', error);
+        setCustomSalesSection({ enabled: false, name: '' });
+      }
+    };
+
+    readCustomSalesSection();
+    window.addEventListener('storage', readCustomSalesSection);
+    window.addEventListener('focus', readCustomSalesSection);
+    window.addEventListener('handypos-business-settings-changed', readCustomSalesSection);
+    return () => {
+      window.removeEventListener('storage', readCustomSalesSection);
+      window.removeEventListener('focus', readCustomSalesSection);
+      window.removeEventListener('handypos-business-settings-changed', readCustomSalesSection);
+    };
+  }, []);
 
   const openPosModalForOrder = useCallback((orderId?: string | null) => {
     const normalizedOrderId = String(orderId || '').trim();
@@ -2179,10 +2225,11 @@ export default function DashboardLayout({
         <Sidebar className="hidden lg:flex lg:flex-col">
            <AppSidebar
              user={user}
-             onPosClick={() => openPosModalForOrder()}
-             multiBranchEnabled={multiBranchEnabled}
-             kitchenAvailable={kitchenAvailable}
-           />
+	             onPosClick={() => openPosModalForOrder()}
+	             multiBranchEnabled={multiBranchEnabled}
+	             kitchenAvailable={kitchenAvailable}
+	             customSalesSection={customSalesSection}
+	           />
         </Sidebar>
         <div className="flex-1 flex flex-col overflow-y-auto">
           <Header

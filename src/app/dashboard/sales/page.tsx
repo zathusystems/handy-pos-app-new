@@ -1081,6 +1081,64 @@ export default function ReportsPage() {
         </TabsContent>
         <TabsContent value="products">
             <div className="grid gap-6">
+                {data.customSalesSection?.enabled && (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>{data.customSalesSection.name}</CardTitle>
+                            <CardDescription>
+                                Separate sales summary for products marked for this internal section.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="grid gap-3 sm:grid-cols-3">
+                                <div className="rounded-lg border p-3">
+                                    <p className="text-sm text-muted-foreground">Quantity Sold</p>
+                                    <p className="text-2xl font-semibold">{data.customSalesSection.quantity.toFixed(2)}</p>
+                                </div>
+                                <div className="rounded-lg border p-3">
+                                    <p className="text-sm text-muted-foreground">Revenue Before Tax</p>
+                                    <p className="text-2xl font-semibold">{formatCurrency(data.customSalesSection.revenue)}</p>
+                                </div>
+                                <div className="rounded-lg border p-3">
+                                    <p className="text-sm text-muted-foreground">Revenue With Tax</p>
+                                    <p className="text-2xl font-semibold text-green-600">{formatCurrency(data.customSalesSection.revenueWithTax)}</p>
+                                </div>
+                            </div>
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Product</TableHead>
+                                        <TableHead className="text-right">Qty</TableHead>
+                                        <TableHead className="text-right">Revenue</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {loading ? (
+                                        [...Array(3)].map((_, i) => (
+                                            <TableRow key={i}>
+                                                <TableCell><Skeleton className="h-5 w-3/4" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+                                            </TableRow>
+                                        ))
+                                    ) : data.customSalesSection.products.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={3} className="text-center text-muted-foreground">
+                                                No products in this section were sold during this period.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : data.customSalesSection.products.map((product) => (
+                                        <TableRow key={product.name}>
+                                            <TableCell className="font-medium">{product.name}</TableCell>
+                                            <TableCell className="text-right">{product.quantity.toFixed(2)}</TableCell>
+                                            <TableCell className="text-right font-semibold">{formatCurrency(product.revenueWithTax)}</TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </CardContent>
+                    </Card>
+                )}
                 <Card>
                     <CardHeader>
                         <CardTitle>Top Selling Products</CardTitle>

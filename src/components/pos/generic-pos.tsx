@@ -20,7 +20,7 @@ import {
   Eye,
 } from 'lucide-react';
 import type { CartItem, PaymentMethod } from '@/app/dashboard/pos/page';
-import type { Customer, InventoryItem, Order, TaxRate } from '@/lib/db';
+import type { BusinessCharge, Customer, InventoryItem, Order, TaxRate } from '@/lib/db';
 import { useCurrency } from '@/hooks/use-currency';
 import { authFetch } from '@/lib/auth-fetch';
 import { Button } from '@/components/ui/button';
@@ -43,6 +43,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { calculateAppliedCharges, sumAppliedCharges } from '@/lib/business-charges';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
@@ -110,6 +111,7 @@ export interface PosProps {
   productIcon?: React.ReactNode;
   viewMode?: 'grid' | 'list';
   defaultTaxRate?: TaxRate;
+  activeCharges?: BusinessCharge[];
   eisEnabled?: boolean;
   blockSalesIfTaxMappingMissing?: boolean;
   branchId?: string;
@@ -902,6 +904,7 @@ const PaymentDialog = ({
     displayMode = 'dialog',
     onStepChange,
     businessType,
+    activeCharges = [],
 }: {
     subtotal: number;
     tax: number;
@@ -916,6 +919,7 @@ const PaymentDialog = ({
     branchId?: string;
     onConfigurePrinter: () => void;
     defaultTaxRate?: TaxRate | null;
+    activeCharges?: BusinessCharge[];
     displayMode?: 'dialog' | 'inline';
     onStepChange?: (step: 'payment' | 'confirmation') => void;
     businessType?: BusinessType;
@@ -1610,7 +1614,19 @@ const PaymentDialog = ({
         };
     }, [cart, subtotal, tax, taxLabel, eisEnabled, shouldEnforceTaxMapping, defaultTaxRateDecimal, branchId, normalizedActiveBranchId]);
 
-    const total = calculatedGrossAmount;
+    const appliedCharges = useMemo(() => (
+        calculateAppliedCharges({
+            charges: activeCharges,
+            netSubtotal: calculatedNetAmount,
+            grossTotal: calculatedGrossAmount,
+        })
+    ), [activeCharges, calculatedGrossAmount, calculatedNetAmount]);
+    const exclusiveChargesTotal = useMemo(
+        () => sumAppliedCharges(appliedCharges.filter((charge) => charge.calculationMethod === 'exclusive')),
+        [appliedCharges]
+    );
+    const chargesTotal = useMemo(() => sumAppliedCharges(appliedCharges), [appliedCharges]);
+    const total = calculatedGrossAmount + exclusiveChargesTotal;
     const hasBlockingUnmapped = shouldEnforceTaxMapping && unmappedProducts.length > 0;
     const businessSettings = useLiveQuery(async () => getOfflineBusinessProfile(), []);
     const allowNegativeIngredientStock =
@@ -1795,6 +1811,10 @@ const PaymentDialog = ({
                     method === 'Cash' && hasCashPaid
                         ? ({
                               ...orderWithLocalReceiptNumber,
+                              chargesAmount: chargesTotal,
+                              charges_amount: chargesTotal,
+                              chargesSnapshot: appliedCharges,
+                              charges_snapshot: appliedCharges,
                               tip: cashTip,
                               cashPaid: normalizedCashPaid,
                               cash_paid: normalizedCashPaid,
@@ -1806,22 +1826,39 @@ const PaymentDialog = ({
                               changeAmount: displayedCashChange,
                               change_amount: displayedCashChange,
                           } as Order)
-                        : (orderWithLocalReceiptNumber as Order);
+                        : ({
+                              ...orderWithLocalReceiptNumber,
+                              chargesAmount: chargesTotal,
+                              charges_amount: chargesTotal,
+                              chargesSnapshot: appliedCharges,
+                              charges_snapshot: appliedCharges,
+                          } as Order);
 
-                if (method === 'Cash' && hasCashPaid) {
+                if ((method === 'Cash' && hasCashPaid) || chargesTotal > 0) {
                     try {
-                        await db.orders.update(order.id, {
-                            tip: cashTip,
-                            cashPaid: normalizedCashPaid,
-                            cash_paid: normalizedCashPaid,
-                            amountTendered: normalizedCashPaid,
-                            amount_tendered: normalizedCashPaid,
-                            amountReceived: normalizedCashPaid,
-                            amount_received: normalizedCashPaid,
-                            change: displayedCashChange,
-                            changeAmount: displayedCashChange,
-                            change_amount: displayedCashChange,
-                        } as any);
+                        const paymentUpdate: Record<string, unknown> = {
+                            chargesAmount: chargesTotal,
+                            charges_amount: chargesTotal,
+                            chargesSnapshot: appliedCharges,
+                            charges_snapshot: appliedCharges,
+                        };
+
+                        if (method === 'Cash' && hasCashPaid) {
+                            Object.assign(paymentUpdate, {
+                                tip: cashTip,
+                                cashPaid: normalizedCashPaid,
+                                cash_paid: normalizedCashPaid,
+                                amountTendered: normalizedCashPaid,
+                                amount_tendered: normalizedCashPaid,
+                                amountReceived: normalizedCashPaid,
+                                amount_received: normalizedCashPaid,
+                                change: displayedCashChange,
+                                changeAmount: displayedCashChange,
+                                change_amount: displayedCashChange,
+                            });
+                        }
+
+                        await db.orders.update(order.id, paymentUpdate as any);
                     } catch (paymentMetaError) {
                         console.warn('[PaymentDialog] Failed to persist cash payment metadata on order:', paymentMetaError);
                     }
@@ -2490,6 +2527,12 @@ const PaymentDialog = ({
                         </div>
                     )}
                     <div className="flex justify-between text-sm font-semibold"><span>Gross Amount (Including VAT)</span><span>{currencyFormatter(calculatedGrossAmount)}</span></div>
+                    {chargesTotal > 0 && (
+                        <div className="flex justify-between text-xs">
+                            <span>Charges & Levies{exclusiveChargesTotal <= 0 ? ' (included)' : ''}</span>
+                            <span>{currencyFormatter(exclusiveChargesTotal > 0 ? exclusiveChargesTotal : chargesTotal)}</span>
+                        </div>
+                    )}
                     <Separator className="my-1" />
                     <div className="flex justify-between text-lg font-bold text-primary"><span>Total Amount Due</span><span>{currencyFormatter(total)}</span></div>
                 </div>
@@ -2911,7 +2954,6 @@ export const GenericPos = ({
   emptyStateTitle = 'No products found',
   emptyStateDescription = '',
   cart,
-  cartTitle,
   onAddToCart,
   onUpdateQuantity,
   onClearCart,
@@ -2919,6 +2961,7 @@ export const GenericPos = ({
   productIcon = <Package className="h-8 w-8 text-muted-foreground" />,
   viewMode = 'grid',
   defaultTaxRate,
+  activeCharges = [],
   eisEnabled = false,
   blockSalesIfTaxMappingMissing = false,
   branchId,
@@ -3205,7 +3248,19 @@ export const GenericPos = ({
 
   const subtotal = cartSummary.net;
   const tax = cartSummary.tax;
-  const total = cartSummary.gross;
+  const appliedCartCharges = useMemo(() => (
+    calculateAppliedCharges({
+      charges: activeCharges,
+      netSubtotal: subtotal,
+      grossTotal: cartSummary.gross,
+    })
+  ), [activeCharges, cartSummary.gross, subtotal]);
+  const exclusiveCartChargesTotal = useMemo(
+    () => sumAppliedCharges(appliedCartCharges.filter((charge) => charge.calculationMethod === 'exclusive')),
+    [appliedCartCharges]
+  );
+  const cartChargesTotal = useMemo(() => sumAppliedCharges(appliedCartCharges), [appliedCartCharges]);
+  const total = cartSummary.gross + exclusiveCartChargesTotal;
   const cartTaxLabel = shouldEnforceTaxMapping ? 'VAT Amount (MRA Rules Applied)' : (taxLabel || 'VAT Amount');
   const hasItemsInCart = cart.length > 0;
   const shouldShowDesktopCart = hasItemsInCart || (isInlineCheckout && inlineCheckoutState === 'confirmation');
@@ -3266,18 +3321,7 @@ export const GenericPos = ({
   );
 
   const createBillNumber = useCallback((): string => {
-    const now = new Date();
-    const pad = (value: number): string => String(value).padStart(2, '0');
-    return [
-      'BILL',
-      now.getFullYear(),
-      pad(now.getMonth() + 1),
-      pad(now.getDate()),
-      '-',
-      pad(now.getHours()),
-      pad(now.getMinutes()),
-      pad(now.getSeconds()),
-    ].join('');
+    return '';
   }, []);
 
   const handlePrintBill = useCallback(async (): Promise<void> => {
@@ -3702,6 +3746,7 @@ export const GenericPos = ({
           tax={tax}
           taxLabel={taxLabel}
           defaultTaxRate={defaultTaxRate}
+          activeCharges={activeCharges}
           onCheckout={onCheckout}
           onClose={() => {
             setPaymentSessionId((id) => id + 1);
@@ -3730,6 +3775,14 @@ export const GenericPos = ({
               <span className="flex-shrink-0 text-muted-foreground">{cartTaxLabel}</span>
               <span className="flex-shrink-0 text-right font-semibold text-green-600">{formatCurrency(tax)}</span>
             </div>
+            {cartChargesTotal > 0 && (
+              <div className="flex w-full items-center justify-between gap-2">
+                <span className="flex-shrink-0 text-muted-foreground">
+                  Charges & Levies{exclusiveCartChargesTotal <= 0 ? ' (included)' : ''}
+                </span>
+                <span className="flex-shrink-0 text-right">{formatCurrency(exclusiveCartChargesTotal > 0 ? exclusiveCartChargesTotal : cartChargesTotal)}</span>
+              </div>
+            )}
           </div>
           <div className="flex w-full items-center justify-between gap-2 text-lg font-bold">
             <span className="flex-shrink-0">Total (Incl VAT)</span>
@@ -3899,6 +3952,7 @@ export const GenericPos = ({
               tax={tax}
               taxLabel={taxLabel}
               defaultTaxRate={defaultTaxRate}
+              activeCharges={activeCharges}
               onCheckout={onCheckout}
               onClose={handlePaymentDialogClose}
               currencyFormatter={formatCurrency}
@@ -3919,9 +3973,9 @@ export const GenericPos = ({
           currencyFormatter={formatCurrency}
           subtotal={subtotal}
           tax={tax}
+          charges={cartChargesTotal}
           total={total}
           taxLabel={cartTaxLabel}
-          cartTitle={cartTitle}
           billNumber={billNumber}
           paperWidth={billPaperWidth}
           receiptFontSize={billDisplaySettings.receiptFontSize}

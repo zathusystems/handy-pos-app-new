@@ -143,6 +143,12 @@ function normalizeInventoryProduct(
     converted.isProduced ?? backendProduct?.is_produced ?? existingProduct?.isProduced,
     false
   );
+  const showInCustomSalesSection = toBoolean(
+    converted.showInCustomSalesSection ??
+      backendProduct?.show_in_custom_sales_section ??
+      existingProduct?.showInCustomSalesSection,
+    false
+  );
   const isSoldInPortions = toBoolean(
     converted.isSoldInPortions ?? backendProduct?.is_sold_in_portions ?? existingProduct?.isSoldInPortions,
     false
@@ -209,6 +215,8 @@ function normalizeInventoryProduct(
       converted.isFuel ?? backendProduct?.is_fuel ?? existingProduct?.isFuel,
       false
     ),
+    showInCustomSalesSection,
+    show_in_custom_sales_section: showInCustomSalesSection,
     isProduced,
     onMenu: toBoolean(converted.onMenu ?? backendProduct?.on_menu ?? existingProduct?.onMenu, false),
     isSoldInPortions,

@@ -38,6 +38,7 @@ import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantit
 import { safeLocalStorageGetItem, safeLocalStorageSetItem } from '@/lib/safe-local-storage';
 import { addTakeOrderToSaleCart } from '@/lib/take-order-sale';
 import { markTakeOrdersCompleted } from '@/lib/take-order-status';
+import { calculateAppliedCharges, sumAppliedCharges } from '@/lib/business-charges';
 import { v4 as uuidv4 } from 'uuid';
 import {
   Dialog,
@@ -1155,6 +1156,21 @@ export function PosModal({
     null
   );
 
+  const activeCharges = useLiveQuery(
+    async () => {
+      if (!business?.id) return [];
+
+      const charges = await db.charges
+        .where('businessId')
+        .equals(String(business.id))
+        .toArray();
+
+      return charges.filter((charge) => charge.isActive !== false && charge.autoApply !== false);
+    },
+    [business?.id],
+    []
+  );
+
   // Load business type and EIS enabled status from business settings
   useEffect(() => {
     const loadBusinessSettings = async () => {
@@ -2250,7 +2266,16 @@ export function PosModal({
       tax += itemTax;
     }
     
-    const total = subtotal + tax + appliedTip;
+    const appliedCharges = calculateAppliedCharges({
+      charges: activeCharges || [],
+      netSubtotal: subtotal,
+      grossTotal: subtotal + tax,
+    });
+    const exclusiveChargesTotal = sumAppliedCharges(
+      appliedCharges.filter((charge) => charge.calculationMethod === 'exclusive')
+    );
+    const chargesTotal = sumAppliedCharges(appliedCharges);
+    const total = subtotal + tax + exclusiveChargesTotal + appliedTip;
     let orderCogs = 0;
     let finalOrder: Order | null = null;
     const shouldMoveStockImmediately = paymentMethod !== 'Laybuy';
@@ -2732,6 +2757,10 @@ export function PosModal({
           subtotal: Number(subtotal),
           tax: Number(tax),
           tip: Number(appliedTip),
+          chargesAmount: Number(chargesTotal),
+          charges_amount: Number(chargesTotal),
+          chargesSnapshot: appliedCharges,
+          charges_snapshot: appliedCharges,
           total: Number(total),
           cogs: Number(orderCogs),
           eis_status: eisEnabled ? 'PENDING' : undefined,
@@ -2931,6 +2960,7 @@ export function PosModal({
       onCheckout: handleCreateOrder,
       viewMode,
       defaultTaxRate,
+      activeCharges: activeCharges || [],
       eisEnabled,
       blockSalesIfTaxMappingMissing,
       hideDefaultMobileCartTrigger: isMultiCartEnabled,

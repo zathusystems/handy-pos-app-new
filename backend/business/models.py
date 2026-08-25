@@ -350,6 +350,88 @@ class TaxRate(models.Model):
         super().save(*args, **kwargs)
 
 
+class BusinessCharge(models.Model):
+    """Additional business charges such as levies or service charges."""
+
+    CHARGE_TYPE_CHOICES = (
+        ('LEVY', 'Levy'),
+        ('SERVICE_CHARGE', 'Service Charge'),
+        ('OTHER', 'Other Charge'),
+    )
+
+    CALCULATION_METHOD_CHOICES = (
+        ('exclusive', 'Add on top of sale'),
+        ('inclusive', 'Included in sale price'),
+    )
+
+    CALCULATION_BASE_CHOICES = (
+        ('net_subtotal', 'Net subtotal before VAT'),
+        ('gross_total', 'Gross total after VAT'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business = models.ForeignKey(
+        Business,
+        on_delete=models.CASCADE,
+        related_name='charges'
+    )
+    name = models.CharField(max_length=100)
+    charge_type = models.CharField(max_length=30, choices=CHARGE_TYPE_CHOICES, default='LEVY')
+    rate = models.DecimalField(max_digits=5, decimal_places=2)
+    calculation_method = models.CharField(
+        max_length=20,
+        choices=CALCULATION_METHOD_CHOICES,
+        default='exclusive'
+    )
+    calculation_base = models.CharField(
+        max_length=20,
+        choices=CALCULATION_BASE_CHOICES,
+        default='net_subtotal'
+    )
+    auto_apply = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_dirty = models.BooleanField(
+        default=True,
+        help_text="Marks record as dirty (needs syncing). Set to False after successful sync."
+    )
+
+    class Meta:
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['business', 'is_active']),
+            models.Index(fields=['charge_type']),
+            models.Index(fields=['is_dirty']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.rate}%)"
+
+    def clean(self):
+        super().clean()
+        if self.rate < 0 or self.rate > 100:
+            raise ValidationError("Charge rate must be between 0 and 100.")
+
+    def mark_dirty(self):
+        """Mark this record as dirty (needs syncing)"""
+        self.is_dirty = True
+        self.save(update_fields=['is_dirty'])
+
+    def mark_synced(self):
+        """Mark this record as synced"""
+        self.is_dirty = False
+        self.save(update_fields=['is_dirty'])
+
+
 # ============================================================================
 # BUSINESS SETTINGS MODEL (Enhanced for MRA EIS)
 # ============================================================================
@@ -395,6 +477,17 @@ class BusinessSettings(models.Model):
     allow_negative_ingredient_stock = models.BooleanField(
         default=False,
         help_text="Allow stock to go below zero when selling products or prepared items."
+    )
+
+    enable_custom_sales_section = models.BooleanField(
+        default=False,
+        help_text="Enable an internal product section for separate reporting and workflow views."
+    )
+    custom_sales_section_name = models.CharField(
+        max_length=80,
+        blank=True,
+        default='',
+        help_text="Internal section label, for example Bar, Drinks, or Beer Counter."
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
