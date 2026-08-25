@@ -6,6 +6,7 @@ import { ThemeProvider } from '@/contexts/theme-context';
 import { TauriReadySignal } from '@/components/tauri-ready-signal';
 import { AndroidModalBackGuard } from '@/components/android-modal-back-guard';
 import { TauriDeepLinkListener } from '@/components/tauri-deep-link-listener';
+import { DesktopUpdatePrompt } from '@/components/desktop-update-prompt';
 
 export const metadata: Metadata = {
   title: 'Handy POS - POS and Inventory System',
@@ -66,6 +67,7 @@ export default function RootLayout({
           <AuthProvider>
             {children}
             <Toaster />
+            <DesktopUpdatePrompt />
             <TauriReadySignal />
             <TauriDeepLinkListener />
             <AndroidModalBackGuard />

@@ -3,6 +3,9 @@ name: Windows Tauri Build
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -10,6 +13,9 @@ jobs:
       NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
       NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
       NEXT_PUBLIC_DJANGO_URL: ${{ secrets.NEXT_PUBLIC_DJANGO_URL }}
+      NEXT_PUBLIC_DESKTOP_RELEASES_URL: ${{ secrets.NEXT_PUBLIC_DESKTOP_RELEASES_URL }}
+      NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL: ${{ secrets.NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL }}
+      NEXT_PUBLIC_DESKTOP_INSTALLER_URL: ${{ secrets.NEXT_PUBLIC_DESKTOP_INSTALLER_URL }}
 
     steps:
       - name: Checkout
@@ -32,8 +38,102 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Compute desktop version
+        id: desktop_version
+        shell: pwsh
+        run: |
+          $config = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          $baseVersion = [string]$config.version
+          if (-not ($baseVersion -match '^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$')) {
+            throw "Unsupported desktop version format: $baseVersion"
+          }
+
+          $major = [int]$Matches[1]
+          $minor = [int]$Matches[2]
+          $patch = [int]$Matches[3] + [int]$env:GITHUB_RUN_NUMBER
+          $minor += [math]::Floor($patch / 65536)
+          $patch = $patch % 65536
+          $major += [math]::Floor($minor / 256)
+          $minor = $minor % 256
+
+          if ($major -gt 255) {
+            throw "Computed Windows version exceeds MSI limits: $major.$minor.$patch"
+          }
+
+          $version = "$major.$minor.$patch"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=desktop-v$version" >> $env:GITHUB_OUTPUT
+          "Desktop release version: $version"
+
       - name: Build Windows installer
         run: npm run tauri:build:windows:x64
+
+      - name: Create desktop release manifest
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "release-manifest" | Out-Null
+          $manifest = [ordered]@{
+            latestVersion = "${{ steps.desktop_version.outputs.version }}"
+            downloadUrl = "https://handypos.online/download"
+            notes = "Download the latest Handy POS desktop installer and install it over your current app."
+            publishedAt = (Get-Date).ToUniversalTime().ToString("o")
+          }
+          $manifest | ConvertTo-Json | Set-Content "release-manifest/desktop-release.json" -Encoding UTF8
+
+      - name: Check site deploy secrets
+        id: site_deploy
+        shell: pwsh
+        env:
+          HANDYPOS_SITE_SSH_HOST: ${{ secrets.HANDYPOS_SITE_SSH_HOST }}
+          HANDYPOS_SITE_SSH_USER: ${{ secrets.HANDYPOS_SITE_SSH_USER }}
+          HANDYPOS_SITE_SSH_KEY: ${{ secrets.HANDYPOS_SITE_SSH_KEY }}
+        run: |
+          $host = "$env:HANDYPOS_SITE_SSH_HOST".Trim()
+          $user = "$env:HANDYPOS_SITE_SSH_USER".Trim()
+          $key = "$env:HANDYPOS_SITE_SSH_KEY".Trim()
+          if ([string]::IsNullOrWhiteSpace($host) -or [string]::IsNullOrWhiteSpace($user) -or [string]::IsNullOrWhiteSpace($key)) {
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Site deploy secrets missing; skipping Handy POS site upload."
+          } else {
+            "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Prepare site upload payload
+        if: steps.site_deploy.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "site-release/desktop" | Out-Null
+          $installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw "Could not find the Windows installer output."
+          }
+          Copy-Item $installer.FullName "site-release/desktop/HandyPOS-Desktop.exe" -Force
+          Copy-Item "release-manifest/desktop-release.json" "site-release/desktop-release.json" -Force
+
+      - name: Upload desktop files to Handy POS site
+        if: steps.site_deploy.outputs.enabled == 'true'
+        shell: bash
+        env:
+          HANDYPOS_SITE_SSH_HOST: ${{ secrets.HANDYPOS_SITE_SSH_HOST }}
+          HANDYPOS_SITE_SSH_USER: ${{ secrets.HANDYPOS_SITE_SSH_USER }}
+          HANDYPOS_SITE_SSH_PORT: ${{ secrets.HANDYPOS_SITE_SSH_PORT }}
+          HANDYPOS_SITE_SSH_KEY: ${{ secrets.HANDYPOS_SITE_SSH_KEY }}
+          HANDYPOS_SITE_REMOTE_DIR: ${{ secrets.HANDYPOS_SITE_REMOTE_DIR }}
+        run: |
+          set -euo pipefail
+          install -d ~/.ssh
+          printf '%s\n' "$HANDYPOS_SITE_SSH_KEY" > ~/.ssh/handypos_site_key
+          chmod 600 ~/.ssh/handypos_site_key
+
+          remote_dir="${HANDYPOS_SITE_REMOTE_DIR:-/home/handypos-app}"
+          port="${HANDYPOS_SITE_SSH_PORT:-22}"
+          ssh_common=(-i ~/.ssh/handypos_site_key -p "$port" -o StrictHostKeyChecking=no)
+
+          ssh "${ssh_common[@]}" "$HANDYPOS_SITE_SSH_USER@$HANDYPOS_SITE_SSH_HOST" "mkdir -p '$remote_dir/desktop'"
+          scp "${ssh_common[@]}" site-release/desktop-release.json "$HANDYPOS_SITE_SSH_USER@$HANDYPOS_SITE_SSH_HOST:$remote_dir/desktop-release.json"
+          scp "${ssh_common[@]}" site-release/desktop/HandyPOS-Desktop.exe "$HANDYPOS_SITE_SSH_USER@$HANDYPOS_SITE_SSH_HOST:$remote_dir/desktop/HandyPOS-Desktop.exe"
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
@@ -42,3 +142,18 @@ jobs:
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            release-manifest/desktop-release.json
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.desktop_version.outputs.tag }}
+          name: Handy POS Desktop ${{ steps.desktop_version.outputs.version }}
+          body: |
+            Handy POS desktop build ${{ steps.desktop_version.outputs.version }}.
+
+            Download the installer from this release, close Handy POS, then run the installer.
+          files: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            release-manifest/desktop-release.json
