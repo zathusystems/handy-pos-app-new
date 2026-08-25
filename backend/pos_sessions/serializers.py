@@ -381,6 +381,7 @@ class SessionSerializer(serializers.ModelSerializer):
     total_cash_sales = serializers.SerializerMethodField()
     total_card_sales = serializers.SerializerMethodField()
     total_mobile_money_sales = serializers.SerializerMethodField()
+    total_bank_transfer_sales = serializers.SerializerMethodField()
     total_on_account_sales = serializers.SerializerMethodField()
     total_other_sales = serializers.SerializerMethodField()
     total_tips = serializers.SerializerMethodField()
@@ -406,6 +407,7 @@ class SessionSerializer(serializers.ModelSerializer):
             'total_cash_sales',
             'total_card_sales',
             'total_mobile_money_sales',
+            'total_bank_transfer_sales',
             'total_on_account_sales',
             'total_other_sales',
             'total_tips',
@@ -483,6 +485,16 @@ class SessionSerializer(serializers.ModelSerializer):
             status__in=['New', 'Preparing', 'Ready', 'Completed']
         ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
         return float(total)
+
+    def get_total_bank_transfer_sales(self, obj):
+        """Calculate bank transfer sales excluding voided and cancelled orders"""
+        from django.db.models import Sum
+        total = Order.objects.filter(
+            session=obj,
+            payment_method='Bank Transfer',
+            status__in=['New', 'Preparing', 'Ready', 'Completed']
+        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
+        return float(total)
     
     def get_total_on_account_sales(self, obj):
         """Calculate on account sales excluding voided and cancelled orders"""
@@ -537,6 +549,7 @@ class SessionSerializer(serializers.ModelSerializer):
             'totalCashSales': 'total_cash_sales',
             'totalCardSales': 'total_card_sales',
             'totalMobileMoneySales': 'total_mobile_money_sales',
+            'totalBankTransferSales': 'total_bank_transfer_sales',
             'totalOnAccountSales': 'total_on_account_sales',
             'totalOtherSales': 'total_other_sales',
             'totalTips': 'total_tips',

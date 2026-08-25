@@ -1074,6 +1074,19 @@ class SyncPushOrderTests(TestCase):
             ).exists()
         )
 
+    def test_sync_push_accepts_bank_transfer_sale(self):
+        order_id = str(uuid.uuid4())
+        payload = self._build_sync_payload(order_id)
+        payload['changes'][0]['data']['paymentMethod'] = 'Bank Transfer'
+
+        response = self.client.post('/sessions/sync/push/', payload, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['results']['errors'], [])
+
+        created_order = Order.objects.get(id=order_id)
+        self.assertEqual(created_order.payment_method, 'Bank Transfer')
+
     def test_sync_push_on_account_sale_is_acknowledged_and_creates_credit_debit(self):
         customer = Customer.objects.create(
             business=self.business,

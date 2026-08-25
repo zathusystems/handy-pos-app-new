@@ -669,6 +669,10 @@ const ZReportTabModal = ({ session }: { session: Session }) => {
                                 <span>{formatCurrency(paymentBreakdown.mobileMoney)}</span>
                             </div>
                             <div className="flex justify-between">
+                                <span className="text-muted-foreground">Bank Transfer Collected:</span>
+                                <span>{formatCurrency(paymentBreakdown.bankTransfer)}</span>
+                            </div>
+                            <div className="flex justify-between">
                                 <span className="text-muted-foreground">Account / Invoice Due:</span>
                                 <span>{formatCurrency(paymentBreakdown.onAccount)}</span>
                             </div>

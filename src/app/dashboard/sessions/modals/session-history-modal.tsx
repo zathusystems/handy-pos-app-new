@@ -76,6 +76,7 @@ const mapBackendSessionToLocal = (session: any, fallbackBranchId: string | null)
   totalCashSales: parseFloat(session.total_cash_sales || 0),
   totalCardSales: parseFloat(session.total_card_sales || 0),
   totalMobileMoneySales: parseFloat(session.total_mobile_money_sales || 0),
+  totalBankTransferSales: parseFloat(session.total_bank_transfer_sales || session.totalBankTransferSales || 0),
   totalOnAccountSales: parseFloat(session.total_on_account_sales || 0),
   totalOtherSales: parseFloat(session.total_other_sales || 0),
   totalTips: parseFloat(session.total_tips || 0),

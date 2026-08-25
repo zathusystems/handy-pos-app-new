@@ -27,6 +27,8 @@ def _add_payment_amount(totals, payment_method, amount):
         totals['card'] += amount
     elif normalized_method == 'mobile money':
         totals['mobile_money'] += amount
+    elif normalized_method == 'bank transfer':
+        totals['bank_transfer'] += amount
     else:
         totals['other'] += amount
 
@@ -45,6 +47,7 @@ def recompute_session_totals(session):
         'cash': non_laybuy_orders.filter(payment_method='Cash').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
         'card': non_laybuy_orders.filter(payment_method='Card').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
         'mobile_money': non_laybuy_orders.filter(payment_method='Mobile Money').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
+        'bank_transfer': non_laybuy_orders.filter(payment_method='Bank Transfer').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
         'on_account': non_laybuy_orders.filter(payment_method='On Account').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
         'other': non_laybuy_orders.filter(payment_method='Other').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
     }
@@ -81,6 +84,7 @@ def recompute_session_totals(session):
     session.total_cash_sales = totals['cash']
     session.total_card_sales = totals['card']
     session.total_mobile_money_sales = totals['mobile_money']
+    session.total_bank_transfer_sales = totals['bank_transfer']
     session.total_on_account_sales = totals['on_account']
     session.total_other_sales = totals['other']
     session.total_tips = total_tips
@@ -91,6 +95,7 @@ def recompute_session_totals(session):
         'total_cash_sales',
         'total_card_sales',
         'total_mobile_money_sales',
+        'total_bank_transfer_sales',
         'total_on_account_sales',
         'total_other_sales',
         'total_tips',

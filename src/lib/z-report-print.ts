@@ -8,6 +8,7 @@ export type ZReportPaymentBreakdown = {
   cash: number;
   card: number;
   mobileMoney: number;
+  bankTransfer: number;
   onAccount: number;
   other: number;
   laybuyDeposits: number;
@@ -165,6 +166,7 @@ export const calculateZReportSummary = (
     cash: 0,
     card: 0,
     mobileMoney: 0,
+    bankTransfer: 0,
     onAccount: 0,
     other: 0,
     laybuyDeposits: 0,
@@ -230,6 +232,9 @@ export const calculateZReportSummary = (
           break;
         case 'mobile money':
           paymentBreakdown.mobileMoney += amount;
+          break;
+        case 'bank transfer':
+          paymentBreakdown.bankTransfer += amount;
           break;
         case 'on account':
           paymentBreakdown.onAccount += amount;
@@ -322,6 +327,7 @@ export const calculateZReportSummary = (
     paymentBreakdown.cash +
     paymentBreakdown.card +
     paymentBreakdown.mobileMoney +
+    paymentBreakdown.bankTransfer +
     paymentBreakdown.other;
   paymentBreakdown.totalDue = paymentBreakdown.onAccount + paymentBreakdown.laybuyOutstanding;
 
@@ -396,6 +402,7 @@ export const buildZReportPrintHtml = ({
     `Cash Collected: ${formatCurrency(cashCollected)}`,
     `Card Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.card))}`,
     `Mobile Money Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.mobileMoney))}`,
+    `Bank Transfer Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.bankTransfer))}`,
     `Other Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.other))}`,
     `Laybuy Deposits: ${formatCurrency(toFiniteNumber(paymentBreakdown.laybuyDeposits))}`,
     `Total Collected: ${formatCurrency(totalCollected)}`,

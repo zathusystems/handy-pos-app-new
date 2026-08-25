@@ -14,6 +14,7 @@ import {
   Package,
   Wallet,
   Smartphone,
+  Landmark,
   CheckCircle,
   Loader2,
   Printer,
@@ -1632,7 +1633,11 @@ const PaymentDialog = ({
     const allowNegativeIngredientStock =
         (businessSettings as any)?.allowNegativeIngredientStock === true ||
         (businessSettings as any)?.allow_negative_ingredient_stock === true;
-    const change = typeof cashPaid === 'number' && cashPaid > 0 ? cashPaid - total : 0;
+    const normalizedCashPaid =
+        typeof cashPaid === 'number'
+            ? cashPaid
+            : Number.parseFloat(String(cashPaid ?? ''));
+    const change = Number.isFinite(normalizedCashPaid) && normalizedCashPaid > 0 ? normalizedCashPaid - total : 0;
     const tipFromChange = selectedPaymentMethod === 'Cash' && recordChangeAsTip
         ? Math.max(0, change)
         : 0;
@@ -1659,6 +1664,40 @@ const PaymentDialog = ({
         !selectedCustomerId &&
         !buyerName.trim() &&
         !buyerPhone.trim();
+    const cashPaymentInvalid =
+        selectedPaymentMethod === 'Cash' &&
+        (!Number.isFinite(normalizedCashPaid) || normalizedCashPaid < total);
+
+    const applyPaymentKeypadInput = useCallback((key: string) => {
+        const isCashTarget = selectedPaymentMethod === 'Cash';
+        const isLaybuyTarget = selectedPaymentMethod === 'Laybuy';
+        if (!isCashTarget && !isLaybuyTarget) {
+            return;
+        }
+
+        const currentRaw = String((isCashTarget ? cashPaid : laybuyDeposit) ?? '');
+        const current = currentRaw === '0' ? '' : currentRaw;
+        let nextValue = current;
+
+        if (key === 'clear') {
+            nextValue = '';
+        } else if (key === 'backspace') {
+            nextValue = current.slice(0, -1);
+        } else if (key === 'exact') {
+            nextValue = total.toFixed(2).replace(/\.00$/, '');
+        } else if (key === '.') {
+            nextValue = current.includes('.') ? current : `${current || '0'}.`;
+        } else if (/^\d+$/.test(key)) {
+            const candidate = `${current}${key}`;
+            nextValue = candidate.length > 12 ? current : candidate;
+        }
+
+        if (isCashTarget) {
+            setCashPaid(nextValue);
+        } else {
+            setLaybuyDeposit(nextValue);
+        }
+    }, [cashPaid, laybuyDeposit, selectedPaymentMethod, total]);
     const receiptStyleTaxBreakdown = useMemo(() => {
         const breakdown = new Map<string, {
             rate: number;
@@ -2496,6 +2535,83 @@ const PaymentDialog = ({
         return <DialogContent className="w-[calc(100vw-1rem)] max-w-xl p-4 sm:p-6">{confirmationContent}</DialogContent>;
     }
 
+    const paymentKeypad = (selectedPaymentMethod === 'Cash' || selectedPaymentMethod === 'Laybuy') ? (
+        <div className="hidden rounded-lg border bg-background p-3 shadow-sm lg:block">
+            <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                    <p className="text-xs font-semibold uppercase text-muted-foreground">
+                        {selectedPaymentMethod === 'Cash' ? 'Cash entry' : 'Deposit entry'}
+                    </p>
+                    <p className="text-lg font-bold">
+                        {selectedPaymentMethod === 'Cash'
+                            ? currencyFormatter(Number.isFinite(normalizedCashPaid) ? normalizedCashPaid : 0)
+                            : currencyFormatter(Number.isFinite(normalizedLaybuyDeposit) ? normalizedLaybuyDeposit : 0)}
+                    </p>
+                </div>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => applyPaymentKeypadInput('clear')}
+                    disabled={hasBlockingUnmapped || isProcessingPayment}
+                >
+                    Clear
+                </Button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+                {['7', '8', '9', '4', '5', '6', '1', '2', '3'].map((key) => (
+                    <Button
+                        key={key}
+                        type="button"
+                        variant="outline"
+                        className="h-11 text-base font-semibold"
+                        onClick={() => applyPaymentKeypadInput(key)}
+                        disabled={hasBlockingUnmapped || isProcessingPayment}
+                    >
+                        {key}
+                    </Button>
+                ))}
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 text-base font-semibold"
+                    onClick={() => applyPaymentKeypadInput('.')}
+                    disabled={hasBlockingUnmapped || isProcessingPayment}
+                >
+                    .
+                </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 text-base font-semibold"
+                    onClick={() => applyPaymentKeypadInput('0')}
+                    disabled={hasBlockingUnmapped || isProcessingPayment}
+                >
+                    0
+                </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 text-sm font-semibold"
+                    onClick={() => applyPaymentKeypadInput('backspace')}
+                    disabled={hasBlockingUnmapped || isProcessingPayment}
+                >
+                    Del
+                </Button>
+            </div>
+            <Button
+                type="button"
+                variant="secondary"
+                className="mt-2 h-10 w-full text-sm font-semibold"
+                onClick={() => applyPaymentKeypadInput('exact')}
+                disabled={hasBlockingUnmapped || isProcessingPayment}
+            >
+                {selectedPaymentMethod === 'Cash' ? 'Exact Amount' : 'Full Deposit'}
+            </Button>
+        </div>
+    ) : null;
+
     const paymentContent = (
         <>
             {isInlineDisplay ? (
@@ -2739,10 +2855,11 @@ const PaymentDialog = ({
 
                 <div>
                     <h4 className="text-sm font-medium mb-2">Payment Method</h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                        <Button size="default" variant={selectedPaymentMethod === 'Cash' ? 'default' : 'outline'} onClick={() => setSelectedPaymentMethod('Cash')} className="text-sm h-11" disabled={isProcessingPayment}><Wallet className="mr-1 h-4 w-4"/>Cash</Button>
                        <Button size="default" variant={selectedPaymentMethod === 'Card' ? 'default' : 'outline'} onClick={() => setSelectedPaymentMethod('Card')} className="text-sm h-11" disabled={isProcessingPayment}><CreditCard className="mr-1 h-4 w-4"/>Card</Button>
                        <Button size="default" variant={selectedPaymentMethod === 'Mobile Money' ? 'default' : 'outline'} onClick={() => setSelectedPaymentMethod('Mobile Money')} className="text-sm h-11" disabled={isProcessingPayment}><Smartphone className="mr-1 h-4 w-4"/>Mobile</Button>
+                       <Button size="default" variant={selectedPaymentMethod === 'Bank Transfer' ? 'default' : 'outline'} onClick={() => setSelectedPaymentMethod('Bank Transfer')} className="text-sm h-11" disabled={isProcessingPayment}><Landmark className="mr-1 h-4 w-4"/>Bank</Button>
                        <Button
                          size="default"
                          variant={selectedPaymentMethod === 'On Account' ? 'default' : 'outline'}
@@ -2790,6 +2907,7 @@ const PaymentDialog = ({
                 )}
 
                 {selectedPaymentMethod === 'Cash' && (
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_14rem]">
                     <div className="space-y-3 rounded-lg border bg-blue-50 dark:bg-blue-950/30 p-4">
                         <div>
                             <label className="text-sm font-medium">Cash Paid</label>
@@ -2798,7 +2916,7 @@ const PaymentDialog = ({
                                 step="0.01" 
                                 placeholder="Enter amount paid" 
                                 value={cashPaid} 
-                                onChange={(e) => setCashPaid(e.target.value ? parseFloat(e.target.value) : '')}
+                                onChange={(e) => setCashPaid(e.target.value)}
                                 className="mt-2 text-lg font-semibold h-11"
                                 disabled={hasBlockingUnmapped || isProcessingPayment}
                             />
@@ -2838,7 +2956,7 @@ const PaymentDialog = ({
                             size="lg" 
                             className="w-full bg-green-600 hover:bg-green-700 text-base h-12" 
                             onClick={() => handlePayment('Cash')} 
-                            disabled={typeof cashPaid !== 'number' || cashPaid < total || hasBlockingUnmapped || isProcessingPayment}
+                            disabled={cashPaymentInvalid || hasBlockingUnmapped || isProcessingPayment}
                             title={hasBlockingUnmapped ? 'Cannot complete payment: unmapped products in cart' : ''}
                         >
                             {isProcessingPayment ? (
@@ -2854,9 +2972,12 @@ const PaymentDialog = ({
                             )}
                         </Button>
                     </div>
+                    {paymentKeypad}
+                    </div>
                 )}
 
                 {selectedPaymentMethod === 'Laybuy' && (
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_14rem]">
                     <div className="space-y-3 rounded-lg border bg-amber-50 p-4 dark:bg-amber-950/20">
                         <div>
                             <label className="text-sm font-medium">Deposit Received</label>
@@ -2867,7 +2988,7 @@ const PaymentDialog = ({
                                 max={total}
                                 placeholder="Enter deposit amount"
                                 value={laybuyDeposit}
-                                onChange={(e) => setLaybuyDeposit(e.target.value ? parseFloat(e.target.value) : '')}
+                                onChange={(e) => setLaybuyDeposit(e.target.value)}
                                 className="mt-2 text-lg font-semibold h-11"
                                 disabled={hasBlockingUnmapped || isProcessingPayment}
                             />
@@ -2893,6 +3014,8 @@ const PaymentDialog = ({
                                 {currencyFormatter(Math.max(0, total - (Number.isFinite(normalizedLaybuyDeposit) ? normalizedLaybuyDeposit : 0)))}
                             </span>
                         </div>
+                    </div>
+                    {paymentKeypad}
                     </div>
                 )}
 
@@ -2942,7 +3065,7 @@ const PaymentDialog = ({
     }
 
     return (
-        <DialogContent className="max-h-[90vh] flex flex-col">
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-3xl max-h-[90vh] flex flex-col">
             {paymentContent}
         </DialogContent>
     )

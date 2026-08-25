@@ -1478,6 +1478,9 @@ export default function PosPage() {
             case 'Mobile Money':
                  sessionUpdate.totalMobileMoneySales = (sessionForOrder.totalMobileMoneySales || 0) + saleAmount;
                  break;
+            case 'Bank Transfer':
+                 sessionUpdate.totalBankTransferSales = (sessionForOrder.totalBankTransferSales || 0) + saleAmount;
+                 break;
             case 'On Account':
                  sessionUpdate.totalOnAccountSales = (sessionForOrder.totalOnAccountSales || 0) + saleAmount;
                  break;
@@ -1491,6 +1494,8 @@ export default function PosPage() {
                      sessionUpdate.totalCardSales = (sessionForOrder.totalCardSales || 0) + depositAmount;
                    } else if (laybuyPaymentMethod === 'Mobile Money') {
                      sessionUpdate.totalMobileMoneySales = (sessionForOrder.totalMobileMoneySales || 0) + depositAmount;
+                   } else if (laybuyPaymentMethod === 'Bank Transfer') {
+                     sessionUpdate.totalBankTransferSales = (sessionForOrder.totalBankTransferSales || 0) + depositAmount;
                    } else {
                      sessionUpdate.totalOtherSales = (sessionForOrder.totalOtherSales || 0) + depositAmount;
                    }

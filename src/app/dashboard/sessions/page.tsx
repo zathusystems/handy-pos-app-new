@@ -781,6 +781,10 @@ const ZReportTab = ({ session }: { session: Session }) => {
                                 <span>{formatCurrency(paymentBreakdown.mobileMoney)}</span>
                             </div>
                             <div className="flex justify-between">
+                                <span className="text-muted-foreground">Bank Transfer Collected:</span>
+                                <span>{formatCurrency(paymentBreakdown.bankTransfer)}</span>
+                            </div>
+                            <div className="flex justify-between">
                                 <span className="text-muted-foreground">Account / Invoice Due:</span>
                                 <span>{formatCurrency(paymentBreakdown.onAccount)}</span>
                             </div>
@@ -1967,6 +1971,7 @@ export default function SessionsPage() {
         totalCashSales: parseFloat(response.total_cash_sales || 0),
         totalCardSales: parseFloat(response.total_card_sales || 0),
         totalMobileMoneySales: parseFloat(response.total_mobile_money_sales || 0),
+        totalBankTransferSales: parseFloat(response.total_bank_transfer_sales || response.totalBankTransferSales || 0),
         totalOnAccountSales: parseFloat(response.total_on_account_sales || 0),
         totalOtherSales: parseFloat(response.total_other_sales || 0),
         totalTips: parseFloat(response.total_tips || 0),
@@ -2524,14 +2529,15 @@ export default function SessionsPage() {
                                         (activeSession.totalCashSales || 0)
                                         + (activeSession.totalCardSales || 0)
                                         + (activeSession.totalMobileMoneySales || 0)
+                                        + (activeSession.totalBankTransferSales || 0)
                                         + (activeSession.totalOtherSales || 0)
                                     )}
                                 </div>
                             </div>
                             <div className="rounded-lg bg-muted/50 p-4">
-                                <div className="text-sm font-medium text-muted-foreground">Card / Mobile</div>
+                                <div className="text-sm font-medium text-muted-foreground">Card / Mobile / Bank</div>
                                 <div className="text-lg font-bold text-blue-600">
-                                    {formatCurrency((activeSession.totalCardSales || 0) + (activeSession.totalMobileMoneySales || 0))}
+                                    {formatCurrency((activeSession.totalCardSales || 0) + (activeSession.totalMobileMoneySales || 0) + (activeSession.totalBankTransferSales || 0))}
                                 </div>
                             </div>
                             <div className="rounded-lg bg-muted/50 p-4">

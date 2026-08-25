@@ -92,13 +92,14 @@ export default function CloseSessionForm({ session, onSessionClosed, onDone }: C
     cash: hasOrderBreakdown ? paymentBreakdown.cash : (session.totalCashSales || 0),
     card: hasOrderBreakdown ? paymentBreakdown.card : (session.totalCardSales || 0),
     mobileMoney: hasOrderBreakdown ? paymentBreakdown.mobileMoney : (session.totalMobileMoneySales || 0),
+    bankTransfer: hasOrderBreakdown ? paymentBreakdown.bankTransfer : (session.totalBankTransferSales || 0),
     onAccount: hasOrderBreakdown ? paymentBreakdown.onAccount : (session.totalOnAccountSales || 0),
     other: hasOrderBreakdown ? paymentBreakdown.other : (session.totalOtherSales || 0),
     laybuyDeposits: hasOrderBreakdown ? paymentBreakdown.laybuyDeposits : 0,
     laybuyOutstanding: hasOrderBreakdown ? paymentBreakdown.laybuyOutstanding : 0,
     totalCollected: hasOrderBreakdown
       ? paymentBreakdown.totalCollected
-      : (session.totalCashSales || 0) + (session.totalCardSales || 0) + (session.totalMobileMoneySales || 0) + (session.totalOtherSales || 0),
+      : (session.totalCashSales || 0) + (session.totalCardSales || 0) + (session.totalMobileMoneySales || 0) + (session.totalBankTransferSales || 0) + (session.totalOtherSales || 0),
     totalDue: hasOrderBreakdown
       ? paymentBreakdown.totalDue
       : (session.totalOnAccountSales || 0),
@@ -316,6 +317,7 @@ export default function CloseSessionForm({ session, onSessionClosed, onDone }: C
     { label: 'Cash Collected', value: resolvedPaymentBreakdown.cash },
     { label: 'Card Collected', value: resolvedPaymentBreakdown.card },
     { label: 'Mobile Money Collected', value: resolvedPaymentBreakdown.mobileMoney },
+    { label: 'Bank Transfer Collected', value: resolvedPaymentBreakdown.bankTransfer },
     { label: 'Account / Invoice Due', value: resolvedPaymentBreakdown.onAccount },
     { label: 'Laybuy Deposits', value: resolvedPaymentBreakdown.laybuyDeposits },
     { label: 'Laybuy Outstanding', value: resolvedPaymentBreakdown.laybuyOutstanding },

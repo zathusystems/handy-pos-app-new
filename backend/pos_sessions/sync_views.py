@@ -606,6 +606,7 @@ def handle_create_session(session_id, data, business, branch_id, user):
             'total_cash_sales': float(data.get('total_cash_sales') or data.get('totalCashSales', 0)) or 0,
             'total_card_sales': float(data.get('total_card_sales') or data.get('totalCardSales', 0)) or 0,
             'total_mobile_money_sales': float(data.get('total_mobile_money_sales') or data.get('totalMobileMoneySales', 0)) or 0,
+            'total_bank_transfer_sales': float(data.get('total_bank_transfer_sales') or data.get('totalBankTransferSales', 0)) or 0,
             'total_on_account_sales': float(data.get('total_on_account_sales') or data.get('totalOnAccountSales', 0)) or 0,
             'total_other_sales': float(data.get('total_other_sales') or data.get('totalOtherSales', 0)) or 0,
             'total_tips': float(data.get('total_tips') or data.get('totalTips', 0)) or 0,
@@ -671,6 +672,8 @@ def handle_update_session(session_id, data, business, branch_id):
             session.total_card_sales = data['totalCardSales']
         if 'totalMobileMoneySales' in data:
             session.total_mobile_money_sales = data['totalMobileMoneySales']
+        if 'totalBankTransferSales' in data:
+            session.total_bank_transfer_sales = data['totalBankTransferSales']
         if 'totalOnAccountSales' in data:
             session.total_on_account_sales = data['totalOnAccountSales']
         if 'totalOtherSales' in data:

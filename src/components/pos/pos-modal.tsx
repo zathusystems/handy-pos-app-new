@@ -737,6 +737,7 @@ export function PosModal({
       totalCashSales: parseFloat(response.total_cash_sales || 0),
       totalCardSales: parseFloat(response.total_card_sales || 0),
       totalMobileMoneySales: parseFloat(response.total_mobile_money_sales || 0),
+      totalBankTransferSales: parseFloat(response.total_bank_transfer_sales || response.totalBankTransferSales || 0),
       totalOnAccountSales: parseFloat(response.total_on_account_sales || 0),
       totalOtherSales: parseFloat(response.total_other_sales || 0),
       totalTips: parseFloat(response.total_tips || 0),
@@ -2795,6 +2796,9 @@ export function PosModal({
             case 'Mobile Money':
                  sessionUpdate.totalMobileMoneySales = (sessionForOrder.totalMobileMoneySales || 0) + saleAmount;
                  break;
+            case 'Bank Transfer':
+                 sessionUpdate.totalBankTransferSales = (sessionForOrder.totalBankTransferSales || 0) + saleAmount;
+                 break;
             case 'On Account':
                  sessionUpdate.totalOnAccountSales = (sessionForOrder.totalOnAccountSales || 0) + saleAmount;
                  break;
@@ -2808,6 +2812,8 @@ export function PosModal({
                      sessionUpdate.totalCardSales = (sessionForOrder.totalCardSales || 0) + depositAmount;
                    } else if (laybuyPaymentMethod === 'Mobile Money') {
                      sessionUpdate.totalMobileMoneySales = (sessionForOrder.totalMobileMoneySales || 0) + depositAmount;
+                   } else if (laybuyPaymentMethod === 'Bank Transfer') {
+                     sessionUpdate.totalBankTransferSales = (sessionForOrder.totalBankTransferSales || 0) + depositAmount;
                    } else {
                      sessionUpdate.totalOtherSales = (sessionForOrder.totalOtherSales || 0) + depositAmount;
                    }

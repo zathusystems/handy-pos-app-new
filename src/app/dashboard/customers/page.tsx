@@ -575,6 +575,8 @@ export default function CustomersPage() {
         session.totalCardSales = (session.totalCardSales || 0) + amount;
       } else if (normalizedMethod === 'mobile money') {
         session.totalMobileMoneySales = (session.totalMobileMoneySales || 0) + amount;
+      } else if (normalizedMethod === 'bank transfer') {
+        session.totalBankTransferSales = (session.totalBankTransferSales || 0) + amount;
       } else {
         session.totalOtherSales = (session.totalOtherSales || 0) + amount;
       }

@@ -589,6 +589,7 @@ export default function ReportsPage() {
         const cash = sessionsInRange.reduce((sum, session) => sum + toFiniteNumber(session.totalCashSales, 0), 0);
         const card = sessionsInRange.reduce((sum, session) => sum + toFiniteNumber(session.totalCardSales, 0), 0);
         const mobileMoney = sessionsInRange.reduce((sum, session) => sum + toFiniteNumber(session.totalMobileMoneySales, 0), 0);
+        const bankTransfer = sessionsInRange.reduce((sum, session) => sum + toFiniteNumber(session.totalBankTransferSales, 0), 0);
         const other = sessionsInRange.reduce((sum, session) => sum + toFiniteNumber(session.totalOtherSales, 0), 0);
         const onAccount = sessionsInRange.reduce((sum, session) => sum + toFiniteNumber(session.totalOnAccountSales, 0), 0);
 
@@ -597,9 +598,10 @@ export default function ReportsPage() {
             cash,
             card,
             mobileMoney,
+            bankTransfer,
             other,
             onAccount,
-            totalCollected: cash + card + mobileMoney + other,
+            totalCollected: cash + card + mobileMoney + bankTransfer + other,
             totalDue: onAccount + paymentBreakdown.laybuyOutstanding,
         };
     }, [paymentBreakdown, sessionsInRange]);
@@ -670,6 +672,7 @@ export default function ReportsPage() {
         { label: 'Cash Collected', value: displayedPaymentBreakdown.cash },
         { label: 'Card Collected', value: displayedPaymentBreakdown.card },
         { label: 'Mobile Money Collected', value: displayedPaymentBreakdown.mobileMoney },
+        { label: 'Bank Transfer Collected', value: displayedPaymentBreakdown.bankTransfer },
         { label: 'Laybuy Deposits Included', value: displayedPaymentBreakdown.laybuyDeposits },
         { label: 'Other Collected', value: displayedPaymentBreakdown.other },
         { label: 'Account / Invoice Due', value: displayedPaymentBreakdown.onAccount },

@@ -156,6 +156,7 @@ interface DashboardData {
     total_cash_sales: number;
     total_card_sales: number;
     total_mobile_money_sales: number;
+    total_bank_transfer_sales: number;
     total_on_account_sales: number;
     total_tips: number;
     started_at: string;
@@ -400,9 +401,13 @@ function SessionSummaryCard({
           <div className="text-2xl font-bold text-green-600">+{formatCurrency(activeSession.total_cash_sales)}</div>
         </div>
         <div className="rounded-lg bg-muted/50 p-4">
-          <div className="text-sm font-medium text-muted-foreground">Card / Mobile Collected</div>
+          <div className="text-sm font-medium text-muted-foreground">Card / Mobile / Bank</div>
           <div className="text-2xl font-bold text-blue-600">
-            +{formatCurrency(activeSession.total_card_sales + activeSession.total_mobile_money_sales)}
+            +{formatCurrency(
+              activeSession.total_card_sales
+              + activeSession.total_mobile_money_sales
+              + Number(activeSession.total_bank_transfer_sales || 0)
+            )}
           </div>
         </div>
         <div className="rounded-lg bg-muted/50 p-4">

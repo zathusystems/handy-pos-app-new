@@ -202,6 +202,8 @@ class DashboardViewSet(viewsets.ViewSet):
             payment_totals['Card'] += amount
         elif normalized_method == 'mobile money':
             payment_totals['Mobile Money'] += amount
+        elif normalized_method == 'bank transfer':
+            payment_totals['Bank Transfer'] += amount
         elif normalized_method == 'on account':
             payment_totals['On Account'] += amount
         else:
@@ -321,6 +323,7 @@ class DashboardViewSet(viewsets.ViewSet):
             'Cash': Decimal('0.00'),
             'Card': Decimal('0.00'),
             'Mobile Money': Decimal('0.00'),
+            'Bank Transfer': Decimal('0.00'),
             'On Account': Decimal('0.00'),
             'Laybuy Deposits': Decimal('0.00'),
             'Laybuy Outstanding': Decimal('0.00'),
@@ -422,7 +425,8 @@ class DashboardViewSet(viewsets.ViewSet):
             {'name': 'Cash', 'value': float(payment_totals.get('Cash', Decimal('0.00'))), 'color': 'hsl(var(--chart-1))'},
             {'name': 'Card', 'value': float(payment_totals.get('Card', Decimal('0.00'))), 'color': 'hsl(var(--chart-2))'},
             {'name': 'Mobile Money', 'value': float(payment_totals.get('Mobile Money', Decimal('0.00'))), 'color': 'hsl(var(--chart-3))'},
-            {'name': 'Other', 'value': float(payment_totals.get('Other', Decimal('0.00'))), 'color': 'hsl(var(--chart-4))'},
+            {'name': 'Bank Transfer', 'value': float(payment_totals.get('Bank Transfer', Decimal('0.00'))), 'color': 'hsl(var(--chart-4))'},
+            {'name': 'Other', 'value': float(payment_totals.get('Other', Decimal('0.00'))), 'color': 'hsl(var(--chart-5))'},
         ]
         amount_due_data = [
             {'name': 'Account / Invoice Due', 'value': float(payment_totals.get('On Account', Decimal('0.00'))), 'color': 'hsl(var(--chart-5))'},
@@ -433,6 +437,7 @@ class DashboardViewSet(viewsets.ViewSet):
                 payment_totals.get('Cash', Decimal('0.00'))
                 + payment_totals.get('Card', Decimal('0.00'))
                 + payment_totals.get('Mobile Money', Decimal('0.00'))
+                + payment_totals.get('Bank Transfer', Decimal('0.00'))
                 + payment_totals.get('Other', Decimal('0.00'))
             ),
             'account_invoice_due': float(payment_totals.get('On Account', Decimal('0.00'))),
@@ -577,12 +582,14 @@ class DashboardViewSet(viewsets.ViewSet):
             total_cash_sales = Decimal('0.00')
             total_card_sales = Decimal('0.00')
             total_mobile_money_sales = Decimal('0.00')
+            total_bank_transfer_sales = Decimal('0.00')
             total_on_account_sales = Decimal('0.00')
             total_other_sales = Decimal('0.00')
             session_payment_totals = {
                 'Cash': Decimal('0.00'),
                 'Card': Decimal('0.00'),
                 'Mobile Money': Decimal('0.00'),
+                'Bank Transfer': Decimal('0.00'),
                 'On Account': Decimal('0.00'),
                 'Laybuy Outstanding': Decimal('0.00'),
                 'Other': Decimal('0.00'),
@@ -645,6 +652,7 @@ class DashboardViewSet(viewsets.ViewSet):
             total_cash_sales = session_payment_totals['Cash']
             total_card_sales = session_payment_totals['Card']
             total_mobile_money_sales = session_payment_totals['Mobile Money']
+            total_bank_transfer_sales = session_payment_totals['Bank Transfer']
             total_on_account_sales = session_payment_totals['On Account']
             total_other_sales = session_payment_totals['Other']
             
@@ -656,6 +664,10 @@ class DashboardViewSet(viewsets.ViewSet):
                     total_card_sales = sum((s.total_card_sales for s in active_sessions), Decimal('0.00'))
                     total_mobile_money_sales = sum(
                         (s.total_mobile_money_sales for s in active_sessions),
+                        Decimal('0.00')
+                    )
+                    total_bank_transfer_sales = sum(
+                        (s.total_bank_transfer_sales for s in active_sessions),
                         Decimal('0.00')
                     )
                     total_on_account_sales = sum((s.total_on_account_sales for s in active_sessions), Decimal('0.00'))
@@ -686,6 +698,7 @@ class DashboardViewSet(viewsets.ViewSet):
                     'total_cash_sales': float(total_cash_sales),
                     'total_card_sales': float(total_card_sales),
                     'total_mobile_money_sales': float(total_mobile_money_sales),
+                    'total_bank_transfer_sales': float(total_bank_transfer_sales),
                     'total_on_account_sales': float(total_on_account_sales),
                     'total_tips': float(total_tips),
                     'started_at': earliest_started_at.isoformat(),
@@ -700,6 +713,7 @@ class DashboardViewSet(viewsets.ViewSet):
                     total_cash_sales = active_session.total_cash_sales
                     total_card_sales = active_session.total_card_sales
                     total_mobile_money_sales = active_session.total_mobile_money_sales
+                    total_bank_transfer_sales = active_session.total_bank_transfer_sales
                     total_on_account_sales = active_session.total_on_account_sales
                     total_other_sales = active_session.total_other_sales or Decimal('0.00')
 
@@ -735,6 +749,7 @@ class DashboardViewSet(viewsets.ViewSet):
                     'total_cash_sales': float(total_cash_sales),
                     'total_card_sales': float(total_card_sales),
                     'total_mobile_money_sales': float(total_mobile_money_sales),
+                    'total_bank_transfer_sales': float(total_bank_transfer_sales),
                     'total_on_account_sales': float(total_on_account_sales),
                     'total_tips': float(active_session.total_tips),
                     'started_at': active_session.started_at.isoformat(),

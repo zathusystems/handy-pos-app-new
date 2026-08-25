@@ -279,7 +279,7 @@ export interface Order {
     total: number;
     tax?: number; // Tax amount for this order (legacy field)
     tip?: number; // Tip amount for this order
-    paymentMethod: 'Cash' | 'Card' | 'Mobile Money' | 'On Account' | 'Laybuy' | 'Other';
+    paymentMethod: 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'On Account' | 'Laybuy' | 'Other';
     laybuyDeposit?: number;
     laybuy_deposit?: number;
     depositAmount?: number;
@@ -432,6 +432,7 @@ export interface Session {
     totalCashSales: number;
     totalCardSales: number;
     totalMobileMoneySales: number;
+    totalBankTransferSales: number;
     totalOnAccountSales: number;
     totalOtherSales: number;
     totalTips: number;

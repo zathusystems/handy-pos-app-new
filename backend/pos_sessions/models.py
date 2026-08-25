@@ -39,6 +39,7 @@ class Session(models.Model):
     total_cash_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_card_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_mobile_money_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_bank_transfer_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_on_account_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_other_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_tips = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -97,6 +98,7 @@ class Order(models.Model):
         ('Cash', 'Cash'),
         ('Card', 'Card'),
         ('Mobile Money', 'Mobile Money'),
+        ('Bank Transfer', 'Bank Transfer'),
         ('On Account', 'On Account'),
         ('Laybuy', 'Laybuy'),
         ('Other', 'Other'),

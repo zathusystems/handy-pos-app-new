@@ -134,6 +134,7 @@ class SessionAdmin(admin.ModelAdmin):
                 'total_cash_sales',
                 'total_card_sales',
                 'total_mobile_money_sales',
+                'total_bank_transfer_sales',
                 'total_on_account_sales',
                 'total_other_sales',
                 'total_tips'
