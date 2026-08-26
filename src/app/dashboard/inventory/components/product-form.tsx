@@ -20,6 +20,10 @@ import { createProduct, updateProduct } from '@/lib/services/product-service';
 import { SHOW_FUEL_FEATURES } from '@/lib/fuel-features';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { normalizeBarcodeValue } from '@/lib/barcode';
+import {
+    readStoredCustomSalesSectionSettings,
+    resolveCustomSalesSectionSettings,
+} from '@/lib/custom-sales-section';
 
 import { Button } from '@/components/ui/button';
 import { DialogFooter } from '@/components/ui/dialog';
@@ -37,6 +41,7 @@ import { Separator } from '@/components/ui/separator';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 const REORDER_LEVEL_PRESETS = [5, 10, 20, 50] as const;
 const DEFAULT_REORDER_LEVEL = REORDER_LEVEL_PRESETS[0];
@@ -161,6 +166,10 @@ export const AddProductForm = ({
     branchId: string;
 }) => {
     const { user } = useAuth();
+    const businessRecord = useLiveQuery(
+        () => user?.businessId ? db.business.get(user.businessId) : undefined,
+        [user?.businessId]
+    );
     const isRestaurantOrBar = businessType === 'Restaurant' || businessType === 'Bar & Liquor';
     const supportsVariablePrice = VARIABLE_PRICE_BUSINESS_TYPES.has(businessType);
     const isMobile = useIsMobile();
@@ -261,27 +270,47 @@ export const AddProductForm = ({
     }, [canConfigurePortions, isSoldInPortions, portionName, portionsPerUnit, portionPrice, resetPortionFields]);
 
     React.useEffect(() => {
+        const storedSettings = readStoredCustomSalesSectionSettings();
+        setCustomSalesSectionSettings(
+            resolveCustomSalesSectionSettings(
+                businessRecord as Record<string, any> | null,
+                storedSettings
+            )
+        );
+
         if (typeof window === 'undefined') return;
-        try {
-            const raw = window.localStorage.getItem('handypos-business-settings');
-            const parsed = raw ? JSON.parse(raw) : null;
-            const enabled = parsed?.enableCustomSalesSection === true ||
-                parsed?.enable_custom_sales_section === true ||
-                parsed?.enableCustomSalesSection === 'true' ||
-                parsed?.enable_custom_sales_section === 'true';
-            const name = String(parsed?.customSalesSectionName ?? parsed?.custom_sales_section_name ?? '').trim();
-            setCustomSalesSectionSettings({ enabled, name });
-        } catch (error) {
-            console.warn('[ProductForm] Failed to read custom sales section settings:', error);
-            setCustomSalesSectionSettings({ enabled: false, name: '' });
-        }
-    }, []);
+
+        const refreshFromStorage = () => {
+            const currentStored = readStoredCustomSalesSectionSettings();
+            setCustomSalesSectionSettings(
+                resolveCustomSalesSectionSettings(
+                    businessRecord as Record<string, any> | null,
+                    currentStored
+                )
+            );
+        };
+
+        window.addEventListener('storage', refreshFromStorage);
+        window.addEventListener('focus', refreshFromStorage);
+        window.addEventListener('handypos-business-settings-changed', refreshFromStorage);
+        return () => {
+            window.removeEventListener('storage', refreshFromStorage);
+            window.removeEventListener('focus', refreshFromStorage);
+            window.removeEventListener('handypos-business-settings-changed', refreshFromStorage);
+        };
+    }, [businessRecord]);
 
     React.useEffect(() => {
         if (!customSalesSectionSettings.enabled && showInCustomSalesSection) {
             setValue('showInCustomSalesSection', false);
         }
     }, [customSalesSectionSettings.enabled, setValue, showInCustomSalesSection]);
+
+    React.useEffect(() => {
+        if (isProduced && isVariablePrice) {
+            setValue('isVariablePrice', false);
+        }
+    }, [isProduced, isVariablePrice, setValue]);
 
     // Log suppliers for debugging
     React.useEffect(() => {
@@ -495,6 +524,11 @@ export const AddProductForm = ({
                 customSalesSectionSettings.enabled &&
                 finalItemType === 'sellable' &&
                 Boolean(data.showInCustomSalesSection);
+            const normalizedIsVariablePrice =
+                supportsVariablePrice &&
+                finalItemType === 'sellable' &&
+                !normalizedIsProduced &&
+                Boolean(data.isVariablePrice);
 
             const normalizedCategory = String(data.category || '').trim();
             const normalizedStatus: InventoryItem['status'] = normalizedIsProduced
@@ -525,7 +559,7 @@ export const AddProductForm = ({
                 value: stockUnitsValue * costValue,
                 price: finalItemType === 'sellable' ? (priceValue > 0 ? priceValue : undefined) : undefined,
                 recipe: normalizedRecipe,
-                isVariablePrice: data.isVariablePrice || false,
+                isVariablePrice: normalizedIsVariablePrice,
                 isFuel: normalizedIsFuel,
                 showInCustomSalesSection: normalizedShowInCustomSalesSection,
                 isProduced: normalizedIsProduced,
@@ -664,6 +698,9 @@ export const AddProductForm = ({
                                     field.onChange(checked);
                                     // Reset category when toggling isProduced to show appropriate categories
                                     setValue('category', '');
+                                    if (checked) {
+                                        setValue('isVariablePrice', false);
+                                    }
                                     if (checked) {
                                         resetPortionFields();
                                     }
@@ -842,7 +879,7 @@ export const AddProductForm = ({
                     />
                 </div>
 
-                {supportsVariablePrice && itemType === 'sellable' && (
+                {supportsVariablePrice && itemType === 'sellable' && !isProduced && (
                      <FormField
                         control={form.control}
                         name="isVariablePrice"
@@ -857,7 +894,7 @@ export const AddProductForm = ({
                             <FormControl>
                             <Switch
                                 checked={field.value}
-                                onCheckedChange={field.onChange}
+                                onCheckedChange={(checked) => field.onChange(checked)}
                             />
                             </FormControl>
                         </FormItem>

@@ -7,6 +7,10 @@ import { db, type Order, type Expense, type InventoryItem } from '@/lib/db';
 import type { DateRange } from 'react-day-picker';
 import { differenceInCalendarDays, endOfDay, startOfDay } from 'date-fns';
 import { useActiveBranch } from '@/hooks/use-active-branch';
+import {
+  readStoredCustomSalesSectionSettings,
+  resolveCustomSalesSectionSettings,
+} from '@/lib/custom-sales-section';
 
 export interface ReportData {
   totalRevenue: number;
@@ -45,7 +49,14 @@ export interface ReportData {
     quantity: number;
     revenue: number;
     revenueWithTax: number;
-    products: { name: string; quantity: number; revenue: number; revenueWithTax: number }[];
+    products: {
+      name: string;
+      quantity: number;
+      revenue: number;
+      revenueWithTax: number;
+      currentStock: number;
+      unitType: string;
+    }[];
   };
 }
 
@@ -57,25 +68,6 @@ export const useReports = (dateRange?: DateRange) => {
     revenue: 0,
     revenueWithTax: 0,
     products: [],
-  };
-
-  const resolveCustomSalesSectionSettings = () => {
-    if (typeof window === 'undefined') {
-      return { enabled: false, name: '' };
-    }
-    try {
-      const raw = window.localStorage.getItem('handypos-business-settings');
-      const parsed = raw ? JSON.parse(raw) : null;
-      const enabled = parsed?.enableCustomSalesSection === true ||
-        parsed?.enable_custom_sales_section === true ||
-        parsed?.enableCustomSalesSection === 'true' ||
-        parsed?.enable_custom_sales_section === 'true';
-      const name = String(parsed?.customSalesSectionName ?? parsed?.custom_sales_section_name ?? '').trim();
-      return { enabled: enabled && Boolean(name), name };
-    } catch (error) {
-      console.warn('[Reports] Failed to read custom sales section settings:', error);
-      return { enabled: false, name: '' };
-    }
   };
 
   const toFiniteNumber = (value: unknown, fallback = 0): number => {
@@ -100,6 +92,20 @@ export const useReports = (dateRange?: DateRange) => {
     }
 
     return Array.from(candidates);
+  };
+
+  const getStoredBusinessId = (): string => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    try {
+      const raw = window.localStorage.getItem('handy-pos-business');
+      const parsed = raw ? JSON.parse(raw) : null;
+      return toTrimmedString(parsed?.id);
+    } catch {
+      return '';
+    }
   };
 
   const resolveNumber = (value: unknown): number | undefined => {
@@ -216,7 +222,12 @@ export const useReports = (dateRange?: DateRange) => {
         const fromMs = Date.parse(from);
         const toMs = Date.parse(to);
         const branchCandidates = new Set(getBranchIdCandidates(activeBranchId));
-        const customSectionSettings = resolveCustomSalesSectionSettings();
+        const storedBusinessId = getStoredBusinessId();
+        const businessRecord = storedBusinessId ? await db.business.get(storedBusinessId) : undefined;
+        const customSectionSettings = resolveCustomSalesSectionSettings(
+          businessRecord as Record<string, any> | null,
+          readStoredCustomSalesSectionSettings()
+        );
 
         const [orders, allExpenses, inventory, staff] = await Promise.all([
           db.orders
@@ -370,7 +381,7 @@ export const useReports = (dateRange?: DateRange) => {
         // Note: Product prices already include VAT, so:
         // - revenueWithTax = actual price paid (includes VAT)
         // - revenue = price without VAT (calculated by removing tax)
-        const productMap = new Map<string, { name: string; category: string; quantity: number; revenue: number; revenueWithTax: number; showInCustomSalesSection: boolean }>();
+        const productMap = new Map<string, { id: string; name: string; category: string; quantity: number; revenue: number; revenueWithTax: number; showInCustomSalesSection: boolean }>();
         normalizedOrders.forEach(order => {
             const totalItemQuantity = order.items.reduce((sum, i) => sum + Math.max(0, toFiniteNumber(i.quantity, 0)), 0);
             if (totalItemQuantity <= 0) return;
@@ -387,6 +398,7 @@ export const useReports = (dateRange?: DateRange) => {
 
                 const productKey = String(product.id);
                 const existing = productMap.get(productKey) || {
+                  id: productKey,
                   name: product.name,
                   category: product.category,
                   quantity: 0,
@@ -511,6 +523,8 @@ export const useReports = (dateRange?: DateRange) => {
                 quantity: product.quantity,
                 revenue: product.revenue,
                 revenueWithTax: product.revenueWithTax,
+                currentStock: toFiniteNumber(inventoryById.get(product.id)?.stockUnits, 0),
+                unitType: String(inventoryById.get(product.id)?.unitType || 'unit'),
               }))
           : [];
         const customSalesSection = customSectionSettings.enabled

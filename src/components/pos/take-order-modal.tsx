@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Plus, Minus, Send, ShoppingBasket, Trash2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Plus, Minus, Send, ShoppingBasket, Trash2, Loader2 } from 'lucide-react';
 import { useCurrency } from '@/hooks/use-currency';
 import { toast } from '@/hooks/use-toast';
 import { Textarea } from '../ui/textarea';
@@ -182,7 +182,14 @@ export function TakeOrderModal({
     const [cart, setCart] = useState<OrderCartItem[]>([]);
     const [selectedPortionItem, setSelectedPortionItem] = useState<InventoryItem | null>(null);
     const [backendMenuItems, setBackendMenuItems] = useState<InventoryItem[]>([]);
+    const [mobilePanel, setMobilePanel] = useState<'menu' | 'order'>('menu');
     const kitchenEnabled = isKitchenBusinessType(businessType);
+
+    useEffect(() => {
+        if (isOpen) {
+            setMobilePanel('menu');
+        }
+    }, [isOpen]);
     
     const localMenuItems = useLiveQuery(
         () => {
@@ -584,7 +591,7 @@ export function TakeOrderModal({
   return (
     <>
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] w-full h-[90vh] flex flex-col p-0">
+      <DialogContent className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-[90vh] sm:max-h-[90vh] sm:w-[95vw] sm:max-w-[95vw] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4">
         <DialogHeader className="p-4 sm:p-6 pb-2 sm:pb-2 shrink-0">
           <DialogTitle className="text-xl sm:text-2xl">
             {isAddingToExistingOrder ? `Add Items to Order ${existingOrder?.orderNumber}` : 'Take a New Order'}
@@ -596,26 +603,26 @@ export function TakeOrderModal({
           </DialogDescription>
         </DialogHeader>
         
-        {/* Mobile: Stacked layout, Desktop: Side-by-side */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-0 overflow-hidden flex-1 min-h-0">
+        {/* Mobile uses one focused panel at a time; desktop keeps menu and cart side by side. */}
+        <div className="flex flex-1 min-h-0 overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_380px]">
             {/* Menu Items */}
-            <div className="flex flex-col h-full overflow-hidden border-r">
-                <Tabs defaultValue="All" className="flex flex-col h-full overflow-hidden">
-                    <TabsList className="mx-4">
+            <div className={`${mobilePanel === 'menu' ? 'flex' : 'hidden'} min-h-0 h-full flex-col overflow-hidden border-r lg:flex`}>
+                <Tabs defaultValue="All" className="flex h-full min-h-0 flex-col overflow-hidden">
+                    <TabsList className="mx-3 w-[calc(100%-1.5rem)] shrink-0 justify-start overflow-x-auto">
                         {categories.map(category => (
-                            <TabsTrigger key={category} value={category}>{category}</TabsTrigger>
+                            <TabsTrigger key={category} value={category} className="shrink-0">{category}</TabsTrigger>
                         ))}
                     </TabsList>
-                    <div className="flex-1 overflow-y-auto p-4">
+                    <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
                         {categories.map(category => (
                             <TabsContent key={category} value={category} className="mt-0">
-                                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
                                 {menuItems
                                     .filter(item => category === 'All' || item.category === category)
                     .map(item => (
                                         <Card key={item.id} className="cursor-pointer hover:shadow-md overflow-hidden transition-shadow" onClick={() => handleMenuItemClick(item)}>
                                             {/* Image Section */}
-                                            <div className="relative flex h-32 items-center justify-center overflow-hidden bg-muted">
+                                            <div className="relative flex h-24 items-center justify-center overflow-hidden bg-muted sm:h-32">
                                                 {item.image ? (
                                                     <img
                                                         src={item.image}
@@ -627,8 +634,8 @@ export function TakeOrderModal({
                                                 )}
                                             </div>
                                             {/* Item Info */}
-                                            <CardContent className="p-3 text-center">
-                                                <p className="font-semibold line-clamp-2">{item.name}</p>
+                                            <CardContent className="p-2 text-center sm:p-3">
+                                                <p className="line-clamp-2 text-sm font-semibold sm:text-base">{item.name}</p>
                                                 <p className="text-sm text-muted-foreground">{formatCurrency(item.price || 0)}</p>
                                                 {canSellInPortions(item) && (
                                                     <p className="text-[11px] text-muted-foreground">
@@ -646,7 +653,7 @@ export function TakeOrderModal({
             </div>
             
             {/* Cart */}
-            <div className="flex flex-col h-full bg-muted/30 min-h-0">
+            <div className={`${mobilePanel === 'order' ? 'flex' : 'hidden'} min-h-0 h-full flex-col bg-muted/30 lg:flex`}>
                 <div className="p-3 sm:p-4 border-b shrink-0">
                     <h3 className="text-base sm:text-lg font-semibold flex justify-between items-center">
                         <span>Current Order</span>
@@ -661,7 +668,7 @@ export function TakeOrderModal({
                 <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 min-h-0">
                 {cart.length > 0 ? (
                     cart.map(item => (
-                        <div key={item.cartKey} className="bg-background p-3 rounded-lg border hover:shadow-sm transition-shadow">
+                        <div key={item.cartKey} className="rounded-lg border bg-background p-3 transition-shadow hover:shadow-sm">
                             <div className="flex items-center justify-between gap-3">
                                 <div className="flex-1 min-w-0">
                                     <p className="font-medium text-sm truncate">{item.name}</p>
@@ -729,6 +736,28 @@ export function TakeOrderModal({
                     </div>
                 </div>
             </div>
+        </div>
+
+        <div className="tauri-android-floating-bottom pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-end px-4 lg:hidden">
+            <Button
+                type="button"
+                size="icon"
+                className="pointer-events-auto relative h-12 w-12 rounded-full shadow-lg"
+                onClick={() => setMobilePanel(mobilePanel === 'menu' ? 'order' : 'menu')}
+                aria-label={mobilePanel === 'menu' ? 'View current order' : 'Back to menu'}
+                title={mobilePanel === 'menu' ? 'View current order' : 'Back to menu'}
+            >
+                {mobilePanel === 'menu' ? (
+                    <ShoppingBasket className="h-5 w-5" />
+                ) : (
+                    <ArrowLeft className="h-5 w-5" />
+                )}
+                {mobilePanel === 'menu' && cart.length > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground">
+                        {cart.length > 9 ? '9+' : cart.length}
+                    </span>
+                )}
+            </Button>
         </div>
 
         {/* Customer Form Modal */}

@@ -106,6 +106,11 @@ import { AppVersionLabel } from '@/components/app-version-label';
 import { syncBusinessBranchesFromServer } from '@/lib/branch-sync';
 import { isKitchenBusinessType, normalizeBusinessType } from '@/lib/inventory/config';
 import { formatInventoryQuantity, formatNotificationBadgeCount } from '@/lib/quantity-format';
+import {
+  readStoredBusinessSettingsObject,
+  readStoredCustomSalesSectionSettings,
+  resolveCustomSalesSectionSettings,
+} from '@/lib/custom-sales-section';
 
 // Helper to remove auth sync items from queue
 const removeAuthSyncItem = (itemId: string) => {
@@ -1259,7 +1264,7 @@ function Header({
         <div className="flex items-center gap-4">
           <SidebarTrigger className="h-9 w-9 shrink-0" />
           <div className="hidden lg:flex items-center gap-2">
-            <h1 className="text-xl font-semibold">{businessName}</h1>
+            <h1 className="text-xl font-semibold">{businessName.toUpperCase()}</h1>
             {user.role === 'Admin' ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2028,32 +2033,53 @@ export default function DashboardLayout({
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const readCustomSalesSection = () => {
+    const readCustomSalesSection = async () => {
+      const storedSettings = readStoredCustomSalesSectionSettings();
+
       try {
-        const raw = window.localStorage.getItem('handypos-business-settings');
-        const parsed = raw ? JSON.parse(raw) : null;
-        const enabled = parsed?.enableCustomSalesSection === true ||
-          parsed?.enable_custom_sales_section === true ||
-          parsed?.enableCustomSalesSection === 'true' ||
-          parsed?.enable_custom_sales_section === 'true';
-        const name = String(parsed?.customSalesSectionName ?? parsed?.custom_sales_section_name ?? '').trim();
-        setCustomSalesSection({ enabled: enabled && Boolean(name), name });
+        if (business?.id) {
+          const response = await authFetch.fetch(`/business/businesses/${business.id}/business_settings/`);
+          const resolved = resolveCustomSalesSectionSettings(response as Record<string, any>, storedSettings);
+          const existing = await db.business.get(business.id);
+          if (existing) {
+            await db.business.put({
+              ...existing,
+              enableCustomSalesSection: resolved.enabled,
+              enable_custom_sales_section: resolved.enabled,
+              customSalesSectionName: resolved.name,
+              custom_sales_section_name: resolved.name,
+            });
+          }
+          const cachedSettings = {
+            ...readStoredBusinessSettingsObject(),
+            enableCustomSalesSection: resolved.enabled,
+            enable_custom_sales_section: resolved.enabled,
+            customSalesSectionName: resolved.name,
+            custom_sales_section_name: resolved.name,
+          };
+          window.localStorage.setItem('handypos-business-settings', JSON.stringify(cachedSettings));
+          setCustomSalesSection(resolved);
+          return;
+        }
       } catch (error) {
-        console.warn('[DashboardLayout] Failed to read custom sales section settings:', error);
-        setCustomSalesSection({ enabled: false, name: '' });
+        console.warn('[DashboardLayout] Failed to fetch custom sales section settings:', error);
       }
+
+      const localResolved = resolveCustomSalesSectionSettings(businessRecord as Record<string, any> | null, storedSettings);
+      setCustomSalesSection(localResolved);
     };
 
-    readCustomSalesSection();
-    window.addEventListener('storage', readCustomSalesSection);
-    window.addEventListener('focus', readCustomSalesSection);
-    window.addEventListener('handypos-business-settings-changed', readCustomSalesSection);
+    void readCustomSalesSection();
+    const refreshFromStorage = () => setCustomSalesSection(readStoredCustomSalesSectionSettings());
+    window.addEventListener('storage', refreshFromStorage);
+    window.addEventListener('focus', refreshFromStorage);
+    window.addEventListener('handypos-business-settings-changed', refreshFromStorage);
     return () => {
-      window.removeEventListener('storage', readCustomSalesSection);
-      window.removeEventListener('focus', readCustomSalesSection);
-      window.removeEventListener('handypos-business-settings-changed', readCustomSalesSection);
+      window.removeEventListener('storage', refreshFromStorage);
+      window.removeEventListener('focus', refreshFromStorage);
+      window.removeEventListener('handypos-business-settings-changed', refreshFromStorage);
     };
-  }, []);
+  }, [business?.id, businessRecord]);
 
   const openPosModalForOrder = useCallback((orderId?: string | null) => {
     const normalizedOrderId = String(orderId || '').trim();

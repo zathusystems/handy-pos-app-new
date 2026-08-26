@@ -1112,6 +1112,7 @@ export default function ReportsPage() {
                                     <TableRow>
                                         <TableHead>Product</TableHead>
                                         <TableHead className="text-right">Qty</TableHead>
+                                        <TableHead className="text-right">Remaining</TableHead>
                                         <TableHead className="text-right">Revenue</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -1121,12 +1122,13 @@ export default function ReportsPage() {
                                             <TableRow key={i}>
                                                 <TableCell><Skeleton className="h-5 w-3/4" /></TableCell>
                                                 <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-16" /></TableCell>
                                                 <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
                                             </TableRow>
                                         ))
                                     ) : data.customSalesSection.products.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={3} className="text-center text-muted-foreground">
+                                            <TableCell colSpan={4} className="text-center text-muted-foreground">
                                                 No products in this section were sold during this period.
                                             </TableCell>
                                         </TableRow>
@@ -1134,6 +1136,9 @@ export default function ReportsPage() {
                                         <TableRow key={product.name}>
                                             <TableCell className="font-medium">{product.name}</TableCell>
                                             <TableCell className="text-right">{product.quantity.toFixed(2)}</TableCell>
+                                            <TableCell className="text-right">
+                                                {product.currentStock.toFixed(2)} {product.unitType}
+                                            </TableCell>
                                             <TableCell className="text-right font-semibold">{formatCurrency(product.revenueWithTax)}</TableCell>
                                         </TableRow>
                                     ))}

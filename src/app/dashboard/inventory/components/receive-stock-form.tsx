@@ -64,6 +64,7 @@ type ReceiveStockDraft = {
     referenceNumber?: string;
     paymentStatus?: 'Paid' | 'Unpaid';
     isFuelMode?: boolean;
+    purchaseOrderId?: string;
     items?: {
         productId: string;
         quantity: number | '';
@@ -476,6 +477,7 @@ export const ReceiveStockForm = ({
     const isEditMode = Boolean(editingPurchase);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const isSubmittingRef = React.useRef(false);
+    const draftPurchaseOrderIdRef = React.useRef<string>(uuidv4());
     const normalizedUserRole = String(user?.role || '').toLowerCase();
     const isAdminUser = normalizedUserRole === 'admin' || normalizedUserRole === 'owner' || normalizedUserRole === 'administrator';
     const manualSessionSelectionRef = React.useRef(false);
@@ -797,6 +799,7 @@ export const ReceiveStockForm = ({
         }
 
         localStorage.removeItem(draftStorageKey);
+        draftPurchaseOrderIdRef.current = uuidv4();
     }, [draftStorageKey]);
 
     const saveDraft = React.useCallback((showToast = false) => {
@@ -818,6 +821,7 @@ export const ReceiveStockForm = ({
                 referenceNumber: typeof values.referenceNumber === 'string' ? values.referenceNumber : '',
                 paymentStatus: values.paymentStatus === 'Unpaid' ? 'Unpaid' : 'Paid',
                 isFuelMode,
+                purchaseOrderId: draftPurchaseOrderIdRef.current,
                 items: draftItems,
             };
 
@@ -869,6 +873,9 @@ export const ReceiveStockForm = ({
 
             if (rawDraft) {
                 const parsedDraft = JSON.parse(rawDraft) as ReceiveStockDraft;
+                if (parsedDraft.purchaseOrderId) {
+                    draftPurchaseOrderIdRef.current = String(parsedDraft.purchaseOrderId);
+                }
                 reset(normalizeReceiveStockDraft(parsedDraft));
                 if (typeof parsedDraft.isFuelMode === 'boolean') {
                     setIsFuelMode(parsedDraft.isFuelMode);
@@ -1299,7 +1306,7 @@ export const ReceiveStockForm = ({
             const amountPaid = paymentStatus === 'Paid' ? totalWithVat : 0;
             const amountDue = paymentStatus === 'Paid' ? 0 : totalWithVat;
             const nowIso = new Date().toISOString();
-            const poId = editingPurchase?.purchaseOrderId || editingPurchase?.groupId || uuidv4();
+            const poId = editingPurchase?.purchaseOrderId || editingPurchase?.groupId || draftPurchaseOrderIdRef.current || uuidv4();
             const baseReceivedAt = Date.now();
             const deletedLineWarnings: string[] = [];
             let purchaseOrderSyncOperation: 'create' | 'update' = isEditMode ? 'update' : 'create';

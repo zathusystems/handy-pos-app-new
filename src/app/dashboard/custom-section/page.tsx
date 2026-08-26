@@ -7,6 +7,7 @@ import {
   Boxes,
   CheckCircle2,
   Clock,
+  ClipboardList,
   Hash,
   Loader2,
   Phone,
@@ -21,16 +22,23 @@ import { useOrderNotificationSound } from '@/hooks/use-order-notification-sound'
 import { authFetch } from '@/lib/auth-fetch';
 import { db } from '@/lib/db';
 import {
+  readStoredBusinessSettingsObject,
+  readStoredCustomSalesSectionSettings,
+  resolveCustomSalesSectionSettings,
+} from '@/lib/custom-sales-section';
+import {
   buildKitchenInventoryLookup,
   getCustomSalesSectionOrderItems,
   getNonCustomSalesSectionOrderItems,
   type KitchenInventoryLookup,
 } from '@/lib/kitchen-order-routing';
+import { getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type DisplayOrderStatus = 'Pending' | 'Confirmed' | 'Sent to Kitchen' | 'Preparing' | 'Ready' | 'Completed' | 'Cancelled';
 
@@ -57,6 +65,20 @@ interface DisplayOrder {
   items: DisplayOrderItem[];
   created_at: string;
   updated_at: string;
+}
+
+interface SectionInventoryItem {
+  id: string;
+  name: string;
+  category?: string;
+  itemType: string;
+  stockUnits: number;
+  unitType: string;
+  isSoldInPortions: boolean;
+  portionName?: string;
+  portionsPerUnit?: number;
+  reorderLevel: number;
+  status?: string;
 }
 
 const statusColors: Record<string, string> = {
@@ -117,25 +139,31 @@ const getSelectedOptions = (item: DisplayOrderItem): Array<Record<string, any>> 
   return Array.isArray(selected) ? selected.filter((option) => option && typeof option === 'object') : [];
 };
 
-const readCustomSalesSectionSettings = () => {
-  if (typeof window === 'undefined') {
-    return { enabled: false, name: '' };
-  }
-
-  try {
-    const raw = window.localStorage.getItem('handypos-business-settings');
-    const parsed = raw ? JSON.parse(raw) : null;
-    const enabled = parsed?.enableCustomSalesSection === true ||
-      parsed?.enable_custom_sales_section === true ||
-      parsed?.enableCustomSalesSection === 'true' ||
-      parsed?.enable_custom_sales_section === 'true';
-    const name = String(parsed?.customSalesSectionName ?? parsed?.custom_sales_section_name ?? '').trim();
-    return { enabled: enabled && Boolean(name), name };
-  } catch (error) {
-    console.warn('[CustomSection] Failed to read section settings:', error);
-    return { enabled: false, name: '' };
-  }
+const toFiniteNumber = (value: unknown, fallback = 0): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+const isMarkedForCustomSection = (item: any): boolean =>
+  item?.showInCustomSalesSection === true ||
+  item?.show_in_custom_sales_section === true ||
+  item?.showInCustomSalesSection === 'true' ||
+  item?.show_in_custom_sales_section === 'true';
+
+const normalizeSectionInventoryItem = (item: any): SectionInventoryItem => ({
+  id: String(item?.id || ''),
+  name: String(item?.name || 'Unnamed product'),
+  category: String(item?.category || '').trim() || undefined,
+  itemType: String(item?.itemType ?? item?.item_type ?? 'sellable').trim().toLowerCase() || 'sellable',
+  stockUnits: toFiniteNumber(item?.stockUnits ?? item?.stock_units, 0),
+  unitType: String(item?.unitType ?? item?.unit_type ?? 'unit').trim() || 'unit',
+  isSoldInPortions: item?.isSoldInPortions === true || item?.is_sold_in_portions === true ||
+    item?.isSoldInPortions === 'true' || item?.is_sold_in_portions === 'true',
+  portionName: String(item?.portionName ?? item?.portion_name ?? '').trim() || undefined,
+  portionsPerUnit: toFiniteNumber(item?.portionsPerUnit ?? item?.portions_per_unit, 0) || undefined,
+  reorderLevel: toFiniteNumber(item?.reorderLevel ?? item?.reorder_level, 0),
+  status: String(item?.status || '').trim() || undefined,
+});
 
 export default function CustomSalesSectionPage() {
   const { toast } = useToast();
@@ -153,12 +181,67 @@ export default function CustomSalesSectionPage() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
 
   useEffect(() => {
-    setSettings(readCustomSalesSectionSettings());
+    const initialSettings = resolveCustomSalesSectionSettings(
+      businessRecord as Record<string, any> | null,
+      readStoredCustomSalesSectionSettings()
+    );
+    setSettings(initialSettings);
     const activeBranch = localStorage.getItem('handypos-active-branch');
     if (activeBranch) {
       setBranchId(activeBranch);
     }
-  }, []);
+  }, [businessRecord]);
+
+  useEffect(() => {
+    if (!business?.id || typeof window === 'undefined') {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadBusinessSettings = async () => {
+      try {
+        const response = await authFetch.fetch(`/business/businesses/${business.id}/business_settings/`);
+        if (cancelled) {
+          return;
+        }
+
+        const resolved = resolveCustomSalesSectionSettings(
+          response as Record<string, any>,
+          readStoredCustomSalesSectionSettings()
+        );
+        setSettings(resolved);
+
+        const existing = await db.business.get(business.id);
+        if (existing) {
+          await db.business.put({
+            ...existing,
+            enableCustomSalesSection: resolved.enabled,
+            enable_custom_sales_section: resolved.enabled,
+            customSalesSectionName: resolved.name,
+            custom_sales_section_name: resolved.name,
+          });
+        }
+
+        window.localStorage.setItem('handypos-business-settings', JSON.stringify({
+          ...readStoredBusinessSettingsObject(),
+          enableCustomSalesSection: resolved.enabled,
+          enable_custom_sales_section: resolved.enabled,
+          customSalesSectionName: resolved.name,
+          custom_sales_section_name: resolved.name,
+        }));
+        window.dispatchEvent(new Event('handypos-business-settings-changed'));
+      } catch (error) {
+        console.warn('[CustomSection] Failed to refresh custom section settings:', error);
+      }
+    };
+
+    void loadBusinessSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [business?.id]);
 
   const fetchOrders = async () => {
     if (!branchId) return;
@@ -212,6 +295,26 @@ export default function CustomSalesSectionPage() {
       .filter((order) => activeStatuses.has(order.status))
       .filter((order) => getCustomSalesSectionOrderItems(order, inventoryLookup).length > 0),
     [orders, inventoryLookup]
+  );
+
+  const sectionInventoryItems = useMemo(
+    () =>
+      inventoryItems
+        .filter(isMarkedForCustomSection)
+        .map(normalizeSectionInventoryItem)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [inventoryItems]
+  );
+
+  const lowStockItems = useMemo(
+    () =>
+      sectionInventoryItems.filter(
+        (item) =>
+          item.stockUnits <= 0 ||
+          item.status === 'Out of Stock' ||
+          (item.reorderLevel > 0 && item.stockUnits <= item.reorderLevel)
+      ),
+    [sectionInventoryItems]
   );
 
   useOrderNotificationSound(
@@ -295,10 +398,97 @@ export default function CustomSalesSectionPage() {
       <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
         <StatCard title="Orders" value={sectionOrders.length} icon={AlertCircle} />
         <StatCard title="Items" value={itemCount} icon={Boxes} />
-        <StatCard title="Ready" value={sectionOrders.filter((order) => order.status === 'Ready').length} icon={CheckCircle2} />
+        <StatCard title="Products" value={sectionInventoryItems.length} icon={CheckCircle2} />
       </div>
 
-      <section className="rounded-lg border bg-muted/20">
+      <Tabs defaultValue="orders" className="space-y-4">
+        <TabsList className="grid h-auto w-full max-w-md grid-cols-2">
+          <TabsTrigger value="orders" className="gap-2 py-2.5">
+            <ClipboardList className="h-4 w-4" />
+            Orders
+            <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[11px]">
+              {sectionOrders.length}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="stock" className="gap-2 py-2.5">
+            <Boxes className="h-4 w-4" />
+            Stock
+            <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[11px]">
+              {sectionInventoryItems.length}
+            </Badge>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="stock" className="mt-0">
+          <section className="rounded-lg border bg-background">
+        <div className="flex flex-col gap-2 border-b p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+          <div>
+            <h2 className="text-base font-semibold">Section Stock</h2>
+            <p className="text-xs text-muted-foreground">
+              Products marked to appear in {settings.name}, with current stock and reorder warnings.
+            </p>
+          </div>
+          <Badge variant={lowStockItems.length > 0 ? 'destructive' : 'secondary'}>
+            {lowStockItems.length} need attention
+          </Badge>
+        </div>
+        <div className="divide-y">
+          {isLoading && sectionInventoryItems.length === 0 ? (
+            <div className="flex h-32 items-center justify-center text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : sectionInventoryItems.length === 0 ? (
+            <div className="flex h-32 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+              <Boxes className="h-6 w-6" />
+              <p className="text-sm">No products are marked for {settings.name} yet.</p>
+            </div>
+          ) : (
+            sectionInventoryItems.map((item) => {
+              const needsAttention =
+                item.stockUnits <= 0 ||
+                item.status === 'Out of Stock' ||
+                (item.reorderLevel > 0 && item.stockUnits <= item.reorderLevel);
+              const portionQuantityDisplay =
+                item.itemType === 'sellable' && item.isSoldInPortions && item.portionsPerUnit
+                  ? getPortionQuantityDisplay({
+                      quantity: item.stockUnits,
+                      unitLabel: item.unitType,
+                      portionName: item.portionName || 'portion',
+                      portionsPerUnit: item.portionsPerUnit,
+                    })
+                  : null;
+              return (
+                <div key={item.id} className="grid gap-3 p-3 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:p-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{item.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{item.category || 'Uncategorized'}</p>
+                  </div>
+                  <div className="text-sm sm:text-right">
+                    {portionQuantityDisplay ? (
+                      <>
+                        <p className="font-semibold">{portionQuantityDisplay.wholeUnitsText}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {portionQuantityDisplay.remainingPortionsText} remaining
+                        </p>
+                      </>
+                    ) : (
+                      <p className="font-semibold">{item.stockUnits.toFixed(2)} {item.unitType}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">Reorder at {item.reorderLevel.toFixed(2)} {item.unitType}</p>
+                  </div>
+                  <Badge variant={needsAttention ? 'destructive' : 'secondary'} className="w-fit">
+                    {needsAttention ? 'Check stock' : item.status || 'In Stock'}
+                  </Badge>
+                </div>
+              );
+            })
+          )}
+        </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="orders" className="mt-0">
+          <section className="rounded-lg border bg-muted/20">
         <div className="flex items-start justify-between gap-3 border-b bg-background/70 p-3 sm:p-4">
           <div>
             <h2 className="text-base font-semibold">Active Orders</h2>
@@ -328,7 +518,9 @@ export default function CustomSalesSectionPage() {
             ))
           )}
         </div>
-      </section>
+          </section>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

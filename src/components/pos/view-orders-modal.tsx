@@ -995,23 +995,23 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-4 sm:gap-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-5">
                 {filterOptions.map(({ key, label, count, icon: Icon }) => (
                   <button
                     key={key}
                     type="button"
                     onClick={() => setActiveFilter(key)}
-                    className={`min-w-0 rounded-lg border p-2.5 text-left transition sm:p-3 ${
+                    className={`flex min-w-[112px] shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-left transition sm:block sm:min-w-0 sm:rounded-lg sm:p-3 ${
                       activeFilter === key
                         ? 'border-primary bg-background shadow-sm'
                         : 'bg-background/60 hover:bg-background'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 sm:justify-between">
                       <Icon className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-lg font-semibold">{count}</span>
+                      <span className="text-base font-semibold sm:text-lg">{count}</span>
                     </div>
-                    <p className="mt-1 truncate text-xs font-medium text-muted-foreground">{label}</p>
+                    <p className="truncate text-xs font-medium text-muted-foreground sm:mt-1">{label}</p>
                   </button>
                 ))}
               </div>

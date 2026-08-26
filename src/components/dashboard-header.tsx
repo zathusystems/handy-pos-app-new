@@ -107,6 +107,15 @@ export function DashboardHeader({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const businessId = business?.id || user?.businessId || null;
+  const mobileBusinessName = useMemo(() => {
+    if (business?.name?.trim()) {
+      return business.name.trim();
+    }
+    if (typeof window === 'undefined') {
+      return 'Handy POS';
+    }
+    return localStorage.getItem('handypos-business-name') || 'Handy POS';
+  }, [business?.name]);
 
   const isBillingPath = pathname === '/dashboard/settings/billing' || pathname === '/dashboard/settings/billing/';
   const isBillingAddCreditFlow = isBillingPath && searchParams.get('openAddCredit') === '1';
@@ -534,9 +543,14 @@ export function DashboardHeader({
     <>
       <header className="tauri-android-safe-top sticky top-0 z-10 w-full border-b bg-background/90 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-[1540px] flex-col px-3 pb-2 pt-1 sm:h-16 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6 sm:py-3 lg:px-8 2xl:px-10">
-          <div className="flex w-full items-center justify-end gap-1 border-b border-border/50 pb-1 sm:hidden">
-            {mobileTopActions}
-            {renderSyncStatusControls('mobile', true)}
+          <div className="flex w-full items-center gap-2 border-b border-border/50 pb-1 sm:hidden">
+            <p className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+              {mobileBusinessName.toUpperCase()}
+            </p>
+            <div className="flex shrink-0 items-center justify-end gap-1">
+              {mobileTopActions}
+              {renderSyncStatusControls('mobile', true)}
+            </div>
           </div>
 
           <div className="flex min-h-11 min-w-0 flex-1 items-center gap-2 pt-1 sm:min-h-0 sm:gap-4 sm:pt-0">
