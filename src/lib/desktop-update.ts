@@ -1,6 +1,5 @@
-import packageJson from '../../package.json';
-
 import { isTauriApp } from '@/lib/tauri-init';
+import { FALLBACK_APP_VERSION } from '@/lib/app-version';
 
 export type DesktopReleaseManifest = {
   latestVersion: string;
@@ -17,7 +16,7 @@ export const DEFAULT_DESKTOP_DOWNLOAD_URL =
   process.env.NEXT_PUBLIC_DESKTOP_DOWNLOAD_URL?.trim() ||
   'https://handypos.online/download';
 
-const FALLBACK_DESKTOP_VERSION = String(packageJson.version || '1.0.0').trim() || '1.0.0';
+const FALLBACK_DESKTOP_VERSION = FALLBACK_APP_VERSION;
 
 const stripVersionDecorators = (value: string): string =>
   String(value || '')

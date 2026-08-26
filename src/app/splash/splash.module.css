@@ -67,6 +67,10 @@
   color: rgba(255, 255, 255, 0.84);
 }
 
+.version {
+  margin-top: 14px;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

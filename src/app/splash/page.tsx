@@ -1,4 +1,5 @@
 import styles from './splash.module.css';
+import { AppVersionLabel } from '@/components/app-version-label';
 
 export default function SplashPage() {
   return (
@@ -14,6 +15,7 @@ export default function SplashPage() {
         <p className={styles.subtitle}>Point of Sale System</p>
         <div className={styles.spinner} />
         <p className={styles.status}>Loading...</p>
+        <AppVersionLabel variant="plain" tone="splash" className={styles.version} />
       </div>
     </main>
   );

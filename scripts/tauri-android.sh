@@ -575,6 +575,7 @@ if [[ "$ANDROID_SUBCOMMAND" == "build" ]] && [[ -f "$ANDROID_TAURI_CONFIG" ]] &&
   ANDROID_BUILD_AUTOVERSION=1
 
   TAURI_ARGS+=(--config "$TEMP_ANDROID_BUILD_CONFIG")
+  export NEXT_PUBLIC_APP_VERSION="$GENERATED_ANDROID_VERSION_NAME"
   echo "Using Android Tauri config: $TEMP_ANDROID_BUILD_CONFIG"
   echo "Android versionName for this build: $GENERATED_ANDROID_VERSION_NAME"
   echo "Android versionCode for this build: $NEXT_ANDROID_VERSION_CODE"

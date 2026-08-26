@@ -129,11 +129,13 @@ function runBuild() {
       const generatedVersion = computeCiVersion(baseVersion, buildInfo.buildNumber);
       ({ tempConfigPath, tempDir } = createTempConfig(generatedVersion));
       tauriArgs.push("--config", tempConfigPath);
+      process.env.NEXT_PUBLIC_APP_VERSION = generatedVersion;
 
       console.log(
         `Desktop version for this build: ${generatedVersion} (${buildInfo.source}=${buildInfo.buildNumber})`,
       );
     } else {
+      process.env.NEXT_PUBLIC_APP_VERSION = baseVersion;
       console.log(`Desktop version for this build: ${baseVersion}`);
     }
 

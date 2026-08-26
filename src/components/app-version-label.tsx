@@ -1,17 +1,15 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import packageJson from '../../package.json';
 
 import { isTauriApp } from '@/lib/tauri-init';
+import { FALLBACK_APP_VERSION } from '@/lib/app-version';
 import { cn } from '@/lib/utils';
-
-const FALLBACK_APP_VERSION = String(packageJson.version || '1.0.0').trim() || '1.0.0';
 
 type AppVersionLabelProps = {
   className?: string;
   variant?: 'card' | 'plain';
-  tone?: 'default' | 'sidebar';
+  tone?: 'default' | 'sidebar' | 'splash';
 };
 
 const waitForTauriRuntime = async (timeoutMs: number = 5000): Promise<boolean> => {
@@ -74,11 +72,15 @@ export function AppVersionLabel({
   }, []);
 
   const labelClassName =
-    tone === 'sidebar'
+    tone === 'splash'
+      ? 'text-white/70'
+      : tone === 'sidebar'
       ? 'text-sidebar-foreground/55'
       : 'text-muted-foreground/70';
   const valueClassName =
-    tone === 'sidebar'
+    tone === 'splash'
+      ? 'text-white/90'
+      : tone === 'sidebar'
       ? 'text-sidebar-foreground/85'
       : 'text-foreground/75';
 
