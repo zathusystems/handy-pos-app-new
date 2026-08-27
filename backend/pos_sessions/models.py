@@ -124,6 +124,7 @@ class Order(models.Model):
     order_type = models.CharField(max_length=20, choices=ORDER_TYPE_CHOICES, default='sale')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='New')
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS)
+    is_takeaway = models.BooleanField(default=False)
     pump_name = models.CharField(max_length=100, blank=True, null=True)
 
     # Buyer/customer details (optional)
@@ -266,6 +267,10 @@ class OrderItem(models.Model):
         default=list,
         blank=True,
         help_text='Snapshot of selected meal options/sides, including names, prices, and stock recipes.',
+    )
+    is_takeaway_packaging = models.BooleanField(
+        default=False,
+        help_text='Marks this line as takeaway packaging and forces direct stock deduction.',
     )
     
     # MRA PRODUCT MAPPING

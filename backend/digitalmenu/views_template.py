@@ -67,6 +67,16 @@ def public_menu_view(request, business_slug, branch_slug):
                 'sort_order': group.sort_order,
                 'options': options,
                 })
+        option_names = [
+            option['name']
+            for group in option_groups
+            for option in group['options']
+            if option.get('name')
+        ]
+        # The template uses these lightweight attributes for a compact card preview;
+        # the complete option data remains in the JSON payload for the detail modal.
+        menu_item.option_preview = option_names[:3]
+        menu_item.option_preview_count = len(option_names)
         menu_items_data.append({
             'id': str(menu_item.inventory_item_id or menu_item.id),
             'menu_id': str(menu_item.id),
@@ -103,6 +113,12 @@ def public_menu_view(request, business_slug, branch_slug):
         'business': business,
         'branch': branch,
         'menu_config': menu_config,
+        'takeaway_config': {
+            'enabled': bool(menu_config.takeaway_enabled and menu_config.takeaway_packaging_item_id),
+            'packaging_item_id': str(menu_config.takeaway_packaging_item_id or ''),
+            'packaging_name': menu_config.takeaway_packaging_item.name if menu_config.takeaway_packaging_item else '',
+            'price': float(menu_config.takeaway_packaging_price or 0),
+        },
         'categories': categories,
         'menu_items': menu_items,
         'menu_items_data': menu_items_data,

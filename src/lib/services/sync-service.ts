@@ -1615,6 +1615,7 @@ class SyncService {
       ['laybuyDeposit', 'laybuy_deposit'],
       ['depositAmount', 'deposit_amount'],
       ['laybuyPaymentMethod', 'laybuy_payment_method'],
+      ['isTakeaway', 'is_takeaway'],
     ];
 
     const orderNumberRaw = normalized.orderNumber ?? normalized.order_number;
@@ -1814,6 +1815,8 @@ class SyncService {
         'deposit_amount',
         'laybuyPaymentMethod',
         'laybuy_payment_method',
+        'isTakeaway',
+        'is_takeaway',
         'fiscalInvoiceNumber',
         'fiscal_invoice_number',
         'eisStatus',

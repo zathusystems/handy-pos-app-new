@@ -763,6 +763,18 @@ const ZReportTab = ({ session }: { session: Session }) => {
                                 <span className="text-muted-foreground">Total Tax:</span>
                                 <span>{formatCurrency(financialSummary.totalTax)}</span>
                             </div>
+                            {financialSummary.totalLevies > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Levies:</span>
+                                    <span>{formatCurrency(financialSummary.totalLevies)}</span>
+                                </div>
+                            )}
+                            {financialSummary.totalOtherCharges > 0 && (
+                                <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Other Charges:</span>
+                                    <span>{formatCurrency(financialSummary.totalOtherCharges)}</span>
+                                </div>
+                            )}
                             <div className="flex justify-between">
                                 <span className="text-muted-foreground">Gross Sales:</span>
                                 <span>{formatCurrency(financialSummary.grossSales)}</span>

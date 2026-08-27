@@ -59,6 +59,30 @@ def _normalize_stock_status(status, item_type, is_produced):
     return status if status in VALID_STOCK_STATUSES else 'In Stock'
 
 
+def _normalize_inventory_flags(item_data):
+    item_type = str(item_data.get('item_type') or '').strip().lower()
+    is_produced = bool(item_data.get('is_produced'))
+
+    if item_type != 'sellable':
+        item_data['is_produced'] = False
+        item_data['is_variable_price'] = False
+        item_data['is_sold_in_portions'] = False
+        item_data['portion_name'] = None
+        item_data['portions_per_unit'] = None
+        item_data['portion_price'] = None
+        item_data['show_in_custom_sales_section'] = False
+        return item_data
+
+    if is_produced:
+        item_data['is_variable_price'] = False
+        item_data['is_sold_in_portions'] = False
+        item_data['portion_name'] = None
+        item_data['portions_per_unit'] = None
+        item_data['portion_price'] = None
+
+    return item_data
+
+
 def handle_create_inventory_item(item_id, data, business, branch_id):
     """Handle creation of inventory item from frontend"""
     try:
@@ -204,6 +228,7 @@ def handle_create_inventory_item(item_id, data, business, branch_id):
 
         # Remove None and empty string values to use model defaults
         item_data = {k: v for k, v in item_data.items() if v is not None and v != ''}
+        item_data = _normalize_inventory_flags(item_data)
         item_data['status'] = _normalize_stock_status(
             item_data.get('status'),
             item_data.get('item_type'),
@@ -409,6 +434,21 @@ def handle_update_inventory_item(item_id, data, business, branch_id):
         if 'sku' in data:
             item.sku = data['sku']
             print(f"[Sync UPDATE] Updated sku to: {item.sku}")
+
+        if item.item_type != 'sellable':
+            item.is_produced = False
+            item.is_variable_price = False
+            item.is_sold_in_portions = False
+            item.portion_name = None
+            item.portions_per_unit = None
+            item.portion_price = None
+            item.show_in_custom_sales_section = False
+        elif item.is_produced:
+            item.is_variable_price = False
+            item.is_sold_in_portions = False
+            item.portion_name = None
+            item.portions_per_unit = None
+            item.portion_price = None
 
         item.status = _normalize_stock_status(item.status, item.item_type, item.is_produced)
         

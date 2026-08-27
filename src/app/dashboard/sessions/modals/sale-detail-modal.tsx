@@ -36,6 +36,7 @@ import {
 } from '@/lib/services/printer-service';
 import { getNextReceiptCopyNumber, markReceiptPrinted } from '@/lib/services/receipt-copy-service';
 import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
+import { getOrderChargeBreakdown } from '@/lib/z-report-print';
 import {
   Dialog,
   DialogContent,
@@ -229,6 +230,9 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
     receiptLegalMarkerScaleX: DEFAULT_RECEIPT_LEGAL_MARKER_SCALE_X,
     receiptQrCodeSize: getDefaultReceiptQRCodeSize('80mm'),
   });
+  const chargeBreakdown = order
+    ? getOrderChargeBreakdown(order as any)
+    : { total: 0, levies: 0, otherCharges: 0, exclusive: 0, inclusive: 0 };
 
   const applyPrinterSettingsToReceipt = useCallback(
     (
@@ -840,10 +844,10 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
               </CardContent>
             </Card>
 
-            {/* Tax Breakdown */}
+            {/* Tax and charge breakdown */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Tax Breakdown</CardTitle>
+                <CardTitle className="text-base">Tax & Charges</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex justify-between">
@@ -902,6 +906,18 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
                     <span className="text-muted-foreground font-medium">Total VAT:</span>
                     <span className="font-bold text-blue-600 dark:text-blue-400">{formatCurrency(order.vatAmount || order.tax || 0)}</span>
                   </div>
+                  {chargeBreakdown.levies > 0 && (
+                    <div className="flex justify-between pt-2">
+                      <span className="text-muted-foreground font-medium">Levies:</span>
+                      <span className="font-bold text-amber-700 dark:text-amber-400">{formatCurrency(chargeBreakdown.levies)}</span>
+                    </div>
+                  )}
+                  {chargeBreakdown.otherCharges > 0 && (
+                    <div className="flex justify-between pt-2">
+                      <span className="text-muted-foreground font-medium">Other Charges:</span>
+                      <span className="font-bold text-amber-700 dark:text-amber-400">{formatCurrency(chargeBreakdown.otherCharges)}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="border-t pt-3">

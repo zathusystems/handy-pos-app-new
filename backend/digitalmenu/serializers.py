@@ -95,6 +95,7 @@ class MenuConfigSerializer(serializers.ModelSerializer):
     business_name = serializers.CharField(source='business.name', read_only=True)
     public_menu_url = serializers.SerializerMethodField(read_only=True)
     currency = serializers.SerializerMethodField(read_only=True)
+    takeaway_packaging_item_name = serializers.SerializerMethodField()
 
     class Meta:
         model = MenuConfig
@@ -107,7 +108,8 @@ class MenuConfigSerializer(serializers.ModelSerializer):
             'show_prices', 'show_categories', 'show_images',
             'show_brand_info', 'show_contact_info',
             'enable_search', 'enable_filters', 'enable_sorting',
-            'accept_orders',
+            'accept_orders', 'takeaway_enabled', 'takeaway_packaging_item',
+            'takeaway_packaging_item_name', 'takeaway_packaging_price',
             'public_menu_url',
             'created_at', 'updated_at'
         ]
@@ -138,3 +140,42 @@ class MenuConfigSerializer(serializers.ModelSerializer):
 
     def get_currency(self, obj):
         return get_business_currency(obj.business, getattr(obj, 'currency', None))
+
+    def get_takeaway_packaging_item_name(self, obj):
+        item = getattr(obj, 'takeaway_packaging_item', None)
+        return item.name if item else ''
+
+    def validate(self, attrs):
+        takeaway_enabled = attrs.get('takeaway_enabled', getattr(self.instance, 'takeaway_enabled', False))
+        packaging_item = attrs.get(
+            'takeaway_packaging_item',
+            getattr(self.instance, 'takeaway_packaging_item', None),
+        )
+        packaging_price = attrs.get(
+            'takeaway_packaging_price',
+            getattr(self.instance, 'takeaway_packaging_price', 0),
+        )
+
+        if takeaway_enabled and not packaging_item:
+            raise serializers.ValidationError({
+                'takeaway_packaging_item': 'Choose an inventory packaging item before enabling takeaway.'
+            })
+
+        if packaging_item:
+            branch = getattr(self.instance, 'branch', None)
+            business = getattr(self.instance, 'business', None)
+            if branch and packaging_item.branch_id != branch.id:
+                raise serializers.ValidationError({
+                    'takeaway_packaging_item': 'Packaging item must belong to this branch.'
+                })
+            if business and packaging_item.business_id != business.id:
+                raise serializers.ValidationError({
+                    'takeaway_packaging_item': 'Packaging item must belong to this business.'
+                })
+
+        if packaging_price is not None and packaging_price < 0:
+            raise serializers.ValidationError({
+                'takeaway_packaging_price': 'Packaging price cannot be negative.'
+            })
+
+        return attrs

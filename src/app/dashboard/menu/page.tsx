@@ -245,7 +245,7 @@ const MenuOptionsModal = ({
   const [groupType, setGroupType] = useState<'option' | 'side' | 'addon'>('side');
   const [groupRequired, setGroupRequired] = useState(false);
   const [groupMinSelect, setGroupMinSelect] = useState('0');
-  const [groupMaxSelect, setGroupMaxSelect] = useState('3');
+  const [groupMaxSelect, setGroupMaxSelect] = useState('1');
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [optionGroupId, setOptionGroupId] = useState('');
   const [optionName, setOptionName] = useState('');
@@ -353,21 +353,13 @@ const MenuOptionsModal = ({
     loadStockItems();
   }, [open, activeBranchId]);
 
-  useEffect(() => {
-    if (groupType === 'option') {
-      setGroupMaxSelect('1');
-    } else if (!editingGroupId && groupMaxSelect === '1') {
-      setGroupMaxSelect('3');
-    }
-  }, [groupType, editingGroupId, groupMaxSelect]);
-
   const resetGroupForm = () => {
     setEditingGroupId(null);
     setGroupName('');
     setGroupType('side');
     setGroupRequired(false);
     setGroupMinSelect('0');
-    setGroupMaxSelect('3');
+    setGroupMaxSelect('1');
   };
 
   const resetOptionForm = () => {
@@ -1632,6 +1624,9 @@ interface MenuConfig {
   enableFilters: boolean;
   enableSorting: boolean;
   acceptOrders: boolean;
+  takeawayEnabled: boolean;
+  takeawayPackagingItemId?: string;
+  takeawayPackagingPrice: number;
 }
 
 const DEFAULT_CONFIG: MenuConfig = {
@@ -1653,6 +1648,9 @@ const DEFAULT_CONFIG: MenuConfig = {
   enableFilters: true,
   enableSorting: true,
   acceptOrders: true,
+  takeawayEnabled: false,
+  takeawayPackagingItemId: undefined,
+  takeawayPackagingPrice: 0,
 };
 
 const MENU_COLOR_PRESETS = [
@@ -1825,6 +1823,18 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
   const { toast } = useToast();
   const logoInputRef = React.useRef<HTMLInputElement>(null);
   const bannerInputRef = React.useRef<HTMLInputElement>(null);
+  const packagingInventoryItems = useLiveQuery(
+    async () => {
+      const branchCandidates = getBranchIdCandidates(activeBranchId);
+      if (branchCandidates.length === 0) return [];
+      return db.inventory.where('branchId').anyOf(branchCandidates).toArray();
+    },
+    [activeBranchId],
+    [],
+  );
+  const availablePackagingItems = (packagingInventoryItems || [])
+    .filter((item) => Boolean(item.id && item.name))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
   // Load business currency
   useEffect(() => {
@@ -1914,6 +1924,9 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
           enableFilters: configData.enable_filters !== undefined ? configData.enable_filters : DEFAULT_CONFIG.enableFilters,
           enableSorting: configData.enable_sorting !== undefined ? configData.enable_sorting : DEFAULT_CONFIG.enableSorting,
           acceptOrders: configData.accept_orders !== undefined ? configData.accept_orders : DEFAULT_CONFIG.acceptOrders,
+          takeawayEnabled: configData.takeaway_enabled !== undefined ? configData.takeaway_enabled : DEFAULT_CONFIG.takeawayEnabled,
+          takeawayPackagingItemId: configData.takeaway_packaging_item ? String(configData.takeaway_packaging_item) : undefined,
+          takeawayPackagingPrice: Number(configData.takeaway_packaging_price || 0),
         };
         setConfig(mappedConfig);
         setEditConfig(mappedConfig);
@@ -2399,6 +2412,76 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
                 </button>
               </div>
             </div>
+
+            <div className="mt-4 space-y-4 rounded-lg border border-border bg-card p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-base font-semibold">Takeaway orders</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Add one packaging charge and deduct its stock when a customer takes the order away.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Enable takeaway orders"
+                  aria-pressed={editConfig.takeawayEnabled}
+                  onClick={() => setEditConfig(prev => ({ ...prev, takeawayEnabled: !prev.takeawayEnabled }))}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    editConfig.takeawayEnabled ? 'bg-green-600' : 'bg-muted'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      editConfig.takeawayEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-takeaway-packaging-item">Packaging item</Label>
+                  <Select
+                    value={editConfig.takeawayPackagingItemId || 'none'}
+                    onValueChange={(value) => setEditConfig(prev => ({
+                      ...prev,
+                      takeawayPackagingItemId: value === 'none' ? undefined : value,
+                    }))}
+                  >
+                    <SelectTrigger id="edit-takeaway-packaging-item">
+                      <SelectValue placeholder="Choose packaging stock" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Choose packaging stock</SelectItem>
+                      {availablePackagingItems.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.name} ({item.itemType === 'ingredient' ? 'Ingredient' : 'Sellable'})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Example: Lunch box, paper bag, or takeaway cup from Inventory.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-takeaway-packaging-price">Packaging price</Label>
+                  <Input
+                    id="edit-takeaway-packaging-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={editConfig.takeawayPackagingPrice}
+                    onChange={(event) => setEditConfig(prev => ({
+                      ...prev,
+                      takeawayPackagingPrice: Number(event.target.value || 0),
+                    }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Added once per takeaway order in {businessCurrency} and deducted when the sale is processed.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Modal Actions */}
@@ -2466,6 +2549,9 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
                     enable_filters: editConfig.enableFilters,
                     enable_sorting: editConfig.enableSorting,
                     accept_orders: editConfig.acceptOrders,
+                    takeaway_enabled: editConfig.takeawayEnabled,
+                    takeaway_packaging_item: editConfig.takeawayPackagingItemId || null,
+                    takeaway_packaging_price: Number(editConfig.takeawayPackagingPrice || 0),
                   };
                   
                   console.log('[MenuConfig] Sending data to backend:', backendData);

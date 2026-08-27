@@ -11,11 +11,15 @@ import {
   readStoredCustomSalesSectionSettings,
   resolveCustomSalesSectionSettings,
 } from '@/lib/custom-sales-section';
+import { getOrderChargeBreakdown } from '@/lib/z-report-print';
 
 export interface ReportData {
   totalRevenue: number;
   totalSubtotal: number;
   totalTax: number;
+  totalCharges: number;
+  totalLevies: number;
+  totalOtherCharges: number;
   totalCogs: number;
   grossProfit: number;
   totalExpenses: number;
@@ -168,6 +172,9 @@ export const useReports = (dateRange?: DateRange) => {
     totalRevenue: 0,
     totalSubtotal: 0,
     totalTax: 0,
+    totalCharges: 0,
+    totalLevies: 0,
+    totalOtherCharges: 0,
     totalCogs: 0,
     grossProfit: 0,
     totalExpenses: 0,
@@ -195,6 +202,9 @@ export const useReports = (dateRange?: DateRange) => {
         totalRevenue: 0,
         totalSubtotal: 0,
         totalTax: 0,
+        totalCharges: 0,
+        totalLevies: 0,
+        totalOtherCharges: 0,
         totalCogs: 0,
         grossProfit: 0,
         totalExpenses: 0,
@@ -357,6 +367,16 @@ export const useReports = (dateRange?: DateRange) => {
         // FINANCIAL CALCULATIONS - INCLUDING TAX BREAKDOWN
         const totalSubtotal = normalizedOrders.reduce((acc, order) => acc + order.subtotal, 0);
         const totalTax = normalizedOrders.reduce((acc, order) => acc + order.tax, 0);
+        const chargeTotals = normalizedOrders.reduce(
+          (totals, order) => {
+            const breakdown = getOrderChargeBreakdown(order as any);
+            totals.total += breakdown.total;
+            totals.levies += breakdown.levies;
+            totals.otherCharges += breakdown.otherCharges;
+            return totals;
+          },
+          { total: 0, levies: 0, otherCharges: 0 }
+        );
         const totalRevenue = normalizedOrders.reduce((acc, order) => acc + order.total, 0);
         const totalCogs = normalizedOrders.reduce((acc, order) => acc + order.cogs, 0);
         const totalExpenses = normalizedExpenses.reduce((acc, expense) => acc + toFiniteNumber(expense.amount, 0), 0);
@@ -567,6 +587,9 @@ export const useReports = (dateRange?: DateRange) => {
             totalRevenue: toFiniteNumber(totalRevenue, 0),
             totalSubtotal: toFiniteNumber(totalSubtotal, 0),
             totalTax: toFiniteNumber(totalTax, 0),
+            totalCharges: toFiniteNumber(chargeTotals.total, 0),
+            totalLevies: toFiniteNumber(chargeTotals.levies, 0),
+            totalOtherCharges: toFiniteNumber(chargeTotals.otherCharges, 0),
             totalCogs: toFiniteNumber(totalCogs, 0),
             grossProfit: toFiniteNumber(grossProfit, 0),
             totalExpenses: toFiniteNumber(totalExpenses, 0),

@@ -108,6 +108,20 @@ class Supplier(models.Model):
         )['total'] or 0
         return total
 
+    def recalculate_purchase_totals(self, save=True):
+        """Refresh stored totals from the supplier's purchase orders."""
+        from django.db.models import Sum
+
+        totals = self.purchase_orders.exclude(status='Cancelled').aggregate(
+            total_due=Sum('total_cost'),
+            total_paid=Sum('amount_paid'),
+        )
+        self.total_amount_due = totals['total_due'] or Decimal('0')
+        self.total_amount_paid = totals['total_paid'] or Decimal('0')
+        if save:
+            self.save(update_fields=['total_amount_due', 'total_amount_paid', 'updated_at'])
+        return self.total_amount_due, self.total_amount_paid
+
 
 # ============================================================================
 # MRA PRODUCT MAPPING (NEW - CRITICAL FOR CERTIFICATION)
@@ -367,6 +381,42 @@ class InventoryItem(models.Model):
     def __str__(self):
         return f"{self.name} ({self.branch.name})"
 
+    def save(self, *args, **kwargs):
+        normalized_fields = set()
+
+        if self.item_type != 'sellable':
+            normalized_values = {
+                'is_produced': False,
+                'is_variable_price': False,
+                'is_sold_in_portions': False,
+                'portion_name': None,
+                'portions_per_unit': None,
+                'portion_price': None,
+                'show_in_custom_sales_section': False,
+            }
+            for field, value in normalized_values.items():
+                if getattr(self, field) != value:
+                    setattr(self, field, value)
+                    normalized_fields.add(field)
+        elif self.is_produced:
+            normalized_values = {
+                'is_variable_price': False,
+                'is_sold_in_portions': False,
+                'portion_name': None,
+                'portions_per_unit': None,
+                'portion_price': None,
+            }
+            for field, value in normalized_values.items():
+                if getattr(self, field) != value:
+                    setattr(self, field, value)
+                    normalized_fields.add(field)
+
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None and normalized_fields:
+            kwargs['update_fields'] = set(update_fields).union(normalized_fields)
+
+        super().save(*args, **kwargs)
+
     def mark_dirty(self):
         """Mark this record as dirty (needs syncing)"""
         self.is_dirty = True
@@ -539,8 +589,17 @@ class PurchaseOrder(models.Model):
         items = self.items.all()
         self.total_items = items.count()
         self.total_cost = sum(item.total_cost for item in items)
-        self.amount_due = self.total_cost - self.amount_paid
+        if self.payment_status == 'Paid':
+            self.amount_paid = self.total_cost
+            self.amount_due = Decimal('0')
+        elif self.payment_status == 'Unpaid':
+            self.amount_paid = Decimal('0')
+            self.amount_due = self.total_cost
+        else:
+            self.amount_due = max(Decimal('0'), self.total_cost - (self.amount_paid or Decimal('0')))
         self.save()
+        if self.supplier:
+            self.supplier.recalculate_purchase_totals()
 
 
 class PurchaseOrderItem(models.Model):

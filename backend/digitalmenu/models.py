@@ -197,6 +197,16 @@ class MenuConfig(models.Model):
     
     # Order Management
     accept_orders = models.BooleanField(default=True)
+    takeaway_enabled = models.BooleanField(default=False)
+    takeaway_packaging_item = models.ForeignKey(
+        InventoryItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='takeaway_menu_configs',
+        help_text='Inventory item used for takeaway packaging when takeaway is selected.',
+    )
+    takeaway_packaging_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)

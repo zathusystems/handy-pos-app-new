@@ -349,6 +349,18 @@ export default function CloseSessionForm({ session, onSessionClosed, onDone }: C
                   <span className="text-muted-foreground">Total Tax:</span>
                   <span className="font-medium">{formatCurrency(financialSummary.totalTax)}</span>
                 </div>
+                {financialSummary.totalLevies > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Levies:</span>
+                    <span className="font-medium">{formatCurrency(financialSummary.totalLevies)}</span>
+                  </div>
+                )}
+                {financialSummary.totalOtherCharges > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Other Charges:</span>
+                    <span className="font-medium">{formatCurrency(financialSummary.totalOtherCharges)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Gross Sales:</span>
                   <span className="font-medium">{formatCurrency(financialSummary.grossSales)}</span>
@@ -432,13 +444,25 @@ export default function CloseSessionForm({ session, onSessionClosed, onDone }: C
                 <span>Net Sales (Before Tax):</span>
                 <span className="text-xs">{formatCurrency(financialSummary.netSales || session.totalSales || 0)}</span>
             </div>
-            <div className="flex justify-between">
-                <span className="text-muted-foreground">Tax:</span>
-                <span className="font-medium text-xs">{formatCurrency(financialSummary.totalTax || 0)}</span>
-            </div>
-            <div className="flex justify-between">
-                <span className="text-muted-foreground">Sales Value:</span>
-                <span className="font-medium text-xs">{formatCurrency(financialSummary.grossSales || 0)}</span>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Tax:</span>
+                  <span className="font-medium text-xs">{formatCurrency(financialSummary.totalTax || 0)}</span>
+                </div>
+                {financialSummary.totalLevies > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Levies:</span>
+                    <span className="font-medium text-xs">{formatCurrency(financialSummary.totalLevies)}</span>
+                  </div>
+                )}
+                {financialSummary.totalOtherCharges > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Other Charges:</span>
+                    <span className="font-medium text-xs">{formatCurrency(financialSummary.totalOtherCharges)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Sales Value:</span>
+                  <span className="font-medium text-xs">{formatCurrency(financialSummary.grossSales || 0)}</span>
             </div>
             <Separator />
             {sessionPaymentBreakdown.map(item => (

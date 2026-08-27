@@ -17,6 +17,7 @@ TAKE_ORDER_SYNC_ALIASES = {
     'tableNumber': 'table_number',
     'specialInstructions': 'special_instructions',
     'cancellationReason': 'cancellation_reason',
+    'isTakeaway': 'is_takeaway',
     'createdAt': 'created_at',
     'updatedAt': 'updated_at',
     'completedAt': 'completed_at',
@@ -38,6 +39,7 @@ TAKE_ORDER_ITEM_SYNC_ALIASES = {
     'inventoryItemId': 'inventory_item_id',
     'menuItemId': 'menu_item_id',
     'isPreparedMenuItem': 'is_prepared_menu_item',
+    'isTakeawayPackaging': 'is_takeaway_packaging',
     'selectedOptions': 'selected_options',
     'createdAt': 'created_at',
     'updatedAt': 'updated_at',
@@ -136,6 +138,7 @@ def sync_push(request):
                 
                 if op == 'create':
                     # Create new take order
+                    items_data = change_data.pop('items', [])
                     take_order_data = {
                         'id': change_id,
                         'branch_id': branch_id,
@@ -153,7 +156,6 @@ def sync_push(request):
                     take_order.save(update_fields=['completed_at', 'completed_by', 'updated_at'])
                     
                     # Create items if provided
-                    items_data = change_data.get('items', [])
                     for item_data in items_data:
                         TakeOrderItem.objects.create(
                             take_order=take_order,

@@ -2359,7 +2359,8 @@ export function PosModal({
             }
 
             // Recipe-backed sellables consume their ingredients; other items consume their own stock.
-            const baseItemsToDecrement = (originalItem.itemType === 'sellable' && originalItem.recipe?.length)
+            const isTakeawayPackaging = Boolean((cartItem as any).isTakeawayPackaging ?? (cartItem as any).is_takeaway_packaging);
+            const baseItemsToDecrement = (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
                 ? originalItem.recipe
                     .map(ri => {
                       const ingredientId = String(
@@ -2581,7 +2582,8 @@ export function PosModal({
               continue;
             }
 
-            const baseItemsToReserve = (originalItem.itemType === 'sellable' && originalItem.recipe?.length)
+            const isTakeawayPackaging = Boolean((cartItem as any).isTakeawayPackaging ?? (cartItem as any).is_takeaway_packaging);
+            const baseItemsToReserve = (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
               ? originalItem.recipe
                   .map(ri => {
                     const ingredientId = String(
@@ -2681,6 +2683,8 @@ export function PosModal({
           sessionId: sessionForOrder.id,
           pumpName: sessionForOrder.pumpName,
           orderType: 'sale',
+          isTakeaway: cart.some((item) => Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging)),
+          is_takeaway: cart.some((item) => Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging)),
           items: cart.map(item => {
             const inventoryItemId = resolveCartInventoryItemId(item) || String(item.id);
             // Get tax information for this specific item
@@ -2727,6 +2731,8 @@ export function PosModal({
               recipe: Array.isArray((item as any).recipe) ? (item as any).recipe : [],
               isPreparedMenuItem: Boolean((item as any).isPreparedMenuItem ?? (item as any).is_prepared_menu_item),
               is_prepared_menu_item: Boolean((item as any).isPreparedMenuItem ?? (item as any).is_prepared_menu_item),
+              isTakeawayPackaging: Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging),
+              is_takeaway_packaging: Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging),
               menuItemId: (item as any).menuItemId ?? (item as any).menu_item_id ?? undefined,
               menu_item_id: (item as any).menuItemId ?? (item as any).menu_item_id ?? undefined,
               // Store inventory item reference for tracking

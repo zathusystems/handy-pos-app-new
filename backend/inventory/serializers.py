@@ -217,6 +217,32 @@ class InventoryItemSerializer(serializers.ModelSerializer):
         """Expose available stock after laybuy reservations."""
         return obj.available_stock_units
 
+    def validate(self, attrs):
+        item_type = attrs.get('item_type')
+        if item_type is None and self.instance is not None:
+            item_type = self.instance.item_type
+
+        is_produced = attrs.get('is_produced')
+        if is_produced is None and self.instance is not None:
+            is_produced = self.instance.is_produced
+
+        if item_type != 'sellable':
+            attrs['is_produced'] = False
+            attrs['is_variable_price'] = False
+            attrs['is_sold_in_portions'] = False
+            attrs['portion_name'] = None
+            attrs['portions_per_unit'] = None
+            attrs['portion_price'] = None
+            attrs['show_in_custom_sales_section'] = False
+        elif is_produced:
+            attrs['is_variable_price'] = False
+            attrs['is_sold_in_portions'] = False
+            attrs['portion_name'] = None
+            attrs['portions_per_unit'] = None
+            attrs['portion_price'] = None
+
+        return attrs
+
 
 class InventoryItemDetailSerializer(InventoryItemSerializer):
     """Detailed inventory item serializer"""

@@ -197,6 +197,7 @@ def _build_stock_targets(order_lines, business, branch):
         if not isinstance(line_recipe_entries, list):
             line_recipe_entries = []
         is_prepared_menu_item = bool(_line_value(line, 'is_prepared_menu_item', 'isPreparedMenuItem'))
+        is_takeaway_packaging = bool(_line_value(line, 'is_takeaway_packaging', 'isTakeawayPackaging'))
         sold_item = None if (is_prepared_menu_item and not sold_reference) else _resolve_inventory_item(
             business,
             branch,
@@ -213,6 +214,9 @@ def _build_stock_targets(order_lines, business, branch):
             if line_recipe_entries
             else (sold_item.recipe if sold_item and isinstance(sold_item.recipe, list) else [])
         )
+        if is_takeaway_packaging:
+            recipe_entries = []
+
         if recipe_entries and (is_prepared_menu_item or not sold_item or sold_item.item_type == 'sellable'):
             for recipe_item in recipe_entries:
                 _register_recipe_entry(targets, missing, business, branch, recipe_item, sold_quantity)

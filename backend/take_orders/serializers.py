@@ -4,6 +4,7 @@ from business.customer_accounts import resolve_customer_for_account_payload
 from inventory.models import InventoryItem
 from django.core.exceptions import ValidationError as DjangoValidationError
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
+from .takeaway import normalise_takeaway_items
 
 
 KITCHEN_BUSINESS_TYPES = {'restaurant', 'bar_liquor'}
@@ -23,7 +24,7 @@ class TakeOrderItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'inventory_item_id', 'menu_item_id', 'name', 'quantity', 'price', 'notes',
             'recipe', 'is_prepared_menu_item',
-            'selected_options', 'item_type', 'is_produced', 'is_kitchen_item',
+            'selected_options', 'is_takeaway_packaging', 'item_type', 'is_produced', 'is_kitchen_item',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -37,6 +38,8 @@ class TakeOrderItemSerializer(serializers.ModelSerializer):
                 converted_data['menu_item_id'] = converted_data.pop('menuItemId')
             if 'isPreparedMenuItem' in converted_data and 'is_prepared_menu_item' not in converted_data:
                 converted_data['is_prepared_menu_item'] = converted_data.pop('isPreparedMenuItem')
+            if 'isTakeawayPackaging' in converted_data and 'is_takeaway_packaging' not in converted_data:
+                converted_data['is_takeaway_packaging'] = converted_data.pop('isTakeawayPackaging')
             return super().to_internal_value(converted_data)
         return super().to_internal_value(data)
 
@@ -64,6 +67,9 @@ class TakeOrderItemSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
+        if getattr(instance, 'is_takeaway_packaging', False):
+            representation['recipe'] = []
+            return representation
         recipe = representation.get('recipe') if isinstance(representation.get('recipe'), list) else []
         if recipe:
             return representation
@@ -73,6 +79,8 @@ class TakeOrderItemSerializer(serializers.ModelSerializer):
         return representation
 
     def get_is_kitchen_item(self, obj):
+        if getattr(obj, 'is_takeaway_packaging', False):
+            return False
         if not _business_supports_kitchen(obj.take_order.business):
             return False
 
@@ -100,7 +108,7 @@ class TakeOrderSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'status', 'order_type', 'order_type_display',
             'customer',
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
-            'special_instructions', 'cancellation_reason', 'items', 'created_by', 'created_by_name',
+            'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'created_by', 'created_by_name',
             'completed_by', 'completed_by_name',
             'created_at', 'updated_at', 'completed_at'
         ]
@@ -144,7 +152,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'status', 'order_type', 'order_type_display',
             'customer',
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
-            'special_instructions', 'cancellation_reason', 'items', 'items_response',
+            'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'items_response',
             'created_by', 'created_by_name', 'completed_by', 'completed_by_name',
             'created_at', 'updated_at', 'completed_at'
         ]
@@ -159,6 +167,8 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             converted_data = data.copy()
             if 'customerId' in converted_data and 'customer' not in converted_data:
                 converted_data['customer'] = converted_data['customerId']
+            if 'isTakeaway' in converted_data and 'is_takeaway' not in converted_data:
+                converted_data['is_takeaway'] = converted_data['isTakeaway']
             return super().to_internal_value(converted_data)
         return super().to_internal_value(data)
 
@@ -167,6 +177,15 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
         status = validated_data.pop('status', 'Pending')
         
         branch = self.context['branch']
+        try:
+            items_data, is_takeaway = normalise_takeaway_items(
+                items_data,
+                branch,
+                validated_data.get('is_takeaway', False),
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else str(exc))
+        validated_data['is_takeaway'] = is_takeaway
         next_order_number = TakeOrder.next_order_number_for_branch(branch)
         
         customer = validated_data.get('customer')
@@ -240,6 +259,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'customer_phone': instance.customer_phone,
             'customer_notes': instance.customer_notes,
             'table_number': instance.table_number,
+            'is_takeaway': instance.is_takeaway,
             'special_instructions': instance.special_instructions,
             'cancellation_reason': instance.cancellation_reason,
             'items': TakeOrderItemSerializer(instance.items.all(), many=True).data,

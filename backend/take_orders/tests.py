@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from business.models import Branch, Business, BusinessSettings
+from digitalmenu.models import MenuConfig
 from inventory.models import InventoryItem
 from staff.models import Staff, StaffRole
 from .models import TakeOrder, TakeOrderItem
@@ -50,6 +51,27 @@ class PublicOrderTrackingTests(TestCase):
             price=Decimal('8.50'),
             value=Decimal('20.00'),
         )
+
+    def _enable_takeaway(self):
+        packaging_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Lunch Box',
+            category='Packaging',
+            item_type='ingredient',
+            stock_units=Decimal('20.000'),
+            reorder_level=Decimal('2.000'),
+            cost=Decimal('0.50'),
+            value=Decimal('10.00'),
+        )
+        MenuConfig.objects.create(
+            business=self.business,
+            branch=self.branch,
+            takeaway_enabled=True,
+            takeaway_packaging_item=packaging_item,
+            takeaway_packaging_price=Decimal('1.50'),
+        )
+        return packaging_item
 
     def _create_self_service_order(self, *, business=None, branch=None, phone='0999000000', order_number=1002, status='Pending'):
         business = business or self.business
@@ -132,6 +154,60 @@ class PublicOrderTrackingTests(TestCase):
         payload = response.json()
         self.assertEqual(payload['status'], 'Pending')
         self.assertEqual(payload['total'], 17.0)
+
+    def test_self_service_takeaway_adds_one_configured_packaging_line(self):
+        packaging_item = self._enable_takeaway()
+
+        response = self.client.post(
+            '/api/orders/self-service/',
+            data=json.dumps({
+                'branch_id': str(self.branch.id),
+                'customer_name': 'Guest',
+                'customer_phone': '0999000000',
+                'is_takeaway': True,
+                'items': [
+                    {
+                        'inventory_item_id': str(self.item.id),
+                        'name': self.item.name,
+                        'quantity': 1,
+                        'price': 8.5,
+                    }
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        order = TakeOrder.objects.get(id=response.json()['id'])
+        self.assertTrue(order.is_takeaway)
+        package_lines = list(order.items.filter(is_takeaway_packaging=True))
+        self.assertEqual(len(package_lines), 1)
+        self.assertEqual(package_lines[0].inventory_item_id, str(packaging_item.id))
+        self.assertEqual(package_lines[0].name, packaging_item.name)
+        self.assertEqual(package_lines[0].price, Decimal('1.50'))
+        self.assertEqual(response.json()['total'], 10.0)
+
+    def test_self_service_takeaway_requires_branch_configuration(self):
+        response = self.client.post(
+            '/api/orders/self-service/',
+            data=json.dumps({
+                'branch_id': str(self.branch.id),
+                'customer_name': 'Guest',
+                'is_takeaway': True,
+                'items': [
+                    {
+                        'inventory_item_id': str(self.item.id),
+                        'name': self.item.name,
+                        'quantity': 1,
+                        'price': 8.5,
+                    }
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('is_takeaway', response.json())
 
     def test_self_service_order_persists_selected_options_snapshot(self):
         response = self.client.post(
@@ -483,6 +559,64 @@ class TakeOrderStatusManagementTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.status, 'Pending')
         self.assertEqual(order.items.count(), 2)
+
+    def test_adding_items_to_takeaway_order_does_not_duplicate_packaging(self):
+        packaging_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Lunch Box',
+            category='Packaging',
+            item_type='ingredient',
+            stock_units=Decimal('10.000'),
+            reorder_level=Decimal('1.000'),
+            cost=Decimal('0.50'),
+            value=Decimal('5.00'),
+        )
+        MenuConfig.objects.create(
+            business=self.business,
+            branch=self.branch,
+            takeaway_enabled=True,
+            takeaway_packaging_item=packaging_item,
+            takeaway_packaging_price=Decimal('1.50'),
+        )
+        order = self._create_order(status='Pending')
+        order.is_takeaway = True
+        order.save(update_fields=['is_takeaway', 'updated_at'])
+        TakeOrderItem.objects.create(
+            take_order=order,
+            inventory_item_id=str(packaging_item.id),
+            name=packaging_item.name,
+            quantity=Decimal('1.000'),
+            price=Decimal('1.50'),
+            is_takeaway_packaging=True,
+        )
+
+        response = self.client.post(
+            f'/api/orders/take-orders/{order.id}/add_items/',
+            {
+                'is_takeaway': True,
+                'items': [
+                    {
+                        'inventory_item_id': str(self.item.id),
+                        'name': self.item.name,
+                        'quantity': '1.000',
+                        'price': '8.50',
+                    },
+                    {
+                        'inventory_item_id': str(packaging_item.id),
+                        'name': packaging_item.name,
+                        'quantity': '1.000',
+                        'price': '1.50',
+                        'is_takeaway_packaging': True,
+                    },
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(order.items.filter(is_takeaway_packaging=True).count(), 1)
+        self.assertEqual(order.items.count(), 3)
 
     def test_items_cannot_be_added_to_completed_order(self):
         order = self._create_order(status='Completed')

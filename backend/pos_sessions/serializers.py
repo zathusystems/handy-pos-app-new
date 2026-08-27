@@ -28,6 +28,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             'recipe',
             'is_prepared_menu_item',
             'selected_options',
+            'is_takeaway_packaging',
             # MRA PRODUCT MAPPING
             'mra_product_code',
             'vat_category',
@@ -74,6 +75,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             'selectedOptions': 'selected_options',
             'menuItemId': 'menu_item_id',
             'isPreparedMenuItem': 'is_prepared_menu_item',
+            'isTakeawayPackaging': 'is_takeaway_packaging',
         }
 
         converted_data = {}
@@ -105,6 +107,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'order_type',
             'status',
             'payment_method',
+            'is_takeaway',
             'pump_name',
             'is_invoice_sale',
             'invoice_id',
@@ -165,6 +168,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'customer_id': 'customer',
             'orderType': 'order_type',
             'paymentMethod': 'payment_method',
+            'isTakeaway': 'is_takeaway',
             'pumpName': 'pump_name',
             'isInvoiceSale': 'is_invoice_sale',
             'invoiceId': 'invoice_id',

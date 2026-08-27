@@ -15,6 +15,7 @@ from .serializers import TakeOrderSerializer, TakeOrderCreateSerializer, TakeOrd
 from business.models import Branch
 from inventory.models import InventoryItem
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
+from .takeaway import normalise_takeaway_items
 
 
 KITCHEN_BUSINESS_TYPES = {'restaurant', 'bar_liquor'}
@@ -123,6 +124,7 @@ def _public_take_order_payload(take_order):
         'currency': currency,
         'order_number': take_order.order_number,
         'status': take_order.status,
+        'is_takeaway': take_order.is_takeaway,
         'cancellation_reason': take_order.cancellation_reason,
         'order_type': take_order.order_type,
         'total': float(total),
@@ -133,6 +135,7 @@ def _public_take_order_payload(take_order):
                 'recipe': item.recipe or [],
                 'is_prepared_menu_item': item.is_prepared_menu_item,
                 'selected_options': item.selected_options or [],
+                'is_takeaway_packaging': item.is_takeaway_packaging,
             }
             for item in items
         ],
@@ -245,6 +248,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
                     'recipe': item.recipe or [],
                     'is_prepared_menu_item': item.is_prepared_menu_item,
                     'selected_options': item.selected_options or [],
+                    'is_takeaway_packaging': item.is_takeaway_packaging,
                 }
                 for item in take_order.items.all()
             ]
@@ -302,6 +306,17 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         validated_items = item_serializer.validated_data
 
         try:
+            normalized_items, is_takeaway = normalise_takeaway_items(
+                validated_items,
+                take_order.branch,
+                request.data.get('is_takeaway', False) if not take_order.is_takeaway else False,
+                package_already_added=take_order.is_takeaway,
+            )
+        except DjangoValidationError as exc:
+            return Response(_django_validation_payload(exc), status=status.HTTP_400_BAD_REQUEST)
+        validated_items = normalized_items
+
+        try:
             validate_stock_available_for_order_lines(validated_items, take_order.business, take_order.branch)
         except DjangoValidationError as exc:
             return Response(_django_validation_payload(exc), status=status.HTTP_400_BAD_REQUEST)
@@ -309,7 +324,11 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         for item_data in validated_items:
             TakeOrderItem.objects.create(take_order=take_order, **item_data)
 
-        take_order.save(update_fields=['updated_at'])
+        update_fields = ['updated_at']
+        if is_takeaway and not take_order.is_takeaway:
+            take_order.is_takeaway = True
+            update_fields.append('is_takeaway')
+        take_order.save(update_fields=update_fields)
 
         take_order.refresh_from_db()
         serializer = TakeOrderSerializer(take_order)
@@ -361,6 +380,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         customer_phone = request.data.get('customer_phone')
         table_number = request.data.get('table_number')
         items = request.data.get('items', [])
+        requested_takeaway = request.data.get('is_takeaway', False)
         special_instructions = request.data.get('special_instructions', '')
         
         # Validate required fields
@@ -390,6 +410,11 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        try:
+            items, is_takeaway = normalise_takeaway_items(items, branch, requested_takeaway)
+        except DjangoValidationError as exc:
+            return Response(_django_validation_payload(exc), status=status.HTTP_400_BAD_REQUEST)
+
         next_order_number = TakeOrder.next_order_number_for_branch(branch)
         
         # Create the take order (self-service, so no created_by user)
@@ -404,7 +429,8 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
             special_instructions=special_instructions,
             created_by=None,  # Self-service order, no user
             order_type='self_service',  # Mark as self-service
-            status='Pending'
+            status='Pending',
+            is_takeaway=is_takeaway,
         )
         
         # Create items
@@ -419,6 +445,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
                 recipe=item_data.get('recipe') or [],
                 is_prepared_menu_item=bool(item_data.get('is_prepared_menu_item') or item_data.get('isPreparedMenuItem')),
                 selected_options=item_data.get('selected_options') or item_data.get('selectedOptions') or [],
+                is_takeaway_packaging=bool(item_data.get('is_takeaway_packaging') or item_data.get('isTakeawayPackaging')),
                 notes=item_data.get('notes', '')
             )
         
@@ -443,6 +470,7 @@ def self_service_order(request):
         customer_phone = data.get('customer_phone')
         table_number = data.get('table_number')
         items = data.get('items', [])
+        requested_takeaway = data.get('is_takeaway', False)
         special_instructions = data.get('special_instructions', '')
         
         # Validate required fields
@@ -460,6 +488,11 @@ def self_service_order(request):
         except Branch.DoesNotExist:
             return JsonResponse({'error': 'Branch not found'}, status=404)
 
+        try:
+            items, is_takeaway = normalise_takeaway_items(items, branch, requested_takeaway)
+        except DjangoValidationError as exc:
+            return JsonResponse(_django_validation_payload(exc), status=400)
+
         next_order_number = TakeOrder.next_order_number_for_branch(branch)
         
         # Create the take order (self-service, so no created_by user)
@@ -474,7 +507,8 @@ def self_service_order(request):
             special_instructions=special_instructions,
             created_by=None,  # Self-service order, no user
             order_type='self_service',  # Mark as self-service
-            status='Pending'
+            status='Pending',
+            is_takeaway=is_takeaway,
         )
         
         # Create items
@@ -489,6 +523,7 @@ def self_service_order(request):
                 recipe=item_data.get('recipe') or [],
                 is_prepared_menu_item=bool(item_data.get('is_prepared_menu_item') or item_data.get('isPreparedMenuItem')),
                 selected_options=item_data.get('selected_options') or item_data.get('selectedOptions') or [],
+                is_takeaway_packaging=bool(item_data.get('is_takeaway_packaging') or item_data.get('isTakeawayPackaging')),
                 notes=item_data.get('notes', '')
             )
         

@@ -12,6 +12,7 @@ import {
   Loader2,
   Phone,
   RefreshCw,
+  ShoppingBag,
   StickyNote,
   User,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ import {
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useOrderNotificationSound } from '@/hooks/use-order-notification-sound';
+import { useCurrency } from '@/hooks/use-currency';
 import { authFetch } from '@/lib/auth-fetch';
 import { db } from '@/lib/db';
 import {
@@ -30,9 +32,10 @@ import {
   buildKitchenInventoryLookup,
   getCustomSalesSectionOrderItems,
   getNonCustomSalesSectionOrderItems,
+  resolveKitchenInventoryItem,
   type KitchenInventoryLookup,
 } from '@/lib/kitchen-order-routing';
-import { getPortionQuantityDisplay } from '@/lib/quantity-format';
+import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -48,6 +51,9 @@ interface DisplayOrderItem {
   inventoryItemId?: string;
   name: string;
   quantity: number | string;
+  price?: number | string;
+  subtotal?: number | string;
+  total?: number | string;
   notes?: string;
   selected_options?: Array<Record<string, unknown>>;
   selectedOptions?: Array<Record<string, unknown>>;
@@ -79,6 +85,18 @@ interface SectionInventoryItem {
   portionsPerUnit?: number;
   reorderLevel: number;
   status?: string;
+}
+
+interface SoldSectionProduct {
+  id: string;
+  name: string;
+  quantity: number;
+  salesValue: number;
+  orderCount: number;
+  unitType: string;
+  isSoldInPortions: boolean;
+  portionName?: string;
+  portionsPerUnit?: number;
 }
 
 const statusColors: Record<string, string> = {
@@ -119,6 +137,11 @@ const readItemsFromResponse = (response: unknown): any[] => {
   }
   return [];
 };
+
+const readCompletedSalesFromResponse = (response: unknown): DisplayOrder[] =>
+  readTakeOrdersFromResponse(response).filter((order) =>
+    String(order.status || '').trim().toLowerCase() === 'completed'
+  );
 
 const getMinutesAgo = (dateString: string): string => {
   const createdTime = new Date(dateString);
@@ -168,12 +191,14 @@ const normalizeSectionInventoryItem = (item: any): SectionInventoryItem => ({
 export default function CustomSalesSectionPage() {
   const { toast } = useToast();
   const { business, loading: isAuthLoading } = useAuth();
+  const { format: formatCurrency } = useCurrency();
   const businessRecord = useLiveQuery(
     () => business?.id ? db.business.get(business.id) : undefined,
     [business?.id]
   );
   const [settings, setSettings] = useState({ enabled: false, name: '' });
   const [orders, setOrders] = useState<DisplayOrder[]>([]);
+  const [soldOrders, setSoldOrders] = useState<DisplayOrder[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [branchId, setBranchId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -249,12 +274,14 @@ export default function CustomSalesSectionPage() {
     try {
       setIsLoading(true);
       const backendBranchId = normalizeBranchId(branchId);
-      const [ordersData, inventoryData] = await Promise.all([
+      const [ordersData, inventoryData, salesData] = await Promise.all([
         authFetch.fetch(`/orders/take-orders/?branch_id=${encodeURIComponent(backendBranchId)}`),
         authFetch.fetch(`/inventory/items/?branch_id=${encodeURIComponent(backendBranchId)}`),
+        authFetch.fetch(`/sessions/orders/?branch_id=${encodeURIComponent(backendBranchId)}`),
       ]);
 
       setOrders(readTakeOrdersFromResponse(ordersData));
+      setSoldOrders(readCompletedSalesFromResponse(salesData));
       setInventoryItems(readItemsFromResponse(inventoryData));
       setLastUpdatedAt(new Date().toISOString());
     } catch (error) {
@@ -297,6 +324,11 @@ export default function CustomSalesSectionPage() {
     [orders, inventoryLookup]
   );
 
+  const sectionSoldOrders = useMemo(
+    () => soldOrders.filter((order) => getCustomSalesSectionOrderItems(order, inventoryLookup).length > 0),
+    [soldOrders, inventoryLookup]
+  );
+
   const sectionInventoryItems = useMemo(
     () =>
       inventoryItems
@@ -328,6 +360,59 @@ export default function CustomSalesSectionPage() {
     (sum, order) => sum + getCustomSalesSectionOrderItems(order, inventoryLookup).length,
     0
   );
+
+  const sectionSoldProducts = useMemo(() => {
+    const productMap = new Map<string, SoldSectionProduct & { orderIds: Set<string> }>();
+
+    sectionSoldOrders.forEach((order) => {
+      getCustomSalesSectionOrderItems(order, inventoryLookup).forEach((item) => {
+        const inventoryItem = resolveKitchenInventoryItem(item, inventoryLookup);
+        const rawInventoryId = String(
+          inventoryItem?.id ?? item.inventoryItemId ?? item.inventory_item_id ?? ''
+        ).trim();
+        const normalizedName = String(item.name || 'Unnamed product').trim().toLowerCase();
+        const productId = rawInventoryId || `name:${normalizedName}`;
+        const quantity = Math.max(0, toFiniteNumber(item.quantity, 0));
+        if (quantity <= 0) {
+          return;
+        }
+
+        const lineTotal = toFiniteNumber(item.total, Number.NaN);
+        const unitPrice = toFiniteNumber(item.price, 0);
+        const salesValue = Math.max(0, Number.isFinite(lineTotal) ? lineTotal : unitPrice * quantity);
+        const existing = productMap.get(productId) || {
+          id: productId,
+          name: String(inventoryItem?.name || item.name || 'Unnamed product').trim(),
+          quantity: 0,
+          salesValue: 0,
+          orderCount: 0,
+          unitType: String((inventoryItem as any)?.unitType ?? (inventoryItem as any)?.unit_type ?? 'unit').trim() || 'unit',
+          isSoldInPortions: Boolean(
+            (inventoryItem as any)?.isSoldInPortions ?? (inventoryItem as any)?.is_sold_in_portions
+          ),
+          portionName: String(
+            (inventoryItem as any)?.portionName ?? (inventoryItem as any)?.portion_name ?? ''
+          ).trim() || undefined,
+          portionsPerUnit: toFiniteNumber(
+            (inventoryItem as any)?.portionsPerUnit ?? (inventoryItem as any)?.portions_per_unit,
+            0
+          ) || undefined,
+          orderIds: new Set<string>(),
+        };
+
+        existing.quantity += quantity;
+        existing.salesValue += salesValue;
+        existing.orderIds.add(String(order.id));
+        existing.orderCount = existing.orderIds.size;
+        productMap.set(productId, existing);
+      });
+    });
+
+    return Array.from(productMap.values())
+      .map(({ orderIds, ...product }) => product)
+      .sort((a, b) => b.salesValue - a.salesValue || b.quantity - a.quantity);
+  }, [sectionSoldOrders, inventoryLookup]);
+
   const lastUpdatedLabel = lastUpdatedAt ? getMinutesAgo(lastUpdatedAt) : 'Not refreshed yet';
 
   if (isAuthLoading || businessRecord === undefined) {
@@ -402,7 +487,7 @@ export default function CustomSalesSectionPage() {
       </div>
 
       <Tabs defaultValue="orders" className="space-y-4">
-        <TabsList className="grid h-auto w-full max-w-md grid-cols-2">
+        <TabsList className="grid h-auto w-full max-w-lg grid-cols-3">
           <TabsTrigger value="orders" className="gap-2 py-2.5">
             <ClipboardList className="h-4 w-4" />
             Orders
@@ -415,6 +500,13 @@ export default function CustomSalesSectionPage() {
             Stock
             <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[11px]">
               {sectionInventoryItems.length}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="sold" className="gap-2 py-2.5">
+            <ShoppingBag className="h-4 w-4" />
+            Sold
+            <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[11px]">
+              {sectionSoldProducts.length}
             </Badge>
           </TabsTrigger>
         </TabsList>
@@ -484,6 +576,70 @@ export default function CustomSalesSectionPage() {
             })
           )}
         </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="sold" className="mt-0">
+          <section className="rounded-lg border bg-background">
+            <div className="flex flex-col gap-2 border-b p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+              <div>
+                <h2 className="text-base font-semibold">Products Sold</h2>
+                <p className="text-xs text-muted-foreground">
+                  Completed POS sales for products marked for {settings.name}.
+                </p>
+              </div>
+              <Badge variant="secondary">{sectionSoldOrders.length} orders</Badge>
+            </div>
+            <div className="divide-y">
+              {isLoading && sectionSoldProducts.length === 0 ? (
+                <div className="flex h-32 items-center justify-center text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : sectionSoldProducts.length === 0 ? (
+                <div className="flex h-32 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                  <ShoppingBag className="h-6 w-6" />
+                  <p className="text-sm">No products have been sold in {settings.name} yet.</p>
+                </div>
+              ) : (
+                sectionSoldProducts.map((product) => {
+                  const portionQuantityDisplay =
+                    product.isSoldInPortions && product.portionsPerUnit
+                      ? getPortionQuantityDisplay({
+                          quantity: product.quantity,
+                          unitLabel: product.unitType,
+                          portionName: product.portionName || 'portion',
+                          portionsPerUnit: product.portionsPerUnit,
+                        })
+                      : null;
+                  const quantityLabel = portionQuantityDisplay
+                    ? portionQuantityDisplay.summaryText
+                    : formatQuantityWithUnit(product.quantity, product.unitType);
+
+                  return (
+                    <div
+                      key={product.id}
+                      className="grid gap-2 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-4 sm:p-4"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{product.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {product.orderCount} order{product.orderCount === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                      <div className="text-sm sm:text-right">
+                        <p className="font-semibold">{quantityLabel}</p>
+                        {portionQuantityDisplay && (
+                          <p className="text-xs text-muted-foreground">
+                            {portionQuantityDisplay.totalPortions} {product.portionName || 'portions'} total
+                          </p>
+                        )}
+                      </div>
+                      <p className="text-sm font-semibold sm:text-right">{formatCurrency(product.salesValue)}</p>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </section>
         </TabsContent>
 

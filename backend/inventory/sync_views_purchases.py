@@ -190,6 +190,8 @@ def handle_create_purchase_order(po_id, data, business, branch_id):
         po_data = {k: v for k, v in po_data.items() if v is not None or k == 'supplier'}
         
         po = PurchaseOrder.objects.create(**po_data)
+        if po.supplier:
+            po.supplier.recalculate_purchase_totals()
         
         # Legacy fallback: only create PO items from the header when the payload
         # does not already include explicit batch IDs that will be synced via
@@ -326,6 +328,8 @@ def handle_update_purchase_order(po_id, data, business, branch_id):
             )
         
         po.save()
+        if po.supplier:
+            po.supplier.recalculate_purchase_totals()
         print(f"[Sync] Updated purchase order {po_id}")
         
         return {

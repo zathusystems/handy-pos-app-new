@@ -91,18 +91,22 @@ export const addTakeOrderToSaleCart = async ({
 
     const menuItemId = String((item as any).menuItemId ?? (item as any).menu_item_id ?? '').trim();
     const preparedItemId = getTakeOrderItemInventoryId(item) || menuItemId || String(item.id);
-    const cartItem: InventoryItem = inventoryItem || {
-      id: preparedItemId,
-      name: item.name,
-      category: 'Take Order Item',
-      itemType: 'sellable',
-      branchId,
-      price,
-      recipe: Array.isArray((item as any).recipe) ? (item as any).recipe : [],
-      isPreparedMenuItem: Boolean((item as any).isPreparedMenuItem ?? (item as any).is_prepared_menu_item),
-      is_prepared_menu_item: Boolean((item as any).isPreparedMenuItem ?? (item as any).is_prepared_menu_item),
-      menuItemId: menuItemId || undefined,
-      menu_item_id: menuItemId || undefined,
+    const cartItem: InventoryItem = {
+      ...(inventoryItem || {
+        id: preparedItemId,
+        name: item.name,
+        category: 'Take Order Item',
+        itemType: 'sellable',
+        branchId,
+        price,
+        recipe: Array.isArray((item as any).recipe) ? (item as any).recipe : [],
+        isPreparedMenuItem: Boolean((item as any).isPreparedMenuItem ?? (item as any).is_prepared_menu_item),
+        is_prepared_menu_item: Boolean((item as any).isPreparedMenuItem ?? (item as any).is_prepared_menu_item),
+        menuItemId: menuItemId || undefined,
+        menu_item_id: menuItemId || undefined,
+      }),
+      isTakeawayPackaging: Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging),
+      is_takeaway_packaging: Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging),
     };
 
     const selectedOptions = getSelectedOptions(item);

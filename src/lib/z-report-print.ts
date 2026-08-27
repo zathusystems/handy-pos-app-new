@@ -21,6 +21,9 @@ export type ZReportFinancialSummary = {
   orderCount: number;
   netSales: number;
   totalTax: number;
+  totalCharges: number;
+  totalLevies: number;
+  totalOtherCharges: number;
   grossSales: number;
   totalTips: number;
   totalPayable: number;
@@ -65,6 +68,10 @@ export type ZReportOrderRecord = {
   net_amount?: number;
   grossAmount?: number;
   gross_amount?: number;
+  chargesAmount?: number;
+  charges_amount?: number;
+  chargesSnapshot?: Array<Record<string, unknown>>;
+  charges_snapshot?: Array<Record<string, unknown>>;
   fiscalInvoiceNumber?: string;
   fiscal_invoice_number?: string;
   eisStatus?: string;
@@ -129,10 +136,73 @@ const toTimestamp = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+export type ZReportChargeBreakdown = {
+  total: number;
+  levies: number;
+  otherCharges: number;
+  exclusive: number;
+  inclusive: number;
+};
+
+/** Read the immutable charge snapshot saved with a completed sale. */
+export const getOrderChargeBreakdown = (
+  order: Pick<ZReportOrderRecord, 'chargesAmount' | 'charges_amount' | 'chargesSnapshot' | 'charges_snapshot'>
+): ZReportChargeBreakdown => {
+  const snapshot = Array.isArray(order.chargesSnapshot)
+    ? order.chargesSnapshot
+    : Array.isArray(order.charges_snapshot)
+      ? order.charges_snapshot
+      : [];
+  const declaredTotal = toFiniteNumber(
+    order.chargesAmount ?? order.charges_amount,
+    Number.NaN
+  );
+
+  let snapshotTotal = 0;
+  let levies = 0;
+  let exclusive = 0;
+  let inclusive = 0;
+
+  snapshot.forEach((entry) => {
+    const amount = Math.max(0, toFiniteNumber(
+      entry?.amount ?? entry?.charge_amount ?? entry?.chargeAmount,
+      0
+    ));
+    if (amount <= 0) return;
+
+    snapshotTotal += amount;
+    const chargeType = String(
+      entry?.chargeType ?? entry?.charge_type ?? entry?.type ?? ''
+    ).trim().toUpperCase();
+    if (chargeType === 'LEVY') levies += amount;
+
+    const method = String(
+      entry?.calculationMethod ?? entry?.calculation_method ?? ''
+    ).trim().toLowerCase();
+    if (method === 'exclusive') exclusive += amount;
+    if (method === 'inclusive') inclusive += amount;
+  });
+
+  const total = Number.isFinite(declaredTotal)
+    ? Math.max(0, declaredTotal)
+    : Math.max(0, snapshotTotal);
+
+  return {
+    total,
+    levies: Math.min(total, Math.max(0, levies)),
+    otherCharges: Math.max(0, total - Math.min(total, Math.max(0, levies))),
+    exclusive: Math.min(total, Math.max(0, exclusive)),
+    inclusive: Math.min(total, Math.max(0, inclusive)),
+  };
+};
+
 const DEFAULT_FINANCIAL_SUMMARY: ZReportFinancialSummary = {
   orderCount: 0,
   netSales: 0,
   totalTax: 0,
+  totalCharges: 0,
+  totalLevies: 0,
+  totalOtherCharges: 0,
   grossSales: 0,
   totalTips: 0,
   totalPayable: 0,
@@ -179,6 +249,9 @@ export const calculateZReportSummary = (
     orderCount: activeOrders.length,
     netSales: 0,
     totalTax: 0,
+    totalCharges: 0,
+    totalLevies: 0,
+    totalOtherCharges: 0,
     grossSales: 0,
     totalTips: 0,
     totalPayable: 0,
@@ -205,15 +278,21 @@ export const calculateZReportSummary = (
     const totalValue = toFiniteNumber(order.total);
     const netValue = toFiniteNumber(order.netAmount ?? order.net_amount ?? order.subtotal);
     const taxValue = toFiniteNumber(order.vatAmount ?? order.vat_amount ?? order.tax);
+    const chargeBreakdown = getOrderChargeBreakdown(order);
     const grossValueFromTotal = totalValue - tipAmount;
     const grossValue = toFiniteNumber(
       order.grossAmount ?? order.gross_amount,
-      grossValueFromTotal > 0 ? grossValueFromTotal : netValue + taxValue
+      grossValueFromTotal > 0
+        ? grossValueFromTotal
+        : netValue + taxValue + chargeBreakdown.exclusive
     );
     const totalPayableValue = grossValue + tipAmount;
 
     financialSummary.netSales += netValue;
     financialSummary.totalTax += taxValue;
+    financialSummary.totalCharges += chargeBreakdown.total;
+    financialSummary.totalLevies += chargeBreakdown.levies;
+    financialSummary.totalOtherCharges += chargeBreakdown.otherCharges;
     financialSummary.grossSales += grossValue;
     financialSummary.totalTips += tipAmount;
     financialSummary.totalPayable += totalPayableValue;
@@ -367,6 +446,8 @@ export const buildZReportPrintHtml = ({
   const sessionTotalSales = toFiniteNumber(session.totalSales);
   const netSales = toFiniteNumber(financialSummary.netSales);
   const totalTax = toFiniteNumber(financialSummary.totalTax);
+  const totalLevies = toFiniteNumber(financialSummary.totalLevies);
+  const totalOtherCharges = toFiniteNumber(financialSummary.totalOtherCharges);
   const grossSales = toFiniteNumber(financialSummary.grossSales);
   const totalTips = toFiniteNumber(financialSummary.totalTips);
   const totalPayable = toFiniteNumber(financialSummary.totalPayable);
@@ -393,6 +474,8 @@ export const buildZReportPrintHtml = ({
     `Orders: ${Math.max(0, Math.floor(toFiniteNumber(financialSummary.orderCount)))}`,
     `Net Sales: ${formatCurrency(netSales)}`,
     `Tax: ${formatCurrency(totalTax)}`,
+    `Levies: ${formatCurrency(totalLevies)}`,
+    `Other Charges: ${formatCurrency(totalOtherCharges)}`,
     `Gross Sales: ${formatCurrency(grossSales)}`,
     // `Tips: ${formatCurrency(totalTips)}`,
     `Sales Value: ${formatCurrency(totalPayable)}`,

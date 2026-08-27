@@ -67,6 +67,12 @@ const mapBackendOrderItemToLocal = (item: any): OrderItem => {
     taxAmount,
     tax_amount: taxAmount,
     total: toNumber(item?.total),
+    isTakeawayPackaging: Boolean(
+      item?.is_takeaway_packaging ?? item?.isTakeawayPackaging ?? false
+    ),
+    is_takeaway_packaging: Boolean(
+      item?.is_takeaway_packaging ?? item?.isTakeawayPackaging ?? false
+    ),
   };
 };
 
@@ -111,6 +117,8 @@ const mapBackendOrderToLocal = (
     customerId: toOptionalString(order?.customer_id ?? order?.customerId ?? order?.customer),
     customer_id: toOptionalString(order?.customer_id ?? order?.customerId ?? order?.customer),
     orderType,
+    isTakeaway: Boolean(order?.is_takeaway ?? order?.isTakeaway ?? false),
+    is_takeaway: Boolean(order?.is_takeaway ?? order?.isTakeaway ?? false),
     items,
     status: String(order?.status ?? 'Completed') as Order['status'],
     subtotal: toNumber(order?.subtotal),

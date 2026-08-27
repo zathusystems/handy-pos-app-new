@@ -160,6 +160,8 @@ export interface InventoryItem {
     recipe?: RecipeIngredient[];
     isPreparedMenuItem?: boolean;
     is_prepared_menu_item?: boolean;
+    isTakeawayPackaging?: boolean;
+    is_takeaway_packaging?: boolean;
     menuItemId?: string;
     menu_item_id?: string;
     description?: string;
@@ -239,6 +241,8 @@ export interface OrderItem {
     is_prepared_menu_item?: boolean;
     selectedOptions?: Array<Record<string, unknown>>;
     selected_options?: Array<Record<string, unknown>>;
+    isTakeawayPackaging?: boolean;
+    is_takeaway_packaging?: boolean;
     // Per-item pricing (MRA Compliance - Immutable snapshot)
     price?: number; // Unit price at time of sale
     // Per-item tax information (MRA Compliance - Immutable snapshot)
@@ -273,6 +277,8 @@ export interface Order {
     customerId?: string;
     customer_id?: string;
     orderType?: 'sale' | 'return' | 'adjustment'; // Type of order
+    isTakeaway?: boolean;
+    is_takeaway?: boolean;
     items: OrderItem[];
     status: 'New' | 'Preparing' | 'Ready' | 'Completed' | 'Voided' | 'Cancelled' | 'Refunded' | 'Partially Refunded';
     subtotal: number;
@@ -375,6 +381,8 @@ export interface TakeOrderItem {
     is_prepared_menu_item?: boolean;
     selectedOptions?: Array<Record<string, unknown>>;
     selected_options?: Array<Record<string, unknown>>;
+    isTakeawayPackaging?: boolean;
+    is_takeaway_packaging?: boolean;
     createdAt: string; // ISO string
     updatedAt: string; // ISO string
 }
@@ -386,6 +394,8 @@ export interface TakeOrder {
     businessId?: string;
     status: 'Pending' | 'Confirmed' | 'Sent to Kitchen' | 'Preparing' | 'Ready' | 'Completed' | 'Cancelled';
     orderType: 'staff' | 'self_service';
+    isTakeaway?: boolean;
+    is_takeaway?: boolean;
     customerName?: string;
     customerPhone?: string;
     customerNotes?: string;

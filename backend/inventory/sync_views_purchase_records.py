@@ -278,6 +278,9 @@ def handle_create_purchase_record(record_id, data, business, branch_id):
         )
         
         print(f"[Sync] Created purchase order item {record_id}")
+        purchase_order.calculate_totals()
+        if purchase_order.supplier:
+            purchase_order.supplier.recalculate_purchase_totals()
         
         # Update inventory item stock
         old_stock, new_stock = _apply_inventory_purchase_update(
@@ -441,6 +444,9 @@ def handle_update_purchase_record(record_id, data, business, branch_id):
             )
         
         purchase_item.save()
+        purchase_item.purchase_order.calculate_totals()
+        if purchase_item.purchase_order.supplier:
+            purchase_item.purchase_order.supplier.recalculate_purchase_totals()
         
         # Update inventory stock/cost if purchase values changed
         if quantity_change != 0 or cost_per_unit_raw is not None or selling_price is not None:
@@ -491,6 +497,10 @@ def handle_delete_purchase_record(record_id, business, branch_id):
         
         # Delete the purchase item
         purchase_item.delete()
+        if purchase_item.purchase_order:
+            purchase_item.purchase_order.calculate_totals()
+            if purchase_item.purchase_order.supplier:
+                purchase_item.purchase_order.supplier.recalculate_purchase_totals()
         
         print(f"[Sync] Deleted purchase record {record_id}")
         

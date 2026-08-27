@@ -1263,7 +1263,8 @@ export default function PosPage() {
               continue;
             }
 
-            const itemsToDecrement = (originalItem.itemType === 'sellable' && originalItem.recipe?.length)
+            const isTakeawayPackaging = Boolean((cartItem as any).isTakeawayPackaging ?? (cartItem as any).is_takeaway_packaging);
+            const itemsToDecrement = (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
                 ? originalItem.recipe
                     .map(ri => {
                       const ingredientId = String(
@@ -1410,9 +1411,11 @@ export default function PosPage() {
           orderNumber: nextOrderNumber,
           branchId: activeBranchId,
           sessionId: sessionForOrder.id,
-          pumpName: sessionForOrder.pumpName,
-          orderType: 'sale',  // Mark as POS sale
-          items: computedLineItems.map((line) => ({
+            pumpName: sessionForOrder.pumpName,
+            orderType: 'sale',  // Mark as POS sale
+            isTakeaway: cart.some((item) => Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging)),
+            is_takeaway: cart.some((item) => Boolean((item as any).isTakeawayPackaging ?? (item as any).is_takeaway_packaging)),
+            items: computedLineItems.map((line) => ({
             id: uuidv4(),
             inventoryItemId: line.inventoryItemId,
             name: line.cartItem.name,
@@ -1427,6 +1430,8 @@ export default function PosPage() {
             portion_name: line.cartItem.portionName || undefined,
             portionsPerUnit: Number(line.cartItem.portionsPerUnit || 0) || undefined,
             portions_per_unit: Number(line.cartItem.portionsPerUnit || 0) || undefined,
+            isTakeawayPackaging: Boolean((line.cartItem as any).isTakeawayPackaging ?? (line.cartItem as any).is_takeaway_packaging),
+            is_takeaway_packaging: Boolean((line.cartItem as any).isTakeawayPackaging ?? (line.cartItem as any).is_takeaway_packaging),
             taxRate: Number(line.taxRate.toFixed(2)),
             taxType: line.taxType,
             taxCalculationMethod: line.taxCalculationMethod,
@@ -1536,6 +1541,7 @@ export default function PosPage() {
           order_type: finalOrder.orderType,
           status: finalOrder.status,
           payment_method: finalOrder.paymentMethod,
+          is_takeaway: Boolean((finalOrder as any).isTakeaway ?? (finalOrder as any).is_takeaway),
           pump_name: finalOrder.pumpName,
           ...buyerPayload,
           subtotal: finalOrder.subtotal,
@@ -1567,6 +1573,8 @@ export default function PosPage() {
             portion_name: line.cartItem.portionName || undefined,
             portionsPerUnit: Number(line.cartItem.portionsPerUnit || 0) || undefined,
             portions_per_unit: Number(line.cartItem.portionsPerUnit || 0) || undefined,
+            isTakeawayPackaging: Boolean((line.cartItem as any).isTakeawayPackaging ?? (line.cartItem as any).is_takeaway_packaging),
+            is_takeaway_packaging: Boolean((line.cartItem as any).isTakeawayPackaging ?? (line.cartItem as any).is_takeaway_packaging),
           }))
         };
         console.log('[Order] Built backend order:', orderForBackend);

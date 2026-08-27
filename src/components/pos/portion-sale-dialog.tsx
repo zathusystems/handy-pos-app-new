@@ -24,7 +24,13 @@ type PortionSaleDialogProps = {
   item: InventoryItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAddToCart: (item: InventoryItem, quantity?: number, price?: number) => boolean | void | Promise<boolean | void>;
+  selectedOptions?: Array<Record<string, unknown>>;
+  onAddToCart: (
+    item: InventoryItem,
+    quantity?: number,
+    price?: number,
+    selectedOptions?: Array<Record<string, unknown>>
+  ) => boolean | void | Promise<boolean | void>;
 };
 
 const toPositiveNumber = (value: unknown, fallback = 0): number => {
@@ -47,6 +53,7 @@ export function PortionSaleDialog({
   item,
   open,
   onOpenChange,
+  selectedOptions = [],
   onAddToCart,
 }: PortionSaleDialogProps) {
   const [saleMode, setSaleMode] = useState<PortionSaleMode>('portion');
@@ -59,9 +66,23 @@ export function PortionSaleDialog({
   const fullUnitLabel = String(item?.unitType || 'unit').trim() || 'unit';
   const fullUnitPrice = toPositiveNumber(item?.price, 0);
   const explicitPortionPrice = toPositiveNumber(item?.portionPrice ?? item?.portion_price, 0);
-  const portionUnitPrice = portionsPerUnit > 0
+  const basePortionUnitPrice = portionsPerUnit > 0
     ? (explicitPortionPrice > 0 ? explicitPortionPrice : fullUnitPrice / portionsPerUnit)
     : 0;
+  const configuredFullUnitPrice = selectedOptions.reduce((price, option) => {
+    const override = Number(option?.price_override ?? option?.priceOverride);
+    if (
+      String(option?.price_mode ?? option?.priceMode ?? '').toLowerCase() === 'override'
+      && Number.isFinite(override)
+    ) {
+      return Math.max(0, override);
+    }
+    const delta = Number(option?.price_delta ?? option?.priceDelta ?? 0);
+    return price + (Number.isFinite(delta) ? delta : 0);
+  }, explicitPortionPrice > 0 ? explicitPortionPrice * portionsPerUnit : fullUnitPrice);
+  const portionUnitPrice = portionsPerUnit > 0
+    ? configuredFullUnitPrice / portionsPerUnit
+    : basePortionUnitPrice;
 
   useEffect(() => {
     if (open) {
@@ -130,7 +151,8 @@ export function PortionSaleDialog({
         const added = await onAddToCart(
           item,
           roundCartQuantity(quantityInStockUnits),
-          Number(perFullUnitPrice.toFixed(2))
+          Number(perFullUnitPrice.toFixed(2)),
+          selectedOptions
         );
         if (added === false) {
           return;
@@ -144,7 +166,7 @@ export function PortionSaleDialog({
           portionPrice: undefined,
           portion_price: undefined,
         };
-        const added = await onAddToCart(fullUnitItem, saleQuantity, fullUnitPrice);
+        const added = await onAddToCart(fullUnitItem, saleQuantity, configuredFullUnitPrice, selectedOptions);
         if (added === false) {
           return;
         }
@@ -185,6 +207,11 @@ export function PortionSaleDialog({
                   maximumFractionDigits: 0,
                 })} per {fullUnitLabel}
               </p>
+              {selectedOptions.length > 0 && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Choices: {selectedOptions.map((option) => String(option.name || '')).filter(Boolean).join(', ')}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -262,7 +289,7 @@ export function PortionSaleDialog({
               <p className="text-xs text-muted-foreground">
                 {saleMode === 'portion'
                   ? `Using ${formatCurrency(portionUnitPrice)} per ${portionLabel}.`
-                  : `Using ${formatCurrency(fullUnitPrice)} per ${fullUnitLabel}.`}
+                  : `Using ${formatCurrency(configuredFullUnitPrice)} per ${fullUnitLabel}.`}
               </p>
             </div>
           </div>

@@ -668,6 +668,8 @@ class MenuConfigViewSet(viewsets.ModelViewSet):
                     'enable_filters': True,
                     'enable_sorting': True,
                     'accept_orders': True,
+                    'takeaway_enabled': False,
+                    'takeaway_packaging_price': 0,
                 }
             )
             sync_menu_config_currency(config)

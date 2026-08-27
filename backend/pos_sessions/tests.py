@@ -275,6 +275,73 @@ class RecipeStockValidationTests(TestCase):
         self.direct_product.refresh_from_db()
         self.assertEqual(self.direct_product.stock_units, Decimal('-2.000'))
 
+    def test_takeaway_packaging_is_deducted_directly_even_if_it_has_a_recipe(self):
+        packaging_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Reusable Takeaway Box',
+            category='Packaging',
+            item_type='sellable',
+            stock_units=Decimal('2.000'),
+            reorder_level=Decimal('1.000'),
+            cost=Decimal('0.50'),
+            price=Decimal('1.50'),
+            value=Decimal('1.00'),
+            recipe=[
+                {
+                    'ingredientId': str(self.ingredient.id),
+                    'name': self.ingredient.name,
+                    'quantity': 1,
+                }
+            ],
+        )
+
+        validate_stock_available_for_order_lines(
+            [
+                {
+                    'inventory_item_id': str(packaging_item.id),
+                    'name': packaging_item.name,
+                    'quantity': 1,
+                    'is_takeaway_packaging': True,
+                }
+            ],
+            self.business,
+            self.branch,
+        )
+
+        order = Order.objects.create(
+            business=self.business,
+            branch=self.branch,
+            order_number=1004,
+            order_type='sale',
+            payment_method='Cash',
+            is_takeaway=True,
+            subtotal=Decimal('1.50'),
+            total=Decimal('1.50'),
+            net_amount=Decimal('1.50'),
+            gross_amount=Decimal('1.50'),
+            vat_amount=Decimal('0.00'),
+        )
+        OrderItem.objects.create(
+            order=order,
+            inventory_item_id=str(packaging_item.id),
+            name=packaging_item.name,
+            quantity=Decimal('1.000'),
+            price=Decimal('1.50'),
+            is_takeaway_packaging=True,
+            recipe=packaging_item.recipe,
+            subtotal=Decimal('1.50'),
+            tax_amount=Decimal('0.00'),
+            total=Decimal('1.50'),
+        )
+
+        decrement_inventory_for_order(order, self.branch, self.business)
+
+        packaging_item.refresh_from_db()
+        self.ingredient.refresh_from_db()
+        self.assertEqual(packaging_item.stock_units, Decimal('1.000'))
+        self.assertEqual(self.ingredient.stock_units, Decimal('0.000'))
+
     def test_selected_option_recipe_is_included_in_stock_validation(self):
         self.ingredient.stock_units = Decimal('5.000')
         self.ingredient.save(update_fields=['stock_units', 'updated_at'])

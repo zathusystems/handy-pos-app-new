@@ -37,6 +37,7 @@ class TakeOrder(models.Model):
     order_number = models.IntegerField()  # Sequential number per branch
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
     order_type = models.CharField(max_length=20, choices=ORDER_TYPE_CHOICES, default='staff')
+    is_takeaway = models.BooleanField(default=False)
     
     # Customer info (optional)
     customer_name = models.CharField(max_length=255, blank=True, null=True)
@@ -97,6 +98,10 @@ class TakeOrderItem(models.Model):
         default=list,
         blank=True,
         help_text='Snapshot of selected meal options/sides, including names, prices, and stock recipes.',
+    )
+    is_takeaway_packaging = models.BooleanField(
+        default=False,
+        help_text='Marks this line as the configured takeaway packaging item.',
     )
     
     # Timestamps

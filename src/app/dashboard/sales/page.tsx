@@ -88,7 +88,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { logAuditAction } from '@/lib/audit';
 import { downloadTextFile } from '@/lib/file-download';
-import { calculateZReportSummary } from '@/lib/z-report-print';
+import { calculateZReportSummary, getOrderChargeBreakdown } from '@/lib/z-report-print';
 import SaleDetailModal from '@/app/dashboard/sessions/modals/sale-detail-modal';
 
 type RefundFormValues = {
@@ -691,6 +691,7 @@ export default function ReportsPage() {
 
         const rows = allOrders.map((order) => {
             const collection = getOrderCollectionAmounts(order);
+            const chargeBreakdown = getOrderChargeBreakdown(order as any);
 
             return {
                 order_number: order.orderNumber,
@@ -699,6 +700,8 @@ export default function ReportsPage() {
                 payment_method: order.paymentMethod,
                 subtotal: Number(order.subtotal ?? order.netAmount ?? order.net_amount ?? 0),
                 tax: Number(order.tax ?? order.vatAmount ?? order.vat_amount ?? 0),
+                levies: chargeBreakdown.levies,
+                other_charges: chargeBreakdown.otherCharges,
                 total: Number(order.total ?? order.grossAmount ?? order.gross_amount ?? 0),
                 amount_collected: collection.collected,
                 account_invoice_due: collection.accountDue,
@@ -982,6 +985,12 @@ export default function ReportsPage() {
                                     <TableBody>
                                         <TableRow><TableCell>Subtotal (Before Tax)</TableCell><TableCell className="text-right font-medium">{formatCurrency(data.totalSubtotal)}</TableCell></TableRow>
                                         <TableRow><TableCell>Tax Amount</TableCell><TableCell className="text-right font-medium text-green-600">+{formatCurrency(data.totalTax)}</TableCell></TableRow>
+                                        {data.totalLevies > 0 && (
+                                            <TableRow><TableCell>Levies</TableCell><TableCell className="text-right font-medium text-amber-700">+{formatCurrency(data.totalLevies)}</TableCell></TableRow>
+                                        )}
+                                        {data.totalOtherCharges > 0 && (
+                                            <TableRow><TableCell>Other Charges</TableCell><TableCell className="text-right font-medium text-amber-700">+{formatCurrency(data.totalOtherCharges)}</TableCell></TableRow>
+                                        )}
                                         <TableRow className="bg-muted/50 font-semibold"><TableCell>Sales Value</TableCell><TableCell className="text-right">{formatCurrency(data.totalRevenue)}</TableCell></TableRow>
                                         <TableRow><TableCell>Cost of Goods Sold (COGS)</TableCell><TableCell className="text-right font-medium">{`-${formatCurrency(data.totalCogs)}`}</TableCell></TableRow>
                                         <TableRow className="bg-muted/50 font-semibold"><TableCell>Gross Profit</TableCell><TableCell className="text-right">{formatCurrency(data.grossProfit)}</TableCell></TableRow>

@@ -410,6 +410,18 @@
             display: none;
         }
 
+        .item-options-preview {
+            display: block;
+            margin-top: 0.55rem;
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 700;
+            line-height: 1.35;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .item-footer {
             display: flex;
             align-items: center;
@@ -1093,6 +1105,32 @@
             resize: vertical;
         }
 
+        .checkbox-label {
+            display: flex !important;
+            align-items: center;
+            gap: 0.6rem;
+            margin-bottom: 0 !important;
+            cursor: pointer;
+        }
+
+        .checkbox-label input {
+            width: 1.1rem;
+            height: 1.1rem;
+            accent-color: var(--accent);
+        }
+
+        .checkbox-label strong {
+            margin-left: auto;
+            color: var(--text);
+        }
+
+        .field-help {
+            margin-top: 0.35rem;
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+
         .summary {
             border: 1px solid var(--line);
             border-radius: 12px;
@@ -1397,6 +1435,11 @@
                         <div class="item-body">
                             <span class="item-category">{{ category }}</span>
                             <h3 class="item-name">{{ item.display_name }}</h3>
+                            {% if item.option_preview %}
+                            <span class="item-options-preview" title="Options available: {{ item.option_preview|join:', ' }}">
+                                Options: {{ item.option_preview|join:', ' }}{% if item.option_preview_count > 3 %} +{{ item.option_preview_count|add:'-3' }} more{% endif %}
+                            </span>
+                            {% endif %}
                             <div class="item-footer">
                                 {% if menu_config.show_prices %}
                                 <span class="price">
@@ -1455,6 +1498,11 @@
                             <div class="item-body">
                                 <span class="item-category">{{ category }}</span>
                                 <h3 class="item-name">{{ item.display_name }}</h3>
+                                {% if item.option_preview %}
+                                <span class="item-options-preview" title="Options available: {{ item.option_preview|join:', ' }}">
+                                    Options: {{ item.option_preview|join:', ' }}{% if item.option_preview_count > 3 %} +{{ item.option_preview_count|add:'-3' }} more{% endif %}
+                                </span>
+                                {% endif %}
                                 <div class="item-footer">
                                     {% if menu_config.show_prices %}
                                     <span class="price">
@@ -1558,6 +1606,16 @@
                     <label for="tableNumber">Address or table number</label>
                     <input type="text" id="tableNumber" placeholder="Example: Table 4 or Area 18, house 12" required>
                 </div>
+                {% if takeaway_config.enabled %}
+                <div class="form-group takeaway-choice">
+                    <label class="checkbox-label" for="takeawayOrder">
+                        <input type="checkbox" id="takeawayOrder" onchange="setTakeaway(this.checked)">
+                        <span>Take away</span>
+                        <strong>{{ menu_config.currency }} {{ menu_config.takeaway_packaging_price|floatformat:2 }}</strong>
+                    </label>
+                    <p class="field-help">Includes {{ takeaway_config.packaging_name }} packaging.</p>
+                </div>
+                {% endif %}
                 <div class="form-group">
                     <label for="specialRequests">Special requests</label>
                     <textarea id="specialRequests" placeholder="Allergies, no onions, extra sauce..."></textarea>
@@ -1636,10 +1694,12 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     {{ menu_items_data|json_script:"menuItemsData" }}
+    {{ takeaway_config|json_script:"takeawayConfig" }}
 
     <script>
         const CURRENCY = '{{ menu_config.currency|escapejs }}';
         const ACCEPT_ORDERS = {{ menu_config.accept_orders|yesno:"true,false" }};
+        const TAKEAWAY_CONFIG = safeJsonParse(document.getElementById('takeawayConfig')?.textContent, {});
         const branchId = '{{ branch.id }}';
         const TRACKED_ORDERS_KEY = 'handypos-public-orders';
         const LEGACY_TRACKED_ORDERS_KEY = `handypos-public-orders:${branchId}`;
@@ -1649,6 +1709,7 @@
         let currentPreviewItem = null;
         let currentPreviewSaleMode = 'unit';
         let toastTimer = null;
+        let isTakeaway = false;
 
         const money = (value) => `${CURRENCY} ${Number(value || 0).toFixed(2)}`;
         const moneyWithCurrency = (value, currency) => `${currency || CURRENCY} ${Number(value || 0).toFixed(2)}`;
@@ -1959,6 +2020,7 @@
         }
 
         function getCartDisplayQuantity(item) {
+            if (item.is_takeaway_packaging) return 0;
             if (item.sale_mode === 'portion' && Number(item.portions_per_unit || 0) > 0) {
                 return Math.max(1, Math.round(Number(item.quantity || 0) * Number(item.portions_per_unit || 0)));
             }
@@ -2063,6 +2125,40 @@
 
         function optionsLabel(selectedOptions = []) {
             return selectedOptions.map((option) => option.name).filter(Boolean).join(', ');
+        }
+
+        function setTakeaway(enabled) {
+            const checkbox = document.getElementById('takeawayOrder');
+            const shouldEnable = Boolean(enabled);
+            if (shouldEnable && (!TAKEAWAY_CONFIG.enabled || !TAKEAWAY_CONFIG.packaging_item_id)) {
+                if (checkbox) checkbox.checked = false;
+                showToast('Takeaway packaging is not configured for this branch.');
+                isTakeaway = false;
+                return;
+            }
+
+            isTakeaway = shouldEnable;
+            const packageIndex = cart.findIndex((item) => item.is_takeaway_packaging);
+            if (isTakeaway && packageIndex === -1) {
+                cart.push({
+                    id: TAKEAWAY_CONFIG.packaging_item_id,
+                    inventory_item_id: TAKEAWAY_CONFIG.packaging_item_id,
+                    menu_id: '',
+                    name: TAKEAWAY_CONFIG.packaging_name || 'Takeaway packaging',
+                    quantity: 1,
+                    unitPrice: Number(TAKEAWAY_CONFIG.price || 0),
+                    selected_options: [],
+                    recipe: [],
+                    is_prepared_menu_item: false,
+                    is_takeaway_packaging: true,
+                    key: `takeaway:${TAKEAWAY_CONFIG.packaging_item_id}`,
+                    sale_mode: 'unit',
+                });
+            } else if (!isTakeaway && packageIndex !== -1) {
+                cart.splice(packageIndex, 1);
+            }
+            if (checkbox) checkbox.checked = isTakeaway;
+            updateCart();
         }
 
         function filterItems() {
@@ -2341,15 +2437,16 @@
                 <div class="cart-line">
                     <div>
                         <strong>${escapeHtml(item.name)}</strong>
+                        ${item.is_takeaway_packaging ? '<span class="line-options">Packaging for takeaway</span>' : ''}
                         ${item.sale_mode === 'portion' ? `<span class="line-options">${escapeHtml(getCartQuantityLabel(item))}</span>` : ''}
                         ${item.selected_options?.length ? `<span class="line-options">${escapeHtml(optionsLabel(item.selected_options))}</span>` : ''}
                         <span>${money(item.unitPrice * item.quantity)}</span>
                     </div>
-                    <div class="qty-controls">
+                    ${item.is_takeaway_packaging ? '' : `<div class="qty-controls">
                         <button type="button" class="qty-btn" onclick="changeQuantity('${item.key}', -1)">-</button>
                         <span class="qty">${escapeHtml(getCartQuantityLabel(item))}</span>
                         <button type="button" class="qty-btn" onclick="changeQuantity('${item.key}', 1)">+</button>
-                    </div>
+                    </div>`}
                 </div>
             `).join('');
         }
@@ -2362,6 +2459,12 @@
             if (item.quantity <= 0) {
                 const index = cart.findIndex((line) => line.key === itemKey);
                 cart.splice(index, 1);
+            }
+            if (!cart.some((line) => !line.is_takeaway_packaging)) {
+                cart.splice(0, cart.length);
+                isTakeaway = false;
+                const checkbox = document.getElementById('takeawayOrder');
+                if (checkbox) checkbox.checked = false;
             }
             updateCart();
         }
@@ -2403,7 +2506,8 @@
             const rows = cart.map((item) => `
                 <div class="summary-row">
                     <span>
-                        ${escapeHtml(item.name)} x${escapeHtml(getCartQuantityLabel(item))}
+                        ${escapeHtml(item.name)}${item.is_takeaway_packaging ? '' : ` x${escapeHtml(getCartQuantityLabel(item))}`}
+                        ${item.is_takeaway_packaging ? '<span class="line-options">Packaging for takeaway</span>' : ''}
                         ${item.selected_options?.length ? `<span class="line-options">${escapeHtml(optionsLabel(item.selected_options))}</span>` : ''}
                     </span>
                     <span>${money(item.unitPrice * item.quantity)}</span>
@@ -2459,6 +2563,7 @@
 
             const payload = {
                 branch_id: branchId,
+                is_takeaway: isTakeaway,
                 customer_name: customerName,
                 customer_phone: customerPhone,
                 table_number: tableNumber,
@@ -2472,6 +2577,7 @@
                     price: item.unitPrice,
                     recipe: Array.isArray(item.recipe) ? item.recipe : [],
                     selected_options: getSubmittedSelectedOptions(item),
+                    is_takeaway_packaging: Boolean(item.is_takeaway_packaging),
                 })),
             };
 
@@ -2490,6 +2596,9 @@
                 }
 
                 cart.splice(0, cart.length);
+                isTakeaway = false;
+                const takeawayCheckbox = document.getElementById('takeawayOrder');
+                if (takeawayCheckbox) takeawayCheckbox.checked = false;
                 updateCart();
                 upsertTrackedOrder(data);
                 closeOrderModal();

@@ -188,6 +188,7 @@ def _build_order_sync_payload(order):
         'customer': str(order.customer_id) if order.customer_id else None,
         'customer_id': str(order.customer_id) if order.customer_id else None,
         'order_number': order.order_number,
+        'is_takeaway': order.is_takeaway,
         'customer_name': order.customer_name,
         'customer_phone': order.customer_phone,
         'customer_tin': order.customer_tin,
@@ -1159,6 +1160,7 @@ def handle_create_order(order_id, data, business, branch_id, user):
             'order_type': data.get('orderType', 'sale'),
             'status': data.get('status', 'New'),
             'payment_method': payment_method,
+            'is_takeaway': bool(data.get('is_takeaway') or data.get('isTakeaway')),
             'pump_name': data.get('pump_name') or data.get('pumpName'),
             'customer_name': data.get('customer_name') or data.get('customerName') or getattr(customer_for_order, 'name', None),
             'customer_phone': data.get('customer_phone') or data.get('customerPhone') or getattr(customer_for_order, 'phone', None),
@@ -1385,6 +1387,7 @@ def handle_create_order(order_id, data, business, branch_id, user):
                     recipe=item_data.get('recipe') or [],
                     is_prepared_menu_item=is_prepared_menu_item,
                     selected_options=item_data.get('selected_options') or item_data.get('selectedOptions') or [],
+                    is_takeaway_packaging=bool(item_data.get('is_takeaway_packaging') or item_data.get('isTakeawayPackaging')),
                     # Per-item tax information (MRA compliance - Immutable snapshot)
                     tax_rate=tax_rate.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
                     tax_type=tax_type,
@@ -1887,6 +1890,7 @@ def decrement_inventory_for_order(order, branch, business):
 
         line_recipe_entries = order_item.recipe if isinstance(getattr(order_item, 'recipe', None), list) else []
         is_prepared_menu_item = bool(getattr(order_item, 'is_prepared_menu_item', False))
+        is_takeaway_packaging = bool(getattr(order_item, 'is_takeaway_packaging', False))
         sold_inventory_item = None if (is_prepared_menu_item and not sold_item_id) else resolve_inventory_item(sold_item_id, order_item.name)
 
         if not sold_inventory_item and not line_recipe_entries:
@@ -1909,6 +1913,9 @@ def decrement_inventory_for_order(order, branch, business):
             if line_recipe_entries
             else (sold_inventory_item.recipe if sold_inventory_item and isinstance(sold_inventory_item.recipe, list) else [])
         )
+        if is_takeaway_packaging:
+            recipe_entries = []
+
         if recipe_entries and (is_prepared_menu_item or not sold_inventory_item or sold_inventory_item.item_type == 'sellable'):
             print(f"[Sync Sessions] Item {order_item.name} has a recipe; decrementing recipe ingredients")
 
