@@ -39,6 +39,7 @@ import {
 import Image from 'next/image';
 import { useToast } from '@/hooks/use-toast';
 import { useCurrency } from '@/hooks/use-currency';
+import { formatQuantityWithUnit } from '@/lib/quantity-format';
 import { useSubscriptionFeatureAccess } from '@/hooks/use-subscription-feature-access';
 import { syncService } from '@/lib/services/sync-service';
 import { MenuTemplates } from '@/components/menu/menu-templates';
@@ -72,6 +73,15 @@ const getBranchIdCandidates = (branchId: string | null): string[] => {
   }
 
   return Array.from(candidates);
+};
+
+const formatPackagingStock = (item: InventoryItem): string => {
+  const stock = item.availableStockUnits
+    ?? item.available_stock_units
+    ?? item.stockUnits
+    ?? item.stock_units
+    ?? 0;
+  return formatQuantityWithUnit(stock, item.unitType || item.unit_type || 'unit');
 };
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'https://api.handypos.online/api').replace(/\/$/, '');
@@ -1626,6 +1636,7 @@ interface MenuConfig {
   acceptOrders: boolean;
   takeawayEnabled: boolean;
   takeawayPackagingItemId?: string;
+  takeawayPackagingItemName?: string;
   takeawayPackagingPrice: number;
 }
 
@@ -1650,8 +1661,36 @@ const DEFAULT_CONFIG: MenuConfig = {
   acceptOrders: true,
   takeawayEnabled: false,
   takeawayPackagingItemId: undefined,
+  takeawayPackagingItemName: undefined,
   takeawayPackagingPrice: 0,
 };
+
+const mapMenuConfigResponse = (configData: any, fallbackCurrency: string): MenuConfig => ({
+  displayName: configData.display_name || DEFAULT_CONFIG.displayName,
+  description: configData.description || DEFAULT_CONFIG.description,
+  tagline: configData.tagline || DEFAULT_CONFIG.tagline,
+  theme: configData.theme || DEFAULT_CONFIG.theme,
+  primaryColor: configData.primary_color || DEFAULT_CONFIG.primaryColor,
+  accentColor: configData.accent_color || DEFAULT_CONFIG.accentColor,
+  showPrices: configData.show_prices !== undefined ? configData.show_prices : DEFAULT_CONFIG.showPrices,
+  showCategories: configData.show_categories !== undefined ? configData.show_categories : DEFAULT_CONFIG.showCategories,
+  showImages: configData.show_images !== undefined ? configData.show_images : DEFAULT_CONFIG.showImages,
+  showBrandInfo: configData.show_brand_info !== undefined ? configData.show_brand_info : DEFAULT_CONFIG.showBrandInfo,
+  showContactInfo: configData.show_contact_info !== undefined ? configData.show_contact_info : DEFAULT_CONFIG.showContactInfo,
+  itemsPerRow: configData.items_per_row || DEFAULT_CONFIG.itemsPerRow,
+  currency: configData.currency || fallbackCurrency || DEFAULT_CONFIG.currency,
+  businessLogo: configData.business_logo || undefined,
+  businessBanner: configData.business_banner || undefined,
+  footerText: configData.footer_text || DEFAULT_CONFIG.footerText,
+  enableSearch: configData.enable_search !== undefined ? configData.enable_search : DEFAULT_CONFIG.enableSearch,
+  enableFilters: configData.enable_filters !== undefined ? configData.enable_filters : DEFAULT_CONFIG.enableFilters,
+  enableSorting: configData.enable_sorting !== undefined ? configData.enable_sorting : DEFAULT_CONFIG.enableSorting,
+  acceptOrders: configData.accept_orders !== undefined ? configData.accept_orders : DEFAULT_CONFIG.acceptOrders,
+  takeawayEnabled: configData.takeaway_enabled !== undefined ? configData.takeaway_enabled : DEFAULT_CONFIG.takeawayEnabled,
+  takeawayPackagingItemId: configData.takeaway_packaging_item ? String(configData.takeaway_packaging_item) : undefined,
+  takeawayPackagingItemName: configData.takeaway_packaging_item_name || undefined,
+  takeawayPackagingPrice: Number(configData.takeaway_packaging_price || 0),
+});
 
 const MENU_COLOR_PRESETS = [
   '#263B57',
@@ -1835,6 +1874,14 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
   const availablePackagingItems = (packagingInventoryItems || [])
     .filter((item) => Boolean(item.id && item.name))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const selectedPackagingItem = availablePackagingItems.find(
+    (item) => String(item.id) === String(editConfig.takeawayPackagingItemId || ''),
+  );
+  const selectedPackagingPrice = selectedPackagingItem
+    ? selectedPackagingItem.price
+    : editConfig.takeawayPackagingItemId
+      ? editConfig.takeawayPackagingPrice
+      : undefined;
 
   // Load business currency
   useEffect(() => {
@@ -1902,32 +1949,7 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
           return;
         }
         
-        // Map snake_case from backend to camelCase for frontend
-        const mappedConfig = {
-          displayName: configData.display_name || DEFAULT_CONFIG.displayName,
-          description: configData.description || DEFAULT_CONFIG.description,
-          tagline: configData.tagline || DEFAULT_CONFIG.tagline,
-          theme: configData.theme || DEFAULT_CONFIG.theme,
-          primaryColor: configData.primary_color || DEFAULT_CONFIG.primaryColor,
-          accentColor: configData.accent_color || DEFAULT_CONFIG.accentColor,
-          showPrices: configData.show_prices !== undefined ? configData.show_prices : DEFAULT_CONFIG.showPrices,
-          showCategories: configData.show_categories !== undefined ? configData.show_categories : DEFAULT_CONFIG.showCategories,
-          showImages: configData.show_images !== undefined ? configData.show_images : DEFAULT_CONFIG.showImages,
-          showBrandInfo: configData.show_brand_info !== undefined ? configData.show_brand_info : DEFAULT_CONFIG.showBrandInfo,
-          showContactInfo: configData.show_contact_info !== undefined ? configData.show_contact_info : DEFAULT_CONFIG.showContactInfo,
-          itemsPerRow: configData.items_per_row || DEFAULT_CONFIG.itemsPerRow,
-          currency: configData.currency || businessCurrency || DEFAULT_CONFIG.currency,
-          businessLogo: configData.business_logo || undefined,
-          businessBanner: configData.business_banner || undefined,
-          footerText: configData.footer_text || DEFAULT_CONFIG.footerText,
-          enableSearch: configData.enable_search !== undefined ? configData.enable_search : DEFAULT_CONFIG.enableSearch,
-          enableFilters: configData.enable_filters !== undefined ? configData.enable_filters : DEFAULT_CONFIG.enableFilters,
-          enableSorting: configData.enable_sorting !== undefined ? configData.enable_sorting : DEFAULT_CONFIG.enableSorting,
-          acceptOrders: configData.accept_orders !== undefined ? configData.accept_orders : DEFAULT_CONFIG.acceptOrders,
-          takeawayEnabled: configData.takeaway_enabled !== undefined ? configData.takeaway_enabled : DEFAULT_CONFIG.takeawayEnabled,
-          takeawayPackagingItemId: configData.takeaway_packaging_item ? String(configData.takeaway_packaging_item) : undefined,
-          takeawayPackagingPrice: Number(configData.takeaway_packaging_price || 0),
-        };
+        const mappedConfig = mapMenuConfigResponse(configData, businessCurrency);
         setConfig(mappedConfig);
         setEditConfig(mappedConfig);
       } catch (error) {
@@ -1955,25 +1977,88 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
   };
 
   const handleSaveConfig = async () => {
+    if (!activeBranchId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'No branch selected',
+      });
+      return;
+    }
+
+    const branchIdInt = getBackendBranchId(activeBranchId);
+    if (branchIdInt === null) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Invalid branch selected',
+      });
+      return;
+    }
+
+    if (editConfig.takeawayEnabled && !editConfig.takeawayPackagingItemId) {
+      toast({
+        variant: 'destructive',
+        title: 'Packaging item required',
+        description: 'Choose a packaging item from Inventory before enabling takeaway orders.',
+      });
+      return;
+    }
+
+    if (
+      editConfig.takeawayEnabled
+      && selectedPackagingItem
+      && (selectedPackagingItem.price === undefined || selectedPackagingItem.price === null)
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Packaging price required',
+        description: 'Set a selling price for this packaging item in Inventory before enabling takeaway orders.',
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
-      if (!activeBranchId) {
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: 'No branch selected',
-        });
-        return;
-      }
+      const backendData = {
+        display_name: editConfig.displayName,
+        description: editConfig.description,
+        tagline: editConfig.tagline,
+        theme: editConfig.theme,
+        primary_color: editConfig.primaryColor,
+        accent_color: editConfig.accentColor,
+        show_prices: editConfig.showPrices,
+        show_categories: editConfig.showCategories,
+        show_images: editConfig.showImages,
+        show_brand_info: editConfig.showBrandInfo,
+        show_contact_info: editConfig.showContactInfo,
+        items_per_row: editConfig.itemsPerRow,
+        business_logo: editConfig.businessLogo ?? null,
+        business_banner: editConfig.businessBanner ?? null,
+        footer_text: editConfig.footerText,
+        enable_search: editConfig.enableSearch,
+        enable_filters: editConfig.enableFilters,
+        enable_sorting: editConfig.enableSorting,
+        accept_orders: editConfig.acceptOrders,
+        takeaway_enabled: editConfig.takeawayEnabled,
+        takeaway_packaging_item: editConfig.takeawayPackagingItemId || null,
+      };
 
-      console.log('[MenuConfig] Saving configuration to backend:', config);
-      
-      const responseData = await authFetch.fetch<any>('/digital-menu/menu-config/', {
-        method: 'POST',
-        body: JSON.stringify(config),
-      });
+      console.log('[MenuConfig] Saving configuration to backend:', backendData);
+
+      const responseData = await authFetch.fetch<any>(
+        `/digital-menu/menu-config/by_branch/?branch_id=${branchIdInt}`,
+        {
+          method: 'POST',
+          body: JSON.stringify(backendData),
+        },
+      );
 
       console.log('[MenuConfig] Configuration saved to backend:', responseData);
+      const savedConfig = mapMenuConfigResponse(responseData, businessCurrency || editConfig.currency);
+      setConfig(savedConfig);
+      setEditConfig(savedConfig);
+      setIsEditModalOpen(false);
 
       toast({
         title: 'Success',
@@ -2151,6 +2236,25 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
               <Badge variant={config.acceptOrders ? 'default' : 'secondary'} className="text-xs">
                 {config.acceptOrders ? '✓ Enabled' : '✗ Disabled'}
               </Badge>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3">
+              <div className="min-w-0">
+                <p className="font-semibold">Takeaway orders</p>
+                <p className="text-xs text-muted-foreground">
+                  {config.takeawayEnabled
+                    ? `${config.takeawayPackagingItemName || 'Packaging item configured'} · ${config.currency} ${Number(config.takeawayPackagingPrice || 0).toFixed(2)} per order`
+                    : 'Off. Choose packaging stock and a price in the configuration dialog.'}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Badge variant={config.takeawayEnabled ? 'default' : 'secondary'} className="text-xs">
+                  {config.takeawayEnabled ? '✓ Enabled' : 'Disabled'}
+                </Badge>
+                <Button type="button" variant="outline" size="sm" onClick={handleOpenEditModal}>
+                  <Settings className="mr-2 h-3.5 w-3.5" />
+                  Configure
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -2454,30 +2558,26 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
                       <SelectItem value="none">Choose packaging stock</SelectItem>
                       {availablePackagingItems.map((item) => (
                         <SelectItem key={item.id} value={String(item.id)}>
-                          {item.name} ({item.itemType === 'ingredient' ? 'Ingredient' : 'Sellable'})
+                          {item.name} ({item.itemType === 'ingredient' ? 'Ingredient' : 'Sellable'}) · {item.price !== undefined && item.price !== null ? `${businessCurrency} ${Number(item.price).toFixed(2)}` : 'Price not set'} · {formatPackagingStock(item)} available
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Example: Lunch box, paper bag, or takeaway cup from Inventory.
+                    Choose a lunch box, paper bag, cup, or other packaging item from Inventory.
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-takeaway-packaging-price">Packaging price</Label>
-                  <Input
-                    id="edit-takeaway-packaging-price"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={editConfig.takeawayPackagingPrice}
-                    onChange={(event) => setEditConfig(prev => ({
-                      ...prev,
-                      takeawayPackagingPrice: Number(event.target.value || 0),
-                    }))}
-                  />
+                  <Label>Packaging price from Inventory</Label>
+                  <div className="flex min-h-10 items-center rounded-md border bg-muted/40 px-3 text-sm font-semibold">
+                    {selectedPackagingPrice !== undefined && selectedPackagingPrice !== null
+                      ? `${businessCurrency} ${Number(selectedPackagingPrice).toFixed(2)}`
+                      : editConfig.takeawayPackagingItemId
+                        ? 'Selling price not set'
+                        : 'Select a packaging item'}
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    Added once per takeaway order in {businessCurrency} and deducted when the sale is processed.
+                    Set the item&apos;s Selling Price in Inventory. It is charged once per takeaway order and the item is deducted from stock when the sale is processed.
                   </p>
                 </div>
               </div>
@@ -2490,87 +2590,7 @@ const MenuConfigTab = ({ activeBranchId }: { activeBranchId: string | null }) =>
               Cancel
             </Button>
             <Button
-              onClick={async () => {
-                setConfig(editConfig);
-                setIsEditModalOpen(false);
-                // Save after closing modal
-                setIsSaving(true);
-                try {
-                  if (!activeBranchId) return;
-                  
-                  // Get business ID from IndexedDB with fallbacks
-                  let businessId: string | null = null;
-                  
-                  // Try to get from IndexedDB first
-                  let business = await db.business.get('main-business');
-                  if (business) {
-                    businessId = business.id;
-                  } else {
-                    // Fallback: try to get all businesses and use the first one
-                    const allBusinesses = await db.business.toArray();
-                    if (allBusinesses.length > 0) {
-                      businessId = allBusinesses[0].id;
-                    }
-                  }
-                  
-                  if (!businessId) {
-                    throw new Error('Business not found in local database');
-                  }
-                  
-                  const branchIdInt = getBackendBranchId(activeBranchId);
-                  if (branchIdInt === null) {
-                    throw new Error('Invalid branch selected');
-                  }
-                  
-                  console.log('[MenuConfig] Business ID:', businessId);
-                  console.log('[MenuConfig] Branch ID (int):', branchIdInt);
-                  
-                  // Map camelCase to snake_case for backend
-                  const backendData = {
-                    business: businessId,
-                    branch: branchIdInt,
-                    display_name: editConfig.displayName,
-                    description: editConfig.description,
-                    tagline: editConfig.tagline,
-                    theme: editConfig.theme,
-                    primary_color: editConfig.primaryColor,
-                    accent_color: editConfig.accentColor,
-                    show_prices: editConfig.showPrices,
-                    show_categories: editConfig.showCategories,
-                    show_images: editConfig.showImages,
-                    show_brand_info: editConfig.showBrandInfo,
-                    show_contact_info: editConfig.showContactInfo,
-                    items_per_row: editConfig.itemsPerRow,
-                    currency: businessCurrency || editConfig.currency,
-                    business_logo: editConfig.businessLogo ?? null,
-                    business_banner: editConfig.businessBanner ?? null,
-                    footer_text: editConfig.footerText,
-                    enable_search: editConfig.enableSearch,
-                    enable_filters: editConfig.enableFilters,
-                    enable_sorting: editConfig.enableSorting,
-                    accept_orders: editConfig.acceptOrders,
-                    takeaway_enabled: editConfig.takeawayEnabled,
-                    takeaway_packaging_item: editConfig.takeawayPackagingItemId || null,
-                    takeaway_packaging_price: Number(editConfig.takeawayPackagingPrice || 0),
-                  };
-                  
-                  console.log('[MenuConfig] Sending data to backend:', backendData);
-                  
-                  const responseData = await authFetch.fetch<any>('/digital-menu/menu-config/', {
-                    method: 'POST',
-                    body: JSON.stringify(backendData),
-                  });
-                  
-                  console.log('[MenuConfig] Response data:', responseData);
-                  
-                  toast({ title: 'Success', description: 'Configuration saved successfully' });
-                } catch (error) {
-                  console.error('[MenuConfig] Error saving:', error);
-                  toast({ variant: 'destructive', title: 'Error', description: error instanceof Error ? error.message : 'Failed to save configuration' });
-                } finally {
-                  setIsSaving(false);
-                }
-              }}
+              onClick={handleSaveConfig}
               disabled={isSaving}
             >
               {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}

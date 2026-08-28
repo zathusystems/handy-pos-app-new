@@ -138,6 +138,26 @@ const getBackendBranchId = (branchId?: string | number | null): number | null =>
     return Number.isFinite(parsed) ? parsed : null;
 };
 
+const getConfigObject = (response: any): any => {
+    if (Array.isArray(response)) return response[0] || null;
+    return response || null;
+};
+
+const getTakeawayPackagingId = (configData: any): string => {
+    const configuredItem = configData?.takeaway_packaging_item ?? configData?.takeaway_packaging_item_id;
+    if (configuredItem && typeof configuredItem === 'object') {
+        return String(configuredItem.id ?? configuredItem.pk ?? '').trim();
+    }
+    return String(configuredItem ?? '').trim();
+};
+
+const isEnabledValue = (value: unknown): boolean => {
+    if (typeof value === 'string') {
+        return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+    }
+    return value === true || value === 1;
+};
+
 const firstNonEmpty = (...values: Array<unknown>): string | undefined => {
     for (const value of values) {
         const normalized = String(value ?? '').trim();
@@ -313,6 +333,7 @@ export function TakeOrderModal({
     const [backendMenuItems, setBackendMenuItems] = useState<MenuItemWithOptions[]>([]);
     const [takeawayConfig, setTakeawayConfig] = useState<TakeawayConfig | null>(null);
     const [takeawayPackagingItem, setTakeawayPackagingItem] = useState<InventoryItem | null>(null);
+    const [isLoadingTakeawayConfig, setIsLoadingTakeawayConfig] = useState(false);
     const [isTakeaway, setIsTakeaway] = useState(false);
     const [mobilePanel, setMobilePanel] = useState<'menu' | 'order'>('menu');
     const kitchenEnabled = isKitchenBusinessType(businessType);
@@ -396,38 +417,62 @@ export function TakeOrderModal({
             if (!isOpen || !branchId) {
                 setTakeawayConfig(null);
                 setTakeawayPackagingItem(null);
+                setIsLoadingTakeawayConfig(false);
                 return;
             }
 
             const backendBranchId = getBackendBranchId(branchId);
-            if (backendBranchId === null) return;
+            if (backendBranchId === null) {
+                setTakeawayConfig(null);
+                setTakeawayPackagingItem(null);
+                setIsLoadingTakeawayConfig(false);
+                return;
+            }
 
+            setTakeawayConfig(null);
+            setTakeawayPackagingItem(null);
+            setIsLoadingTakeawayConfig(true);
             try {
-                const response = await authFetch.fetch<any>(
-                    `/digital-menu/menu-config/public/?branch_id=${backendBranchId}`
-                );
-                const configData = Array.isArray(response) ? response[0] : response;
-                const packagingItemId = String(
-                    configData?.takeaway_packaging_item ?? configData?.takeaway_packaging_item_id ?? ''
-                ).trim();
-                const enabled = Boolean(configData?.takeaway_enabled && packagingItemId);
+                let response: any;
+                try {
+                    response = await authFetch.fetch<any>(
+                        `/digital-menu/menu-config/public/?branch_id=${backendBranchId}`,
+                        { queueOnFailure: false },
+                    );
+                } catch (publicError) {
+                    // Keep staff ordering usable if a deployment has not exposed the public config action yet.
+                    console.warn('[TakeOrderModal] Public takeaway config unavailable; trying authenticated config:', publicError);
+                    response = await authFetch.fetch<any>(
+                        `/digital-menu/menu-config/by_branch/?branch_id=${backendBranchId}`,
+                        { queueOnFailure: false },
+                    );
+                }
+
+                const configData = getConfigObject(response);
+                const packagingItemId = getTakeawayPackagingId(configData);
+                const enabled = isEnabledValue(configData?.takeaway_enabled) && Boolean(packagingItemId);
 
                 if (!enabled) {
                     if (!cancelled) {
                         setTakeawayConfig(null);
                         setTakeawayPackagingItem(null);
                         setIsTakeaway(false);
+                        setIsLoadingTakeawayConfig(false);
                     }
                     return;
                 }
 
+                const localItem = await db.inventory.get(packagingItemId);
+                const rawPrice = configData?.takeaway_packaging_price;
+                const configuredPrice = rawPrice === null || rawPrice === undefined || rawPrice === ''
+                    ? Number(localItem?.price ?? 0)
+                    : Number(rawPrice);
                 const config: TakeawayConfig = {
                     enabled,
                     packagingItemId,
-                    packagingName: String(configData?.takeaway_packaging_item_name || 'Takeaway packaging'),
-                    price: Number(configData?.takeaway_packaging_price || 0),
+                    packagingName: String(configData?.takeaway_packaging_item_name || localItem?.name || 'Takeaway packaging'),
+                    price: Number.isFinite(configuredPrice) ? configuredPrice : Number(localItem?.price ?? 0),
                 };
-                const localItem = await db.inventory.get(packagingItemId);
                 const packageItem: InventoryItem = localItem || {
                     id: packagingItemId,
                     name: config.packagingName,
@@ -441,6 +486,7 @@ export function TakeOrderModal({
                 if (!cancelled) {
                     setTakeawayConfig(config);
                     setTakeawayPackagingItem(packageItem);
+                    setIsLoadingTakeawayConfig(false);
                 }
             } catch (error) {
                 console.warn('[TakeOrderModal] Could not load takeaway configuration:', error);
@@ -448,6 +494,7 @@ export function TakeOrderModal({
                     setTakeawayConfig(null);
                     setTakeawayPackagingItem(null);
                     setIsTakeaway(false);
+                    setIsLoadingTakeawayConfig(false);
                 }
             }
         };
@@ -941,6 +988,29 @@ export function TakeOrderModal({
                 ? 'Add more items to this open order before processing one final sale.'
                 : "Select items from the menu to build the customer's order."}
           </DialogDescription>
+          {takeawayConfig ? (
+            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border bg-muted/40 p-3 text-left">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 accent-primary"
+                checked={isTakeaway}
+                onChange={(event) => handleTakeawayChange(event.target.checked)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-semibold">
+                  <span>Take away order</span>
+                  <span>{formatCurrency(takeawayConfig.price)}</span>
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Adds {takeawayConfig.packagingName} before you send the order. It is deducted from stock when the sale is processed.
+                </span>
+              </span>
+            </label>
+          ) : !isLoadingTakeawayConfig ? (
+            <p className="mt-3 rounded-lg border border-dashed bg-muted/20 p-3 text-left text-xs text-muted-foreground">
+              Takeaway is not configured for this branch. Choose a packaging item in Menu settings to enable it for staff orders.
+            </p>
+          ) : null}
         </DialogHeader>
         
         {/* Mobile uses one focused panel at a time; desktop keeps menu and cart side by side. */}
@@ -1081,25 +1151,6 @@ export function TakeOrderModal({
                 )}
                 </div>
                 <div className="p-4 border-t mt-auto space-y-4 bg-background">
-                    {takeawayConfig && (
-                        <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-muted/40 p-3">
-                            <input
-                                type="checkbox"
-                                className="mt-1 h-4 w-4 accent-primary"
-                                checked={isTakeaway}
-                                onChange={(event) => handleTakeawayChange(event.target.checked)}
-                            />
-                            <span className="min-w-0 flex-1">
-                                <span className="flex items-center justify-between gap-2 text-sm font-semibold">
-                                    <span>Take away</span>
-                                    <span>{formatCurrency(takeawayConfig.price)}</span>
-                                </span>
-                                <span className="mt-1 block text-xs text-muted-foreground">
-                                    Adds {takeawayConfig.packagingName} once and deducts it from stock when sold.
-                                </span>
-                            </span>
-                        </label>
-                    )}
                     <div className="flex justify-between font-bold text-xl">
                         <span>Subtotal</span>
                         <span>{formatCurrency(subtotal)}</span>

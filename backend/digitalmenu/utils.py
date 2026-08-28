@@ -1,6 +1,20 @@
 DEFAULT_MENU_CURRENCY = 'MWK'
 
 
+def get_takeaway_packaging_price(menu_config):
+    """Return the current selling price of the configured packaging item.
+
+    The MenuConfig price is retained as a legacy fallback for configurations
+    created before packaging prices were sourced from Inventory.
+    """
+    packaging_item = getattr(menu_config, 'takeaway_packaging_item', None)
+    inventory_price = getattr(packaging_item, 'price', None) if packaging_item else None
+    if inventory_price is not None:
+        return inventory_price
+
+    return getattr(menu_config, 'takeaway_packaging_price', None) or 0
+
+
 def get_business_currency(business, fallback=None):
     """Resolve the currency configured for the business."""
     currency = ''

@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 
 from digitalmenu.models import MenuConfig
+from digitalmenu.utils import get_takeaway_packaging_price
 
 
 def get_takeaway_config(branch):
@@ -53,7 +54,7 @@ def normalise_takeaway_items(items, branch, requested=False, package_already_add
         'menu_item_id': '',
         'name': packaging_item.name,
         'quantity': Decimal('1'),
-        'price': config.takeaway_packaging_price or Decimal('0'),
+        'price': get_takeaway_packaging_price(config),
         'notes': '',
         'recipe': [],
         'is_prepared_menu_item': False,

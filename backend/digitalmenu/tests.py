@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from business.models import Branch, Business
-from digitalmenu.models import Menu, MenuOption, MenuOptionGroup
+from digitalmenu.models import Menu, MenuConfig, MenuOption, MenuOptionGroup
 from inventory.models import InventoryItem
 from staff.models import Staff, StaffRole
 
@@ -212,6 +212,32 @@ class MenuOptionManagementTests(TestCase):
         self.assertEqual(inventory_item.price, Decimal('6500.00'))
         self.assertEqual(inventory_item.recipe[0]['name'], 'Beef')
         self.assertEqual(str(response.data['item_details']['id']), str(inventory_item.id))
+
+    def test_menu_config_uses_inventory_packaging_selling_price(self):
+        packaging_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Takeaway Cup',
+            category='Packaging',
+            item_type='ingredient',
+            stock_units=Decimal('25.000'),
+            price=Decimal('175.00'),
+        )
+        MenuConfig.objects.create(
+            business=self.business,
+            branch=self.branch,
+            takeaway_enabled=True,
+            takeaway_packaging_item=packaging_item,
+            takeaway_packaging_price=Decimal('999.00'),
+        )
+
+        response = self.client.get(
+            '/api/digital-menu/menu-config/public/',
+            {'branch_id': self.branch.id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Decimal(str(response.data['takeaway_packaging_price'])), Decimal('175.00'))
 
     def test_active_staff_can_create_menu_option_group(self):
         self.client.force_authenticate(user=self.staff_user)

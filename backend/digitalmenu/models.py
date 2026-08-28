@@ -206,6 +206,7 @@ class MenuConfig(models.Model):
         related_name='takeaway_menu_configs',
         help_text='Inventory item used for takeaway packaging when takeaway is selected.',
     )
+    # Legacy fallback for configurations created before pricing came from Inventory.
     takeaway_packaging_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
     # Metadata

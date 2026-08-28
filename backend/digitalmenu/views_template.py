@@ -2,7 +2,7 @@ from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_http_methods
 from business.models import Business, Branch
 from .models import Menu, MenuConfig
-from .utils import get_business_currency, sync_menu_config_currency
+from .utils import get_business_currency, get_takeaway_packaging_price, sync_menu_config_currency
 from inventory.models import InventoryItem
 
 
@@ -117,7 +117,7 @@ def public_menu_view(request, business_slug, branch_slug):
             'enabled': bool(menu_config.takeaway_enabled and menu_config.takeaway_packaging_item_id),
             'packaging_item_id': str(menu_config.takeaway_packaging_item_id or ''),
             'packaging_name': menu_config.takeaway_packaging_item.name if menu_config.takeaway_packaging_item else '',
-            'price': float(menu_config.takeaway_packaging_price or 0),
+            'price': float(get_takeaway_packaging_price(menu_config)),
         },
         'categories': categories,
         'menu_items': menu_items,

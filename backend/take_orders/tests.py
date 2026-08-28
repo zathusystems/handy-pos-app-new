@@ -62,6 +62,7 @@ class PublicOrderTrackingTests(TestCase):
             stock_units=Decimal('20.000'),
             reorder_level=Decimal('2.000'),
             cost=Decimal('0.50'),
+            price=Decimal('1.25'),
             value=Decimal('10.00'),
         )
         MenuConfig.objects.create(
@@ -184,8 +185,8 @@ class PublicOrderTrackingTests(TestCase):
         self.assertEqual(len(package_lines), 1)
         self.assertEqual(package_lines[0].inventory_item_id, str(packaging_item.id))
         self.assertEqual(package_lines[0].name, packaging_item.name)
-        self.assertEqual(package_lines[0].price, Decimal('1.50'))
-        self.assertEqual(response.json()['total'], 10.0)
+        self.assertEqual(package_lines[0].price, Decimal('1.25'))
+        self.assertEqual(response.json()['total'], 9.75)
 
     def test_self_service_takeaway_requires_branch_configuration(self):
         response = self.client.post(
@@ -388,6 +389,54 @@ class TakeOrderStatusManagementTests(TestCase):
             price=Decimal('8.50'),
         )
         return order
+
+    def test_authenticated_staff_order_can_include_takeaway_packaging(self):
+        packaging_item = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Takeaway Box',
+            category='Packaging',
+            item_type='ingredient',
+            stock_units=Decimal('20.000'),
+            reorder_level=Decimal('2.000'),
+            cost=Decimal('0.50'),
+            price=Decimal('1.25'),
+            value=Decimal('10.00'),
+        )
+        MenuConfig.objects.create(
+            business=self.business,
+            branch=self.branch,
+            takeaway_enabled=True,
+            takeaway_packaging_item=packaging_item,
+            takeaway_packaging_price=Decimal('9.99'),
+        )
+
+        response = self.client.post(
+            '/api/orders/take-orders/',
+            {
+                'branch_id': str(self.branch.id),
+                'is_takeaway': True,
+                'status': 'Ready',
+                'customer_name': 'Walk-in customer',
+                'items': [
+                    {
+                        'inventory_item_id': str(self.item.id),
+                        'name': self.item.name,
+                        'quantity': '1.000',
+                        'price': '8.50',
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        order = TakeOrder.objects.get(id=response.data['id'])
+        self.assertTrue(order.is_takeaway)
+        package_lines = list(order.items.filter(is_takeaway_packaging=True))
+        self.assertEqual(len(package_lines), 1)
+        self.assertEqual(package_lines[0].inventory_item_id, str(packaging_item.id))
+        self.assertEqual(package_lines[0].price, Decimal('1.25'))
 
     def test_cancelled_order_stays_accessible_and_can_be_reopened(self):
         order = self._create_order(status='Pending')

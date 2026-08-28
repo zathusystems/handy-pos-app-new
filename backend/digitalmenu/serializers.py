@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup
-from .utils import get_business_currency
+from .utils import get_business_currency, get_takeaway_packaging_price
 from inventory.serializers import InventoryItemSerializer
 
 
@@ -96,6 +96,7 @@ class MenuConfigSerializer(serializers.ModelSerializer):
     public_menu_url = serializers.SerializerMethodField(read_only=True)
     currency = serializers.SerializerMethodField(read_only=True)
     takeaway_packaging_item_name = serializers.SerializerMethodField()
+    takeaway_packaging_price = serializers.SerializerMethodField()
 
     class Meta:
         model = MenuConfig
@@ -145,17 +146,15 @@ class MenuConfigSerializer(serializers.ModelSerializer):
         item = getattr(obj, 'takeaway_packaging_item', None)
         return item.name if item else ''
 
+    def get_takeaway_packaging_price(self, obj):
+        return get_takeaway_packaging_price(obj)
+
     def validate(self, attrs):
         takeaway_enabled = attrs.get('takeaway_enabled', getattr(self.instance, 'takeaway_enabled', False))
         packaging_item = attrs.get(
             'takeaway_packaging_item',
             getattr(self.instance, 'takeaway_packaging_item', None),
         )
-        packaging_price = attrs.get(
-            'takeaway_packaging_price',
-            getattr(self.instance, 'takeaway_packaging_price', 0),
-        )
-
         if takeaway_enabled and not packaging_item:
             raise serializers.ValidationError({
                 'takeaway_packaging_item': 'Choose an inventory packaging item before enabling takeaway.'
@@ -172,10 +171,9 @@ class MenuConfigSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'takeaway_packaging_item': 'Packaging item must belong to this business.'
                 })
-
-        if packaging_price is not None and packaging_price < 0:
-            raise serializers.ValidationError({
-                'takeaway_packaging_price': 'Packaging price cannot be negative.'
-            })
+            if takeaway_enabled and packaging_item.price is None:
+                raise serializers.ValidationError({
+                    'takeaway_packaging_item': 'Set a selling price for this packaging item in Inventory before enabling takeaway.'
+                })
 
         return attrs
