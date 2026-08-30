@@ -72,7 +72,12 @@ class Menu(models.Model):
 
 
 class MenuOptionGroup(models.Model):
-    """A selectable group for a menu item, such as size, protein, or sides."""
+    """A selectable group for a menu item, such as size, protein, or sides.
+
+    The original ``menu`` relation is kept as the group's owner menu for
+    backwards compatibility.  Shared groups can also be assigned to other
+    menu items through ``MenuOptionGroupMenu``.
+    """
     GROUP_TYPE_CHOICES = [
         ('option', 'Option'),
         ('side', 'Side'),
@@ -88,6 +93,10 @@ class MenuOptionGroup(models.Model):
     max_select = models.PositiveIntegerField(default=1)
     sort_order = models.PositiveIntegerField(default=0)
     is_visible = models.BooleanField(default=True)
+    is_shared = models.BooleanField(
+        default=False,
+        help_text='Make this choice set available on multiple menu items.',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -97,10 +106,39 @@ class MenuOptionGroup(models.Model):
         indexes = [
             models.Index(fields=['menu', 'is_visible']),
             models.Index(fields=['group_type']),
+            models.Index(fields=['menu', 'is_shared']),
         ]
 
     def __str__(self):
         return f"{self.menu.display_name} - {self.name}"
+
+
+class MenuOptionGroupMenu(models.Model):
+    """Additional menu items that use a shared choice group."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    group = models.ForeignKey(
+        MenuOptionGroup,
+        on_delete=models.CASCADE,
+        related_name='menu_assignments',
+    )
+    menu = models.ForeignKey(
+        Menu,
+        on_delete=models.CASCADE,
+        related_name='option_group_assignments',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['group', 'menu'], name='unique_menu_option_group_menu'),
+        ]
+        indexes = [
+            models.Index(fields=['menu', 'group']),
+        ]
+
+    def __str__(self):
+        return f"{self.group.name} on {self.menu.display_name}"
 
 
 class MenuOption(models.Model):

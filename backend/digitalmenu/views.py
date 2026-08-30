@@ -3,8 +3,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from decimal import Decimal, InvalidOperation
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 
-from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup
+from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup, MenuOptionGroupMenu
 from .serializers import (
     MenuOptionGroupSerializer,
     MenuOptionSerializer,
@@ -465,33 +466,107 @@ class MenuViewSet(viewsets.ModelViewSet):
 
 
 class MenuOptionGroupViewSet(viewsets.ModelViewSet):
-    """Manage option/side groups for menu items."""
+    """Manage item-specific and reusable option/side groups."""
     serializer_class = MenuOptionGroupSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         queryset = MenuOptionGroup.objects.filter(
-            menu__business_id__in=get_accessible_business_ids(self.request.user)
+            Q(menu__business_id__in=get_accessible_business_ids(self.request.user))
+            | Q(menu_assignments__menu__business_id__in=get_accessible_business_ids(self.request.user))
         ).select_related(
             'menu',
             'menu__inventory_item',
-        ).prefetch_related('options')
+        ).prefetch_related('options', 'menu_assignments').distinct()
         menu_id = self.request.query_params.get('menu_id')
         if menu_id:
-            queryset = queryset.filter(menu_id=menu_id)
+            queryset = queryset.filter(
+                Q(menu_id=menu_id) | Q(menu_assignments__menu_id=menu_id)
+            ).distinct()
+        branch_id = self.request.query_params.get('branch_id')
+        if branch_id:
+            queryset = queryset.filter(menu__branch_id=branch_id)
+        if self.request.query_params.get('shared_only', '').lower() in {'1', 'true', 'yes'}:
+            queryset = queryset.filter(is_shared=True)
         return queryset
 
     def perform_create(self, serializer):
         menu = serializer.validated_data.get('menu')
         if not user_can_access_business(self.request.user, menu.business_id):
             raise serializers.ValidationError({'menu': 'Menu item not found for this business.'})
-        serializer.save()
+        group = serializer.save()
+        MenuOptionGroupMenu.objects.get_or_create(group=group, menu=menu)
 
     def perform_update(self, serializer):
         menu = serializer.validated_data.get('menu') or serializer.instance.menu
         if not user_can_access_business(self.request.user, menu.business_id):
             raise serializers.ValidationError({'menu': 'Menu item not found for this business.'})
-        serializer.save()
+        group = serializer.save()
+        MenuOptionGroupMenu.objects.get_or_create(group=group, menu=menu)
+
+    @action(detail=True, methods=['post'])
+    def attach(self, request, pk=None):
+        """Attach a shared choice set to another menu item in the same branch."""
+        group = self.get_object()
+        if not group.is_shared:
+            return Response(
+                {'error': 'Mark this choice set as reusable before attaching it.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        menu_id = request.data.get('menu') or request.data.get('menu_id')
+        if not menu_id:
+            return Response(
+                {'error': 'menu is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        menu = Menu.objects.filter(
+            id=menu_id,
+            business_id__in=get_accessible_business_ids(request.user),
+        ).first()
+        if not menu:
+            return Response(
+                {'error': 'Menu item not found for this business.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if group.menu_id and group.menu.branch_id != menu.branch_id:
+            return Response(
+                {'error': 'Choice sets can only be reused within the same branch.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        MenuOptionGroupMenu.objects.get_or_create(group=group, menu=menu)
+        group.refresh_from_db()
+        return Response(self.get_serializer(group).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def detach(self, request, pk=None):
+        """Remove a shared choice set from one menu item without deleting it."""
+        group = self.get_object()
+        menu_id = request.data.get('menu') or request.data.get('menu_id')
+        if not menu_id:
+            return Response(
+                {'error': 'menu is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if str(group.menu_id) == str(menu_id):
+            return Response(
+                {'error': 'The owner menu cannot be detached. Delete the choice set if it is no longer needed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        deleted, _ = MenuOptionGroupMenu.objects.filter(
+            group=group,
+            menu_id=menu_id,
+        ).delete()
+        if not deleted:
+            return Response(
+                {'error': 'This choice set is not attached to that menu item.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        group.refresh_from_db()
+        return Response(self.get_serializer(group).data, status=status.HTTP_200_OK)
 
 
 class MenuOptionViewSet(viewsets.ModelViewSet):

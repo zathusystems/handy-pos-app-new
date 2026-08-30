@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.conf import settings
+from django.db.models import Q
 from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup
 from .utils import get_business_currency, get_takeaway_packaging_price
 from inventory.serializers import InventoryItemSerializer
@@ -38,7 +39,10 @@ class MenuSerializer(serializers.ModelSerializer):
         return obj.display_name
 
     def get_option_groups(self, obj):
-        groups = obj.option_groups.filter(is_visible=True).prefetch_related('options')
+        groups = MenuOptionGroup.objects.filter(
+            Q(menu=obj) | Q(menu_assignments__menu=obj),
+            is_visible=True,
+        ).distinct().prefetch_related('options', 'menu_assignments')
         return MenuOptionGroupSerializer(groups, many=True).data
 
 
@@ -59,18 +63,38 @@ class MenuOptionSerializer(serializers.ModelSerializer):
 class MenuOptionGroupSerializer(serializers.ModelSerializer):
     options = MenuOptionSerializer(many=True, read_only=True)
     menu_item_name = serializers.SerializerMethodField()
+    attached_menu_ids = serializers.SerializerMethodField()
+    attached_menu_count = serializers.SerializerMethodField()
 
     class Meta:
         model = MenuOptionGroup
         fields = [
             'id', 'menu', 'menu_item_name', 'name', 'group_type', 'is_required',
-            'min_select', 'max_select', 'sort_order', 'is_visible', 'options',
+            'min_select', 'max_select', 'sort_order', 'is_visible', 'is_shared',
+            'attached_menu_ids', 'attached_menu_count', 'options',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['created_at', 'updated_at', 'menu_item_name', 'options']
+        read_only_fields = [
+            'created_at', 'updated_at', 'menu_item_name', 'options',
+            'attached_menu_ids', 'attached_menu_count',
+        ]
 
     def get_menu_item_name(self, obj):
-        return obj.menu.display_name
+        return obj.menu.display_name if obj.menu_id else ''
+
+    def get_attached_menu_ids(self, obj):
+        menu_ids = []
+        if obj.menu_id:
+            menu_ids.append(str(obj.menu_id))
+        menu_ids.extend(
+            str(assignment.menu_id)
+            for assignment in obj.menu_assignments.all()
+            if str(assignment.menu_id) not in menu_ids
+        )
+        return menu_ids
+
+    def get_attached_menu_count(self, obj):
+        return len(self.get_attached_menu_ids(obj))
 
     def validate(self, attrs):
         is_required = attrs.get('is_required', getattr(self.instance, 'is_required', False))

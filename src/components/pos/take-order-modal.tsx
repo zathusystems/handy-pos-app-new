@@ -988,29 +988,6 @@ export function TakeOrderModal({
                 ? 'Add more items to this open order before processing one final sale.'
                 : "Select items from the menu to build the customer's order."}
           </DialogDescription>
-          {takeawayConfig ? (
-            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border bg-muted/40 p-3 text-left">
-              <input
-                type="checkbox"
-                className="mt-1 h-4 w-4 accent-primary"
-                checked={isTakeaway}
-                onChange={(event) => handleTakeawayChange(event.target.checked)}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-semibold">
-                  <span>Take away order</span>
-                  <span>{formatCurrency(takeawayConfig.price)}</span>
-                </span>
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  Adds {takeawayConfig.packagingName} before you send the order. It is deducted from stock when the sale is processed.
-                </span>
-              </span>
-            </label>
-          ) : !isLoadingTakeawayConfig ? (
-            <p className="mt-3 rounded-lg border border-dashed bg-muted/20 p-3 text-left text-xs text-muted-foreground">
-              Takeaway is not configured for this branch. Choose a packaging item in Menu settings to enable it for staff orders.
-            </p>
-          ) : null}
         </DialogHeader>
         
         {/* Mobile uses one focused panel at a time; desktop keeps menu and cart side by side. */}
@@ -1026,7 +1003,7 @@ export function TakeOrderModal({
                     <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
                         {categories.map(category => (
                             <TabsContent key={category} value={category} className="mt-0">
-                                <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+                                <div className="grid min-w-0 grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
                                 {menuItems
                                     .filter(item => category === 'All' || item.category === category)
                                     .map(item => {
@@ -1035,7 +1012,7 @@ export function TakeOrderModal({
                                         return (
                                         <Card
                                             key={item.id}
-                                            className={`cursor-pointer overflow-hidden transition-shadow hover:shadow-md ${isSelected ? 'border-primary bg-primary/5 ring-2 ring-primary/30' : ''}`}
+                                            className={`min-w-0 cursor-pointer overflow-hidden transition-shadow hover:shadow-md ${isSelected ? 'border-primary bg-primary/5 ring-2 ring-primary/30' : ''}`}
                                             onClick={() => handleMenuItemClick(item)}
                                             aria-pressed={isSelected}
                                         >
@@ -1052,9 +1029,9 @@ export function TakeOrderModal({
                                                 )}
                                             </div>
                                             {/* Item Info */}
-                                            <CardContent className="p-2 text-center sm:p-3">
-                                                <p className="line-clamp-2 text-sm font-semibold sm:text-base">{item.name}</p>
-                                                <p className="text-sm text-muted-foreground">{formatCurrency(item.price || 0)}</p>
+                                            <CardContent className="min-w-0 p-2 text-center sm:p-3">
+                                                <p className="line-clamp-2 break-words text-sm font-semibold sm:text-base">{item.name}</p>
+                                                <p className="truncate text-sm text-muted-foreground">{formatCurrency(item.price || 0)}</p>
                                                 {canSellInPortions(item) && (
                                                     <p className="text-[11px] text-muted-foreground">
                                                         or {formatCurrency(Number(item.portionPrice || item.portion_price || 0) || Number(item.price || 0) / Number(item.portionsPerUnit || 1))}/{item.portionName || 'portion'}
@@ -1092,10 +1069,10 @@ export function TakeOrderModal({
                 <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 min-h-0">
                 {cart.length > 0 ? (
                     cart.map(item => (
-                        <div key={item.cartKey} className="rounded-lg border bg-background p-3 transition-shadow hover:shadow-sm">
-                            <div className="flex items-center justify-between gap-3">
-                                <div className="flex-1 min-w-0">
-                                    <p className="font-medium text-sm truncate">{item.name}</p>
+                        <div key={item.cartKey} className="min-w-0 rounded-lg border bg-background p-3 transition-shadow hover:shadow-sm">
+                            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0 flex-1">
+                                    <p className="break-words text-sm font-medium leading-snug">{item.name}</p>
                                     {item.isTakeawayPackaging && (
                                         <p className="text-xs font-medium text-primary">Packaging for takeaway</p>
                                     )}
@@ -1113,31 +1090,31 @@ export function TakeOrderModal({
                                         <p className="text-xs font-medium text-muted-foreground">{item.portionDisplay}</p>
                                     )}
                                 </div>
-                                {!item.isTakeawayPackaging && <div className="flex items-center gap-1 shrink-0">
-                                    <Button 
-                                        size="icon" 
-                                        variant="ghost" 
-                                        className="h-6 w-6 text-muted-foreground hover:text-foreground" 
-                                        onClick={() => handleUpdateQuantity(item.cartKey, -1)}
-                                    >
-                                        <Minus className="h-3 w-3"/>
-                                    </Button>
-                                    <span className="min-w-8 text-center text-sm font-semibold">
-                                        {item.isSoldInPortions && item.portionDisplay
-                                            ? Math.round(item.quantity * Number(item.portionsPerUnit || 1))
-                                            : item.quantity}
-                                    </span>
-                                    <Button 
-                                        size="icon" 
-                                        variant="ghost" 
-                                        className="h-6 w-6 text-muted-foreground hover:text-foreground" 
-                                        onClick={() => handleUpdateQuantity(item.cartKey, 1)}
-                                    >
-                                        <Plus className="h-3 w-3"/>
-                                    </Button>
-                                </div>}
-                                <div className="text-right shrink-0">
-                                    <p className="font-bold text-sm">{formatCurrency(item.price * item.quantity)}</p>
+                                <div className="flex shrink-0 items-center justify-between gap-3 sm:gap-2">
+                                    {!item.isTakeawayPackaging && <div className="flex items-center gap-1">
+                                        <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                            onClick={() => handleUpdateQuantity(item.cartKey, -1)}
+                                        >
+                                            <Minus className="h-3 w-3"/>
+                                        </Button>
+                                        <span className="min-w-8 text-center text-sm font-semibold">
+                                            {item.isSoldInPortions && item.portionDisplay
+                                                ? Math.round(item.quantity * Number(item.portionsPerUnit || 1))
+                                                : item.quantity}
+                                        </span>
+                                        <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                            onClick={() => handleUpdateQuantity(item.cartKey, 1)}
+                                        >
+                                            <Plus className="h-3 w-3"/>
+                                        </Button>
+                                    </div>}
+                                    <p className="shrink-0 text-right text-sm font-bold">{formatCurrency(item.price * item.quantity)}</p>
                                 </div>
                             </div>
                         </div>
@@ -1238,6 +1215,29 @@ export function TakeOrderModal({
                     className="mt-1"
                   />
                 </div>
+                {takeawayConfig ? (
+                  <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-muted/40 p-3 text-left">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-primary"
+                      checked={isTakeaway}
+                      onChange={(event) => handleTakeawayChange(event.target.checked)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-semibold">
+                        <span>Take away order</span>
+                        <span>{formatCurrency(takeawayConfig.price)}</span>
+                      </span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        Adds {takeawayConfig.packagingName}. The packaging is deducted from stock when the sale is processed.
+                      </span>
+                    </span>
+                  </label>
+                ) : !isLoadingTakeawayConfig ? (
+                  <p className="rounded-lg border border-dashed bg-muted/20 p-3 text-left text-xs text-muted-foreground">
+                    Takeaway is not configured for this branch. Choose a packaging item in Menu settings to enable it for staff orders.
+                  </p>
+                ) : null}
                 <div>
                   <label className="text-sm font-medium">Special Instructions</label>
                   <Textarea

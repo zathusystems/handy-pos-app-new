@@ -233,6 +233,9 @@ type MenuOptionGroup = {
   is_required: boolean;
   min_select: number;
   max_select: number;
+  is_shared?: boolean;
+  attached_menu_ids?: string[];
+  attached_menu_count?: number;
   options: MenuOption[];
 };
 
@@ -249,6 +252,7 @@ const MenuOptionsModal = ({
 }) => {
   const { toast } = useToast();
   const [groups, setGroups] = useState<MenuOptionGroup[]>([]);
+  const [sharedGroups, setSharedGroups] = useState<MenuOptionGroup[]>([]);
   const [stockItems, setStockItems] = useState<InventoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -256,6 +260,7 @@ const MenuOptionsModal = ({
   const [groupRequired, setGroupRequired] = useState(false);
   const [groupMinSelect, setGroupMinSelect] = useState('0');
   const [groupMaxSelect, setGroupMaxSelect] = useState('1');
+  const [groupShared, setGroupShared] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [optionGroupId, setOptionGroupId] = useState('');
   const [optionName, setOptionName] = useState('');
@@ -334,7 +339,30 @@ const MenuOptionsModal = ({
       const response = await authFetch.fetch<any>(`/digital-menu/menu-option-groups/?menu_id=${encodeURIComponent(entryId)}`);
       const rows = Array.isArray(response) ? response : response?.results || [];
       setGroups(rows);
-      if (!optionGroupId && rows[0]?.id) setOptionGroupId(rows[0].id);
+      setOptionGroupId((currentGroupId) => (
+        rows.some((group: MenuOptionGroup) => group.id === currentGroupId)
+          ? currentGroupId
+          : (rows[0]?.id || '')
+      ));
+
+      try {
+        const branchIdInt = getBackendBranchId(activeBranchId);
+        if (branchIdInt !== null) {
+          const sharedResponse = await authFetch.fetch<any>(
+            `/digital-menu/menu-option-groups/?branch_id=${branchIdInt}&shared_only=true`,
+          );
+          const sharedRows = Array.isArray(sharedResponse)
+            ? sharedResponse
+            : sharedResponse?.results || [];
+          const currentGroupIds = new Set(rows.map((group: MenuOptionGroup) => group.id));
+          setSharedGroups(sharedRows.filter((group: MenuOptionGroup) => !currentGroupIds.has(group.id)));
+        } else {
+          setSharedGroups([]);
+        }
+      } catch (error) {
+        console.error('[Menu] Failed to load reusable choice sets:', error);
+        setSharedGroups([]);
+      }
     } catch (error) {
       console.error('[Menu] Failed to load menu options:', error);
       toast({
@@ -370,6 +398,7 @@ const MenuOptionsModal = ({
     setGroupRequired(false);
     setGroupMinSelect('0');
     setGroupMaxSelect('1');
+    setGroupShared(false);
   };
 
   const resetOptionForm = () => {
@@ -410,6 +439,7 @@ const MenuOptionsModal = ({
     setGroupRequired(Boolean(group.is_required));
     setGroupMinSelect(String(group.min_select ?? 0));
     setGroupMaxSelect(String(group.max_select ?? 1));
+    setGroupShared(Boolean(group.is_shared));
   };
 
   const loadOptionForEdit = (option: MenuOption) => {
@@ -467,6 +497,7 @@ const MenuOptionsModal = ({
           is_required: groupRequired,
           min_select: groupRequired ? Math.max(1, minSelect) : minSelect,
           max_select: maxSelect,
+          is_shared: groupShared,
         }),
       });
       setResolvedMenuEntryId(entryId);
@@ -479,6 +510,53 @@ const MenuOptionsModal = ({
       toast({
         title: editingGroupId ? 'Could not update choice set' : 'Could not add choice set',
         description: error instanceof Error ? error.message : 'Please try again after syncing your menu.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const attachSharedGroup = async (group: MenuOptionGroup) => {
+    let entryId = menuEntryId;
+    try {
+      entryId = entryId || await resolveMenuEntryId();
+    } catch (error) {
+      console.error('[Menu] Failed to resolve menu item before attaching choice set:', error);
+    }
+    if (!entryId) {
+      toast({ title: 'Save this item to the menu first', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      await authFetch.fetch(`/digital-menu/menu-option-groups/${group.id}/attach/`, {
+        method: 'POST',
+        body: JSON.stringify({ menu: entryId }),
+      });
+      await loadOptions();
+      toast({ title: `${group.name} added to this menu item` });
+    } catch (error) {
+      console.error('[Menu] Failed to attach reusable choice set:', error);
+      toast({
+        title: 'Could not add choice set',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const detachSharedGroup = async (group: MenuOptionGroup) => {
+    try {
+      await authFetch.fetch(`/digital-menu/menu-option-groups/${group.id}/detach/`, {
+        method: 'POST',
+        body: JSON.stringify({ menu: menuEntryId }),
+      });
+      await loadOptions();
+      toast({ title: `${group.name} removed from this menu item` });
+    } catch (error) {
+      console.error('[Menu] Failed to remove reusable choice set:', error);
+      toast({
+        title: 'Could not remove choice set',
+        description: error instanceof Error ? error.message : 'Please try again.',
         variant: 'destructive',
       });
     }
@@ -577,10 +655,43 @@ const MenuOptionsModal = ({
               This item is not linked to a saved menu record yet. Sync the menu first, then come back to add choices.
             </div>
           )}
+          {canManageOptions && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Reuse a choice set</CardTitle>
+                <CardDescription>
+                  Add an existing shared set, such as Extras or Sauces, to this item. Choices and stock links stay managed in one place.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-2">
+                {sharedGroups.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                    No shared choice sets are available for this branch yet. Mark a set below as reusable first.
+                  </p>
+                ) : (
+                  sharedGroups.map((group) => (
+                    <div key={group.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="font-medium">{group.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {getGroupTypeLabel(group.group_type)} / {group.options.length} choices
+                          {group.attached_menu_count ? ` / used on ${group.attached_menu_count} items` : ''}
+                        </p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => attachSharedGroup(group)}>
+                        <PlusCircle className="mr-2 h-4 w-4" />
+                        Add to this item
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">1. Choice set</CardTitle>
-              <CardDescription>Example: Choose a side, Pick a size, Add extras.</CardDescription>
+              <CardDescription>Example: Choose a side, Pick a size, or Add extras. Turn on reuse when this set should be available on other menu items.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3">
               <div className="grid gap-1.5">
@@ -612,6 +723,13 @@ const MenuOptionsModal = ({
                   <Input value={groupMaxSelect} onChange={(e) => setGroupMaxSelect(e.target.value)} type="number" min="1" step="1" />
                 </div>
                 </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium">Reusable on other menu items</p>
+                  <p className="text-xs text-muted-foreground">Use this for shared extras, sauces, sides, or other choices. Changes apply everywhere it is attached.</p>
+                </div>
+                <Switch checked={groupShared} onCheckedChange={setGroupShared} />
               </div>
               <div className="flex justify-end gap-2">
                 {editingGroupId && (
@@ -758,14 +876,26 @@ const MenuOptionsModal = ({
                       {getGroupTypeLabel(group.group_type)} / {group.is_required ? 'required' : 'optional'} / choose {group.min_select}-{group.max_select}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline">{group.options.length} options</Badge>
-                    <Button variant="ghost" size="icon" onClick={() => loadGroupForEdit(group)} aria-label={`Edit ${group.name}`}>
-                      <Pencil className="h-4 w-4" />
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">{group.options.length} options</Badge>
+                  {group.is_shared && (
+                    <Badge variant="secondary">
+                      Shared{group.attached_menu_count && group.attached_menu_count > 1 ? ` / ${group.attached_menu_count} items` : ''}
+                    </Badge>
+                  )}
+                  <Button variant="ghost" size="icon" onClick={() => loadGroupForEdit(group)} aria-label={`Edit ${group.name}`}>
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {group.is_shared && String(group.menu) !== menuEntryId && (
+                    <Button variant="ghost" size="icon" onClick={() => detachSharedGroup(group)} aria-label={`Remove ${group.name} from this item`}>
+                      <X className="h-4 w-4" />
                     </Button>
+                  )}
+                  {(!group.is_shared || String(group.menu) === menuEntryId) && (
                     <Button variant="ghost" size="icon" onClick={() => deleteGroup(group)} aria-label={`Delete ${group.name}`}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
+                  )}
                   </div>
                 </div>
                 <div className="mt-3 grid gap-2">

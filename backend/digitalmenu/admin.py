@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup
+from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup, MenuOptionGroupMenu
 
 
 @admin.register(Menu)
@@ -61,8 +61,8 @@ class MenuConfigAdmin(admin.ModelAdmin):
 
 @admin.register(MenuOptionGroup)
 class MenuOptionGroupAdmin(admin.ModelAdmin):
-    list_display = ('name', 'menu', 'group_type', 'is_required', 'min_select', 'max_select', 'is_visible')
-    list_filter = ('group_type', 'is_required', 'is_visible')
+    list_display = ('name', 'menu', 'group_type', 'is_shared', 'is_required', 'min_select', 'max_select', 'is_visible')
+    list_filter = ('group_type', 'is_shared', 'is_required', 'is_visible')
     search_fields = ('name', 'menu__inventory_item__name', 'menu__business__name')
     readonly_fields = ('id', 'created_at', 'updated_at')
 
@@ -73,3 +73,11 @@ class MenuOptionAdmin(admin.ModelAdmin):
     list_filter = ('price_mode', 'is_default', 'is_visible')
     search_fields = ('name', 'group__name', 'group__menu__inventory_item__name')
     readonly_fields = ('id', 'created_at', 'updated_at')
+
+
+@admin.register(MenuOptionGroupMenu)
+class MenuOptionGroupMenuAdmin(admin.ModelAdmin):
+    list_display = ('group', 'menu', 'created_at')
+    list_filter = ('group__is_shared', 'menu__branch')
+    search_fields = ('group__name', 'menu__inventory_item__name', 'menu__branch__name')
+    readonly_fields = ('id', 'created_at')

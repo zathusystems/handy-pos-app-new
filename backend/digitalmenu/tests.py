@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from business.models import Branch, Business
-from digitalmenu.models import Menu, MenuConfig, MenuOption, MenuOptionGroup
+from digitalmenu.models import Menu, MenuConfig, MenuOption, MenuOptionGroup, MenuOptionGroupMenu
 from inventory.models import InventoryItem
 from staff.models import Staff, StaffRole
 
@@ -298,3 +298,78 @@ class MenuOptionManagementTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn('min_select', response.data)
+
+    def test_shared_choice_set_can_be_reused_and_detached(self):
+        second_menu = Menu.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Chicken Burger',
+            category='Meals',
+            price=Decimal('5000.00'),
+            is_prepared_item=True,
+        )
+        self.client.force_authenticate(user=self.staff_user)
+
+        create_response = self.client.post(
+            '/api/digital-menu/menu-option-groups/',
+            {
+                'menu': str(self.menu.id),
+                'name': 'Extras',
+                'group_type': 'addon',
+                'is_shared': True,
+                'min_select': 0,
+                'max_select': 3,
+            },
+            format='json',
+        )
+
+        self.assertEqual(create_response.status_code, 201, create_response.data)
+        group = MenuOptionGroup.objects.get(id=create_response.data['id'])
+        self.assertTrue(group.is_shared)
+        self.assertTrue(
+            MenuOptionGroupMenu.objects.filter(group=group, menu=self.menu).exists()
+        )
+
+        attach_response = self.client.post(
+            f'/api/digital-menu/menu-option-groups/{group.id}/attach/',
+            {'menu': str(second_menu.id)},
+            format='json',
+        )
+
+        self.assertEqual(attach_response.status_code, 200, attach_response.data)
+        self.assertEqual(attach_response.data['attached_menu_count'], 2)
+        self.assertTrue(
+            MenuOptionGroupMenu.objects.filter(group=group, menu=second_menu).exists()
+        )
+
+        second_menu_response = self.client.get(
+            '/api/digital-menu/menu-option-groups/',
+            {'menu_id': str(second_menu.id)},
+        )
+        self.assertEqual(second_menu_response.status_code, 200, second_menu_response.data)
+        second_menu_groups = (
+            second_menu_response.data
+            if isinstance(second_menu_response.data, list)
+            else second_menu_response.data['results']
+        )
+        self.assertEqual(len(second_menu_groups), 1)
+        self.assertEqual(second_menu_groups[0]['name'], 'Extras')
+
+        menu_response = self.client.get(
+            '/api/digital-menu/menu/by_branch/',
+            {'branch_id': self.branch.id},
+        )
+        self.assertEqual(menu_response.status_code, 200, menu_response.data)
+        menu_rows = menu_response.data if isinstance(menu_response.data, list) else menu_response.data['results']
+        second_menu_row = next(row for row in menu_rows if str(row['id']) == str(second_menu.id))
+        self.assertEqual([group['name'] for group in second_menu_row['option_groups']], ['Extras'])
+
+        detach_response = self.client.post(
+            f'/api/digital-menu/menu-option-groups/{group.id}/detach/',
+            {'menu': str(second_menu.id)},
+            format='json',
+        )
+        self.assertEqual(detach_response.status_code, 200, detach_response.data)
+        self.assertFalse(
+            MenuOptionGroupMenu.objects.filter(group=group, menu=second_menu).exists()
+        )

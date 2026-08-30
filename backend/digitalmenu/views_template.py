@@ -1,7 +1,8 @@
 from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_http_methods
+from django.db.models import Q
 from business.models import Business, Branch
-from .models import Menu, MenuConfig
+from .models import Menu, MenuConfig, MenuOptionGroup
 from .utils import get_business_currency, get_takeaway_packaging_price, sync_menu_config_currency
 from inventory.models import InventoryItem
 
@@ -31,16 +32,32 @@ def public_menu_view(request, business_slug, branch_slug):
         sync_menu_config_currency(menu_config)
     
     # Get menu items
-    menu_items = Menu.objects.filter(
+    menu_items = list(Menu.objects.filter(
         business=business,
         branch=branch,
         is_visible=True
-    ).select_related('inventory_item').prefetch_related('option_groups__options')
+    ).select_related('inventory_item').prefetch_related('option_groups__options__linked_inventory_item'))
+
+    # Load item-specific and shared choice sets together. Shared sets are
+    # stored once and assigned to any number of menu items in this branch.
+    option_groups = MenuOptionGroup.objects.filter(
+        Q(menu__in=menu_items) | Q(menu_assignments__menu__in=menu_items),
+        is_visible=True,
+    ).distinct().prefetch_related('options__linked_inventory_item', 'menu_assignments')
+    groups_by_menu = {menu_item.id: [] for menu_item in menu_items}
+    for group in option_groups:
+        attached_menu_ids = {group.menu_id}
+        attached_menu_ids.update(
+            assignment.menu_id for assignment in group.menu_assignments.all()
+        )
+        for menu_item_id in attached_menu_ids:
+            if menu_item_id in groups_by_menu:
+                groups_by_menu[menu_item_id].append(group)
 
     menu_items_data = []
     for menu_item in menu_items:
         option_groups = []
-        for group in menu_item.option_groups.filter(is_visible=True):
+        for group in groups_by_menu.get(menu_item.id, []):
             options = []
             for option in group.options.filter(is_visible=True):
                 options.append({

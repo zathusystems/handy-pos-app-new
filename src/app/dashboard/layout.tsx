@@ -274,6 +274,7 @@ const navItems = navSections.flatMap((section) => section.items);
 
 const settingsNav = [
   { href: '/dashboard/settings', icon: Settings, label: 'Settings', permission: 'manage_settings' as Permission },
+  { href: '/dashboard/settings/eis', icon: ShieldCheck, label: 'EIS Integration', permission: 'manage_settings' as Permission },
   { href: '/dashboard/settings/branches', icon: Building, label: 'Branches', permission: 'manage_settings' as Permission },
   { href: '/dashboard/audit', icon: UserCheck, label: 'Audit Log', permission: 'view_audit_log' as Permission },
 ];
