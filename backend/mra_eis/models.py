@@ -65,6 +65,16 @@ class Terminal(models.Model):
         unique=True,
         help_text="Terminal ID from MRA"
     )
+    mra_taxpayer_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Numeric taxpayer ID returned by MRA during terminal activation"
+    )
+    terminal_position = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Terminal position returned by MRA during terminal activation"
+    )
     mra_api_key = models.CharField(
         max_length=500,
         help_text="API key for MRA communication (should be encrypted)"
@@ -103,10 +113,10 @@ class Terminal(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['business', 'branch']),
+            models.Index(fields=['business', 'branch', 'device_serial']),
             models.Index(fields=['status']),
             models.Index(fields=['mra_terminal_id']),
         ]
-        unique_together = ('business', 'branch')
 
     def __str__(self):
         return f"Terminal {self.terminal_id} - {self.branch.name}"
@@ -208,10 +218,14 @@ class MRAConfiguration(models.Model):
     Fetched periodically from MRA and stored locally.
     """
     CONFIG_TYPES = [
+        ('global_configuration', 'MRA Global Configuration'),
+        ('terminal_configuration', 'MRA Terminal Configuration'),
+        ('taxpayer_configuration', 'MRA Taxpayer Configuration'),
         ('tax_rules', 'Tax Rules'),
         ('receipt_format', 'Receipt Format'),
         ('product_codes', 'Product Codes'),
         ('system_settings', 'System Settings'),
+        ('terminal_site_products', 'MRA Terminal Site Products'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

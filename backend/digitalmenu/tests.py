@@ -373,3 +373,140 @@ class MenuOptionManagementTests(TestCase):
         self.assertFalse(
             MenuOptionGroupMenu.objects.filter(group=group, menu=second_menu).exists()
         )
+
+    def test_shared_choice_can_be_customized_or_removed_for_one_menu_item(self):
+        second_menu = Menu.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Beef Burger',
+            category='Meals',
+            price=Decimal('5000.00'),
+            is_prepared_item=True,
+        )
+        group = MenuOptionGroup.objects.create(
+            menu=self.menu,
+            name='Sides',
+            group_type='side',
+            is_shared=True,
+            max_select=1,
+        )
+        option = MenuOption.objects.create(
+            group=group,
+            name='Chips',
+            price_delta=Decimal('500.00'),
+        )
+        MenuOptionGroupMenu.objects.get_or_create(group=group, menu=self.menu)
+        MenuOptionGroupMenu.objects.create(group=group, menu=second_menu)
+        self.client.force_authenticate(user=self.staff_user)
+
+        customize_response = self.client.post(
+            f'/api/digital-menu/menu-options/{option.id}/customize-for-item/',
+            {
+                'menu': str(second_menu.id),
+                'name': 'Sweet potato fries',
+                'price_delta': '750.00',
+            },
+            format='json',
+        )
+
+        self.assertEqual(customize_response.status_code, 200, customize_response.data)
+        option.refresh_from_db()
+        self.assertEqual(option.name, 'Chips')
+        self.assertEqual(option.price_delta, Decimal('500.00'))
+        assignment = MenuOptionGroupMenu.objects.get(group=group, menu=second_menu)
+        self.assertEqual(assignment.option_overrides[str(option.id)]['name'], 'Sweet potato fries')
+
+        second_response = self.client.get(
+            '/api/digital-menu/menu-option-groups/',
+            {'menu_id': str(second_menu.id)},
+        )
+        second_rows = second_response.data if isinstance(second_response.data, list) else second_response.data['results']
+        self.assertEqual(second_rows[0]['options'][0]['name'], 'Sweet potato fries')
+        self.assertTrue(second_rows[0]['options'][0]['is_overridden'])
+
+        owner_response = self.client.get(
+            '/api/digital-menu/menu-option-groups/',
+            {'menu_id': str(self.menu.id)},
+        )
+        owner_rows = owner_response.data if isinstance(owner_response.data, list) else owner_response.data['results']
+        self.assertEqual(owner_rows[0]['options'][0]['name'], 'Chips')
+        self.assertFalse(owner_rows[0]['options'][0]['is_overridden'])
+
+        source_update_response = self.client.patch(
+            f'/api/digital-menu/menu-options/{option.id}/',
+            {'name': 'Potato wedges'},
+            format='json',
+        )
+        self.assertEqual(source_update_response.status_code, 200, source_update_response.data)
+        owner_response = self.client.get(
+            '/api/digital-menu/menu-option-groups/',
+            {'menu_id': str(self.menu.id)},
+        )
+        owner_rows = owner_response.data if isinstance(owner_response.data, list) else owner_response.data['results']
+        self.assertEqual(owner_rows[0]['options'][0]['name'], 'Potato wedges')
+        second_response = self.client.get(
+            '/api/digital-menu/menu-option-groups/',
+            {'menu_id': str(second_menu.id)},
+        )
+        second_rows = second_response.data if isinstance(second_response.data, list) else second_response.data['results']
+        self.assertEqual(second_rows[0]['options'][0]['name'], 'Sweet potato fries')
+
+        remove_response = self.client.post(
+            f'/api/digital-menu/menu-options/{option.id}/remove-from-item/',
+            {'menu': str(second_menu.id)},
+            format='json',
+        )
+        self.assertEqual(remove_response.status_code, 200, remove_response.data)
+        second_response = self.client.get(
+            '/api/digital-menu/menu-option-groups/',
+            {'menu_id': str(second_menu.id)},
+        )
+        second_rows = second_response.data if isinstance(second_response.data, list) else second_response.data['results']
+        self.assertEqual(second_rows[0]['options'], [])
+        self.assertEqual(second_rows[0]['removed_options'][0]['name'], 'Sweet potato fries')
+
+        restore_response = self.client.post(
+            f'/api/digital-menu/menu-options/{option.id}/restore-for-item/',
+            {'menu': str(second_menu.id)},
+            format='json',
+        )
+        self.assertEqual(restore_response.status_code, 200, restore_response.data)
+        second_response = self.client.get(
+            '/api/digital-menu/menu-option-groups/',
+            {'menu_id': str(second_menu.id)},
+        )
+        second_rows = second_response.data if isinstance(second_response.data, list) else second_response.data['results']
+        self.assertEqual(second_rows[0]['options'][0]['name'], 'Potato wedges')
+
+    def test_deleting_a_shared_source_requires_global_confirmation(self):
+        second_menu = Menu.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Second menu item',
+            category='Meals',
+            price=Decimal('5000.00'),
+            is_prepared_item=True,
+        )
+        group = MenuOptionGroup.objects.create(
+            menu=self.menu,
+            name='Extras',
+            group_type='addon',
+            is_shared=True,
+        )
+        option = MenuOption.objects.create(group=group, name='Sauce')
+        MenuOptionGroupMenu.objects.get_or_create(group=group, menu=self.menu)
+        MenuOptionGroupMenu.objects.create(group=group, menu=second_menu)
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.delete(f'/api/digital-menu/menu-options/{option.id}/')
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertTrue(response.data['requires_confirmation'])
+        self.assertTrue(MenuOption.objects.filter(id=option.id).exists())
+
+        response = self.client.delete(
+            f'/api/digital-menu/menu-options/{option.id}/?confirm_global=true',
+        )
+
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertFalse(MenuOption.objects.filter(id=option.id).exists())

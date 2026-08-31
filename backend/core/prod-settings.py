@@ -557,10 +557,12 @@ MRA_EIS_BASE_URL = os.getenv(
     'https://eis-api.mra.mw' if MRA_EIS_IS_LIVE else 'https://dev-eis-api.mra.mw',
 ).rstrip('/')
 MRA_EIS_TIMEOUT_SECONDS = int(os.getenv('MRA_EIS_TIMEOUT_SECONDS', '30'))
+MRA_EIS_VERIFY_SSL = os.getenv('MRA_EIS_VERIFY_SSL', 'True').lower() == 'true'
 
 # Access credentials used by MRA gateway (if enabled)
 MRA_EIS_ACCESS_KEY = os.getenv('MRA_EIS_ACCESS_KEY', '')
 MRA_EIS_SECRET_KEY = os.getenv('MRA_EIS_SECRET_KEY', '')
+MRA_EIS_PRODUCT_ID = os.getenv('MRA_EIS_PRODUCT_ID', 'HandyPOS').strip() or 'HandyPOS'
 
 # Safety switches:
 # - DRY_RUN=True: build payloads and mark records ready, but never submit to MRA

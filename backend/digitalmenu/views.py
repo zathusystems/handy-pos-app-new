@@ -12,7 +12,13 @@ from .serializers import (
     MenuSerializer,
     MenuConfigSerializer,
 )
-from .utils import get_business_currency, sync_menu_config_currency
+from .utils import (
+    OPTION_OVERRIDE_FIELDS,
+    get_business_currency,
+    option_assignment_for_menu,
+    option_snapshot,
+    sync_menu_config_currency,
+)
 
 
 class IsBusinessOwner(permissions.BasePermission):
@@ -470,6 +476,13 @@ class MenuOptionGroupViewSet(viewsets.ModelViewSet):
     serializer_class = MenuOptionGroupSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        menu_id = self.request.query_params.get('menu_id')
+        if menu_id:
+            context['menu'] = Menu.objects.filter(id=menu_id).first()
+        return context
+
     def get_queryset(self):
         queryset = MenuOptionGroup.objects.filter(
             Q(menu__business_id__in=get_accessible_business_ids(self.request.user))
@@ -538,7 +551,10 @@ class MenuOptionGroupViewSet(viewsets.ModelViewSet):
 
         MenuOptionGroupMenu.objects.get_or_create(group=group, menu=menu)
         group.refresh_from_db()
-        return Response(self.get_serializer(group).data, status=status.HTTP_200_OK)
+        return Response(
+            self.get_serializer(group, context={**self.get_serializer_context(), 'menu': menu}).data,
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=['post'])
     def detach(self, request, pk=None):
@@ -566,7 +582,11 @@ class MenuOptionGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         group.refresh_from_db()
-        return Response(self.get_serializer(group).data, status=status.HTTP_200_OK)
+        menu = Menu.objects.filter(id=menu_id).first()
+        return Response(
+            self.get_serializer(group, context={**self.get_serializer_context(), 'menu': menu}).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class MenuOptionViewSet(viewsets.ModelViewSet):
@@ -607,6 +627,189 @@ class MenuOptionViewSet(viewsets.ModelViewSet):
                 'linked_inventory_item': 'Linked stock item must belong to this business.'
             })
         serializer.save()
+
+    def _get_item_assignment(self, option, menu_id):
+        menu = Menu.objects.filter(
+            id=menu_id,
+            business_id__in=get_accessible_business_ids(self.request.user),
+        ).first()
+        if not menu:
+            raise serializers.ValidationError({'menu': 'Menu item not found for this business.'})
+        if option.group.menu.branch_id != menu.branch_id:
+            raise serializers.ValidationError({
+                'menu': 'This choice can only be customized within its branch.'
+            })
+
+        assignment = option_assignment_for_menu(option.group, menu)
+        if not assignment:
+            raise serializers.ValidationError({
+                'menu': 'This choice set is not attached to that menu item.'
+            })
+        return menu, assignment
+
+    @staticmethod
+    def _snapshot_with_validated_values(option, current_values, validated_data):
+        snapshot = dict(current_values or option_snapshot(option))
+        for field in OPTION_OVERRIDE_FIELDS:
+            if field not in validated_data:
+                continue
+            value = validated_data[field]
+            if field == 'linked_inventory_item':
+                value = str(value.pk) if value else None
+            elif field in {'price_delta', 'price_override', 'linked_inventory_quantity'}:
+                value = str(value) if value is not None else None
+            snapshot[field] = value
+        return snapshot
+
+    @action(detail=True, methods=['post'], url_path='customize-for-item')
+    def customize_for_item(self, request, pk=None):
+        """Save an option snapshot for one menu item without changing its source."""
+        option = self.get_object()
+        menu_id = request.data.get('menu') or request.data.get('menu_id')
+        if not menu_id:
+            return Response({'menu': 'menu is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            menu, assignment = self._get_item_assignment(option, menu_id)
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        payload = request.data.copy()
+        payload.pop('menu', None)
+        payload.pop('menu_id', None)
+        payload.pop('group', None)
+        serializer = self.get_serializer(option, data=payload, partial=True)
+        serializer.is_valid(raise_exception=True)
+        linked_inventory_item = serializer.validated_data.get(
+            'linked_inventory_item',
+            option.linked_inventory_item,
+        )
+        if linked_inventory_item and linked_inventory_item.business_id != option.group.menu.business_id:
+            return Response(
+                {'linked_inventory_item': 'Linked stock item must belong to this business.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        overrides = dict(assignment.option_overrides or {})
+        source_id = str(option.id)
+        current_values = overrides.get(source_id) if isinstance(overrides.get(source_id), dict) else None
+        overrides[source_id] = self._snapshot_with_validated_values(
+            option,
+            current_values,
+            serializer.validated_data,
+        )
+        excluded_ids = [
+            str(value)
+            for value in (assignment.excluded_option_ids or [])
+            if str(value) != source_id
+        ]
+        assignment.excluded_option_ids = excluded_ids
+        assignment.option_overrides = overrides
+        assignment.save(update_fields=['excluded_option_ids', 'option_overrides'])
+
+        return Response(
+            self._resolved_option_response(option, menu),
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'], url_path='remove-from-item')
+    def remove_from_item(self, request, pk=None):
+        """Hide a shared option from one menu item without deleting the source."""
+        option = self.get_object()
+        menu_id = request.data.get('menu') or request.data.get('menu_id')
+        if not menu_id:
+            return Response({'menu': 'menu is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            menu, assignment = self._get_item_assignment(option, menu_id)
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        source_id = str(option.id)
+        excluded_ids = {str(value) for value in (assignment.excluded_option_ids or [])}
+        excluded_ids.add(source_id)
+        assignment.excluded_option_ids = sorted(excluded_ids)
+        assignment.save(update_fields=['excluded_option_ids'])
+        return Response(
+            {'id': source_id, 'menu': str(menu.id), 'removed': True},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'], url_path='restore-for-item')
+    def restore_for_item(self, request, pk=None):
+        """Restore the original shared option for one menu item."""
+        option = self.get_object()
+        menu_id = request.data.get('menu') or request.data.get('menu_id')
+        if not menu_id:
+            return Response({'menu': 'menu is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            menu, assignment = self._get_item_assignment(option, menu_id)
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        source_id = str(option.id)
+        assignment.excluded_option_ids = [
+            str(value)
+            for value in (assignment.excluded_option_ids or [])
+            if str(value) != source_id
+        ]
+        overrides = dict(assignment.option_overrides or {})
+        overrides.pop(source_id, None)
+        assignment.option_overrides = overrides
+        assignment.save(update_fields=['excluded_option_ids', 'option_overrides'])
+        return Response(
+            self._resolved_option_response(option, menu),
+            status=status.HTTP_200_OK,
+        )
+
+    def _resolved_option_response(self, option, menu):
+        from .serializers import MenuOptionGroupSerializer
+
+        group_data = MenuOptionGroupSerializer(
+            option.group,
+            context={**self.get_serializer_context(), 'menu': menu},
+        ).data
+        return next(
+            (row for row in group_data.get('options', []) if str(row.get('id')) == str(option.id)),
+            {'id': str(option.id)},
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete a source option only as an explicit global operation."""
+        option = self.get_object()
+        group = option.group
+        attached_menu_ids = {str(group.menu_id)}
+        attached_menu_ids.update(
+            str(menu_id) for menu_id in group.menu_assignments.values_list('menu_id', flat=True)
+        )
+        is_global_source = group.is_shared or len(attached_menu_ids) > 1
+        confirmed = str(request.query_params.get('confirm_global', '')).lower() in {
+            '1', 'true', 'yes',
+        }
+        if is_global_source and not confirmed:
+            return Response(
+                {
+                    'error': 'This deletes the choice from every menu item using the shared choice set.',
+                    'requires_confirmation': True,
+                    'attached_menu_count': len(attached_menu_ids),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        source_id = str(option.id)
+        with transaction.atomic():
+            for assignment in group.menu_assignments.all():
+                excluded_ids = [
+                    str(value)
+                    for value in (assignment.excluded_option_ids or [])
+                    if str(value) != source_id
+                ]
+                overrides = dict(assignment.option_overrides or {})
+                overrides.pop(source_id, None)
+                assignment.excluded_option_ids = excluded_ids
+                assignment.option_overrides = overrides
+                assignment.save(update_fields=['excluded_option_ids', 'option_overrides'])
+            return super().destroy(request, *args, **kwargs)
 
 
 class MenuConfigViewSet(viewsets.ModelViewSet):

@@ -114,7 +114,12 @@ class MenuOptionGroup(models.Model):
 
 
 class MenuOptionGroupMenu(models.Model):
-    """Additional menu items that use a shared choice group."""
+    """A menu item's assignment of a shared choice group.
+
+    The option group remains the shared source of truth. These fields keep
+    item-specific changes local to this assignment, so removing or changing a
+    choice for one item does not mutate the choice everywhere else.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     group = models.ForeignKey(
@@ -126,6 +131,16 @@ class MenuOptionGroupMenu(models.Model):
         Menu,
         on_delete=models.CASCADE,
         related_name='option_group_assignments',
+    )
+    excluded_option_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Source option IDs hidden only for this menu item.',
+    )
+    option_overrides = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Item-specific snapshots for edited shared options, keyed by source option ID.',
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

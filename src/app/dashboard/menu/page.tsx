@@ -207,6 +207,9 @@ type MenuOption = {
   linked_inventory_quantity?: number | string;
   is_default?: boolean;
   is_visible?: boolean;
+  is_overridden?: boolean;
+  is_removed?: boolean;
+  source_option_id?: string;
 };
 
 type OptionRecipeRow = {
@@ -236,6 +239,7 @@ type MenuOptionGroup = {
   is_shared?: boolean;
   attached_menu_ids?: string[];
   attached_menu_count?: number;
+  removed_options?: MenuOption[];
   options: MenuOption[];
 };
 
@@ -462,6 +466,18 @@ const MenuOptionsModal = ({
     setRecipeRows(rows.length > 0 ? rows : [{ ingredientId: 'none', quantity: '' }]);
   };
 
+  const getOptionGroup = (option: MenuOption) => (
+    groups.find((group) => String(group.id) === String(option.group))
+  );
+
+  const isItemSpecificOption = (option: MenuOption) => {
+    const group = getOptionGroup(option);
+    return Boolean(
+      group?.is_shared &&
+      String(group.menu) !== String(menuEntryId),
+    );
+  };
+
   const saveGroup = async () => {
     let entryId = menuEntryId;
     try {
@@ -588,14 +604,20 @@ const MenuOptionsModal = ({
     }
     const recipe = buildRecipePayload();
     const firstRecipeRow = recipe[0] as { ingredientId?: string; quantity?: number } | undefined;
+    const editingOption = editingOptionId
+      ? groups.flatMap((group) => group.options).find((option) => option.id === editingOptionId)
+      : undefined;
+    const editLocally = Boolean(editingOption && isItemSpecificOption(editingOption));
     try {
       const endpoint = editingOptionId
-        ? `/digital-menu/menu-options/${editingOptionId}/`
+        ? editLocally
+          ? `/digital-menu/menu-options/${editingOptionId}/customize-for-item/`
+          : `/digital-menu/menu-options/${editingOptionId}/`
         : '/digital-menu/menu-options/';
       await authFetch.fetch(endpoint, {
-        method: editingOptionId ? 'PATCH' : 'POST',
+        method: editLocally ? 'POST' : editingOptionId ? 'PATCH' : 'POST',
         body: JSON.stringify({
-          group: optionGroupId,
+          ...(editLocally ? { menu: menuEntryId } : { group: optionGroupId }),
           name: optionName.trim(),
           description: optionDescription.trim(),
           price_mode: optionPriceMode,
@@ -610,7 +632,7 @@ const MenuOptionsModal = ({
       });
       resetOptionForm();
       await loadOptions();
-      toast({ title: editingOptionId ? 'Choice updated' : 'Choice added' });
+      toast({ title: editLocally ? 'Choice updated for this item' : editingOptionId ? 'Choice updated everywhere' : 'Choice added' });
     } catch (error) {
       console.error('[Menu] Failed to save choice:', error);
       toast({
@@ -622,13 +644,29 @@ const MenuOptionsModal = ({
   };
 
   const deleteOption = async (option: MenuOption) => {
+    const editLocally = isItemSpecificOption(option);
     try {
-      await authFetch.fetch(`/digital-menu/menu-options/${option.id}/`, {
-        method: 'DELETE',
-      });
+      if (editLocally) {
+        const confirmed = window.confirm(
+          `Remove ${option.name} from ${item?.name || 'this menu item'} only? It will remain available on other items.`,
+        );
+        if (!confirmed) return;
+        await authFetch.fetch(`/digital-menu/menu-options/${option.id}/remove-from-item/`, {
+          method: 'POST',
+          body: JSON.stringify({ menu: menuEntryId }),
+        });
+      } else {
+        const confirmed = window.confirm(
+          `Delete ${option.name} from every menu item using this shared choice set?`,
+        );
+        if (!confirmed) return;
+        await authFetch.fetch(`/digital-menu/menu-options/${option.id}/?confirm_global=true`, {
+          method: 'DELETE',
+        });
+      }
       if (editingOptionId === option.id) resetOptionForm();
       await loadOptions();
-      toast({ title: 'Choice deleted' });
+      toast({ title: editLocally ? 'Choice removed from this item' : 'Choice deleted everywhere' });
     } catch (error) {
       console.error('[Menu] Failed to delete choice:', error);
       toast({
@@ -727,7 +765,7 @@ const MenuOptionsModal = ({
               <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
                 <div>
                   <p className="text-sm font-medium">Reusable on other menu items</p>
-                  <p className="text-xs text-muted-foreground">Use this for shared extras, sauces, sides, or other choices. Changes apply everywhere it is attached.</p>
+                  <p className="text-xs text-muted-foreground">Use this for shared extras, sauces, sides, or other choices. Edit or remove an individual choice locally after attaching it elsewhere.</p>
                 </div>
                 <Switch checked={groupShared} onCheckedChange={setGroupShared} />
               </div>
@@ -905,6 +943,7 @@ const MenuOptionsModal = ({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">{option.name}</span>
+                            {option.is_overridden && <Badge variant="outline">This item only</Badge>}
                             {option.is_default && <Badge variant="secondary">Default</Badge>}
                             {option.is_visible === false && <Badge variant="outline">Hidden</Badge>}
                           </div>
@@ -930,8 +969,8 @@ const MenuOptionsModal = ({
                           <Button variant="ghost" size="icon" onClick={() => loadOptionForEdit(option)} aria-label={`Edit ${option.name}`}>
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => deleteOption(option)} aria-label={`Delete ${option.name}`}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
+                          <Button variant="ghost" size="icon" onClick={() => deleteOption(option)} aria-label={isItemSpecificOption(option) ? `Remove ${option.name} from this item` : `Delete ${option.name} everywhere`}>
+                            {isItemSpecificOption(option) ? <X className="h-4 w-4" /> : <Trash2 className="h-4 w-4 text-destructive" />}
                           </Button>
                         </div>
                       </div>
@@ -942,6 +981,33 @@ const MenuOptionsModal = ({
                       No options in this group yet.
                     </p>
                   )}
+                  {group.removed_options?.map((option) => (
+                    <div key={`removed-${option.id}`} className="flex items-center justify-between gap-3 rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                      <span>{option.name} was removed from this item</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            await authFetch.fetch(`/digital-menu/menu-options/${option.id}/restore-for-item/`, {
+                              method: 'POST',
+                              body: JSON.stringify({ menu: menuEntryId }),
+                            });
+                            await loadOptions();
+                            toast({ title: `${option.name} restored for this item` });
+                          } catch (error) {
+                            toast({
+                              title: 'Could not restore choice',
+                              description: error instanceof Error ? error.message : 'Please try again.',
+                              variant: 'destructive',
+                            });
+                          }
+                        }}
+                      >
+                        Restore
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}

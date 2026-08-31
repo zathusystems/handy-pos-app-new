@@ -22,12 +22,14 @@ class TerminalSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'business', 'branch', 'terminal_id', 'device_serial', 'mac_address',
             'pos_name', 'pos_version', 'os_type',
+            'mra_taxpayer_id', 'terminal_position',
+            'mra_terminal_id',
             'status', 'is_online',
             'online_invoice_counter', 'offline_invoice_counter',
             'activated_at', 'last_sync_at', 'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'business', 'branch', 'terminal_id', 'online_invoice_counter',
+            'id', 'business', 'branch', 'terminal_id', 'mra_terminal_id', 'online_invoice_counter',
             'offline_invoice_counter', 'activated_at', 'last_sync_at',
             'created_at', 'updated_at'
         ]
@@ -37,7 +39,7 @@ class TerminalDetailSerializer(TerminalSerializer):
     """Detailed terminal info with sensitive data"""
     class Meta(TerminalSerializer.Meta):
         fields = TerminalSerializer.Meta.fields + [
-            'mra_terminal_id', 'token_expires_at'
+            'token_expires_at'
         ]
 
 
@@ -56,9 +58,10 @@ class MRAConfigurationSerializer(serializers.ModelSerializer):
         model = MRAConfiguration
         fields = [
             'id', 'config_type', 'config_version', 'config_data',
-            'effective_from', 'effective_to', 'is_active', 'created_at'
+            'effective_from', 'effective_to', 'is_active',
+            'fetched_from_mra_at', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'fetched_from_mra_at', 'created_at']
 
 
 class MRAProductMappingSerializer(serializers.ModelSerializer):

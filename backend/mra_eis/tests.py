@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 from datetime import timedelta
 from decimal import Decimal
 import json
+from unittest.mock import patch
 
 from business.models import Business, Branch, BusinessSettings
 from mra_eis.models import (
@@ -17,7 +18,7 @@ from mra_eis.models import (
 from mra_eis.services import (
     TerminalService, ConfigurationService, ProductMappingService,
     InvoiceService, ReceiptService, RetryService,
-    POSOrderSubmissionService, MRAIntegrationError
+    POSOrderSubmissionService, MRAIntegrationError, MRACallResult
 )
 
 User = get_user_model()
@@ -56,6 +57,67 @@ class TerminalActivationTests(TestCase):
         self.assertEqual(terminal.status, 'pending_activation')
         self.assertEqual(terminal.pos_name, 'Handy POS')
         self.assertEqual(terminal.os_type, 'Web')
+
+    def test_activation_uses_official_mra_payload_shape(self):
+        """Activation should send MRA's nested platform/POS payload."""
+        prepared_result = MRACallResult(
+            ok=True,
+            dry_run=True,
+            status_code=202,
+            endpoint='https://dev-eis-api.mra.mw/api/v1/onboarding/activate-terminal',
+            data={'status': 'prepared'},
+        )
+
+        with patch('mra_eis.services.MRAEISClient.call', return_value=prepared_result) as call:
+            TerminalService.activate_terminal(
+                business=self.business,
+                branch=self.branch,
+                tac_code='TAC-TEST-001',
+                pos_name='Handy POS',
+                pos_version='1.2.3',
+                os_type='Windows',
+                device_serial='DEVICE-001',
+                mac_address='00-1A-2B-3C-4D-5E',
+            )
+
+        payload = call.call_args.kwargs['payload']
+        self.assertEqual(payload['terminalActivationCode'], 'TAC-TEST-001')
+        self.assertEqual(payload['environment']['platform']['osName'], 'Windows')
+        self.assertEqual(payload['environment']['platform']['macAddress'], '00-1A-2B-3C-4D-5E')
+        self.assertEqual(payload['environment']['pos']['productVersion'], '1.2.3')
+
+    def test_branch_can_have_one_terminal_per_device(self):
+        """A branch may onboard separate devices without replacing its first terminal."""
+        second_tac = TerminalActivationCode.objects.create(
+            business=self.business,
+            code='TAC-TEST-002',
+            status='unused',
+            expires_at=timezone.now() + timedelta(days=30),
+        )
+
+        first = TerminalService.activate_terminal(
+            business=self.business,
+            branch=self.branch,
+            tac_code='TAC-TEST-001',
+            pos_name='Handy POS',
+            pos_version='1.0.0',
+            os_type='Web',
+            device_serial='DEVICE-001',
+        )
+        second = TerminalService.activate_terminal(
+            business=self.business,
+            branch=self.branch,
+            tac_code=second_tac.code,
+            pos_name='Handy POS',
+            pos_version='1.0.0',
+            os_type='Android',
+            device_serial='DEVICE-002',
+        )
+
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(Terminal.objects.filter(business=self.business, branch=self.branch).count(), 2)
+        first.refresh_from_db()
+        self.assertEqual(first.device_serial, 'DEVICE-001')
 
     def test_tac_marked_as_used(self):
         """Test TAC is marked as used after activation"""

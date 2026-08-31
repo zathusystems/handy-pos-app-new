@@ -69,6 +69,7 @@ class MRAEISClient:
         self.terminal = terminal
         self.base_url = settings.MRA_EIS_BASE_URL.rstrip('/')
         self.timeout = settings.MRA_EIS_TIMEOUT_SECONDS
+        self.verify_ssl = bool(getattr(settings, 'MRA_EIS_VERIFY_SSL', True))
         self.endpoints: dict[str, str] = settings.MRA_EIS_ENDPOINTS
 
     @property
@@ -103,21 +104,24 @@ class MRAEISClient:
         message = self._canonical_json(payload).encode('utf-8')
         return hmac.new(secret, message, hashlib.sha256).hexdigest()
 
-    def _build_headers(self, payload: dict[str, Any] | None) -> dict[str, str]:
+    def _build_headers(self, endpoint_key: str, payload: dict[str, Any] | None) -> dict[str, str]:
         headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
         }
 
-        access_key = getattr(settings, 'MRA_EIS_ACCESS_KEY', '') or ''
-        if access_key:
-            headers['x-access-key'] = access_key
+        # MRA's initial activation request is TAC-based and unauthenticated.
+        # Keep the existing gateway headers for post-activation calls.
+        if endpoint_key != 'activate_terminal':
+            access_key = getattr(settings, 'MRA_EIS_ACCESS_KEY', '') or ''
+            if access_key:
+                headers['x-access-key'] = access_key
 
-        signature = self._build_signature(payload)
-        if signature:
-            headers['x-signature'] = signature
+            signature = self._build_signature(payload)
+            if signature:
+                headers['x-signature'] = signature
 
-        if self.terminal and self.terminal.mra_token:
+        if endpoint_key != 'activate_terminal' and self.terminal and self.terminal.mra_token:
             headers['Authorization'] = f"Bearer {self.terminal.mra_token}"
 
         return headers
@@ -167,7 +171,7 @@ class MRAEISClient:
             return self._dry_run_result(endpoint_key, payload, reason='live_submission_disabled')
 
         endpoint = self._resolve_endpoint(endpoint_key)
-        headers = self._build_headers(payload)
+        headers = self._build_headers(endpoint_key, payload)
 
         try:
             response = requests.request(
@@ -176,11 +180,17 @@ class MRAEISClient:
                 json=payload or {},
                 headers=headers,
                 timeout=self.timeout,
+                verify=self.verify_ssl,
             )
             response.raise_for_status()
             response_data: dict[str, Any] = {}
             if response.content:
-                response_data = response.json()
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    # Some MRA endpoints return a plain-text body even when
+                    # the request succeeded. Preserve it for audit/diagnostics.
+                    response_data = {'raw': response.text}
 
             return MRACallResult(
                 ok=True,
@@ -197,6 +207,97 @@ class TerminalService:
     """Terminal management and onboarding."""
 
     @staticmethod
+    def normalize_device_serial(value: Any) -> str:
+        return str(value or '').strip()
+
+    @staticmethod
+    def _dict_get_any(mapping: dict[str, Any] | None, *keys: str) -> Any:
+        if not isinstance(mapping, dict):
+            return None
+
+        for key in keys:
+            if key in mapping:
+                return mapping[key]
+
+        lowered_keys = {str(key).lower(): value for key, value in mapping.items()}
+        for key in keys:
+            if key.lower() in lowered_keys:
+                return lowered_keys[key.lower()]
+        return None
+
+    @staticmethod
+    def _find_nested_value(value: Any, *keys: str) -> Any:
+        if isinstance(value, dict):
+            found = TerminalService._dict_get_any(value, *keys)
+            if found not in (None, ''):
+                return found
+            for child in value.values():
+                found = TerminalService._find_nested_value(child, *keys)
+                if found not in (None, ''):
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = TerminalService._find_nested_value(child, *keys)
+                if found not in (None, ''):
+                    return found
+        return None
+
+    @staticmethod
+    def _response_data(response: dict[str, Any]) -> dict[str, Any]:
+        data = TerminalService._dict_get_any(response, 'data')
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _extract_activation_terminal(response: dict[str, Any]) -> dict[str, Any]:
+        data = TerminalService._response_data(response)
+        terminal = TerminalService._dict_get_any(
+            data,
+            'activatedTerminal',
+            'ActivatedTerminal',
+            'activated_terminal',
+        )
+        if isinstance(terminal, dict):
+            return terminal
+        return data if data else response
+
+    @staticmethod
+    def _to_positive_int(value: Any) -> int | None:
+        if value in (None, ''):
+            return None
+        try:
+            parsed = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _build_activation_payload(
+        *,
+        tac_code: str,
+        pos_version: str,
+        os_type: str,
+        mac_address: str,
+    ) -> dict[str, Any]:
+        """Build the official MRA activation request without sending credentials."""
+        product_id = str(getattr(settings, 'MRA_EIS_PRODUCT_ID', '') or 'HandyPOS')[:50]
+        os_name = str(os_type or 'Unknown')[:50]
+        return {
+            'terminalActivationCode': str(tac_code or '').strip(),
+            'environment': {
+                'platform': {
+                    'osName': os_name,
+                    'osVersion': os_name,
+                    'osBuild': '',
+                    'macAddress': (mac_address or '00-00-00-00-00-00')[:17],
+                },
+                'pos': {
+                    'productID': product_id,
+                    'productVersion': str(pos_version or '1.0.0')[:50],
+                },
+            },
+        }
+
+    @staticmethod
     def _upsert_terminal(
         *,
         business,
@@ -207,14 +308,16 @@ class TerminalService:
         device_serial: str,
         mac_address: str,
     ) -> Terminal:
+        incoming_serial = TerminalService.normalize_device_serial(device_serial)
+        terminals = Terminal.objects.select_for_update().filter(business=business, branch=branch)
         terminal = (
-            Terminal.objects.select_for_update()
-            .filter(business=business, branch=branch)
-            .first()
+            terminals.filter(device_serial__iexact=incoming_serial).order_by('-updated_at').first()
+            if incoming_serial
+            else terminals.order_by('-updated_at').first()
         )
 
         if terminal:
-            terminal.device_serial = device_serial
+            terminal.device_serial = incoming_serial or terminal.device_serial
             terminal.mac_address = mac_address
             terminal.pos_name = pos_name
             terminal.pos_version = pos_version
@@ -275,18 +378,12 @@ class TerminalService:
             mac_address=mac_address or '',
         )
 
-        payload = {
-            'tacCode': tac_code,
-            'businessTin': business.tin or '',
-            'businessName': business.name,
-            'branchCode': branch.mra_branch_code or str(branch.id),
-            'branchName': branch.name,
-            'deviceSerial': device_serial,
-            'macAddress': mac_address or '',
-            'posName': pos_name,
-            'posVersion': pos_version,
-            'osType': os_type,
-        }
+        payload = TerminalService._build_activation_payload(
+            tac_code=tac_code,
+            pos_version=pos_version,
+            os_type=os_type,
+            mac_address=mac_address or '',
+        )
 
         client = MRAEISClient(terminal=terminal)
         try:
@@ -301,28 +398,71 @@ class TerminalService:
                 data={'status': 'pending_activation', 'error': str(exc)},
             )
         response_data = result.data or {}
+        activated_terminal = TerminalService._extract_activation_terminal(response_data)
+        terminal_credentials = TerminalService._dict_get_any(
+            activated_terminal,
+            'terminalCredentials',
+            'TerminalCredentials',
+            'terminal_credentials',
+        ) or {}
+        if not isinstance(terminal_credentials, dict):
+            terminal_credentials = {}
 
         # Support common API response shape variants.
         mra_terminal_id = (
-            response_data.get('terminalId')
-            or response_data.get('terminal_id')
-            or response_data.get('mra_terminal_id')
-            or response_data.get('deviceId')
+            TerminalService._dict_get_any(
+                activated_terminal,
+                'terminalId', 'terminalID', 'terminal_id', 'mra_terminal_id',
+                'deviceId', 'deviceID',
+            )
+            or TerminalService._find_nested_value(
+                response_data,
+                'terminalId', 'terminalID', 'terminal_id', 'mra_terminal_id',
+                'deviceId', 'deviceID',
+            )
             or terminal.mra_terminal_id
             or tac_code
         )
 
         token = (
-            response_data.get('token')
-            or response_data.get('accessToken')
-            or response_data.get('access_token')
+            TerminalService._dict_get_any(
+                terminal_credentials,
+                'jwtToken', 'JWTToken', 'jwt_token', 'token', 'accessToken', 'access_token',
+            )
+            or TerminalService._find_nested_value(
+                response_data,
+                'jwtToken', 'JWTToken', 'jwt_token', 'token', 'accessToken', 'access_token',
+            )
             or ''
         )
         access_key = (
-            response_data.get('accessKey')
-            or response_data.get('access_key')
+            TerminalService._dict_get_any(
+                terminal_credentials,
+                'secretKey', 'SecretKey', 'secret_key', 'accessKey', 'access_key',
+                'apiKey', 'api_key',
+            )
+            or TerminalService._find_nested_value(
+                response_data,
+                'secretKey', 'SecretKey', 'secret_key', 'accessKey', 'access_key',
+                'apiKey', 'api_key',
+            )
             or terminal.mra_api_key
             or ''
+        )
+
+        taxpayer_id = TerminalService._to_positive_int(
+            TerminalService._find_nested_value(
+                response_data,
+                'taxpayerId', 'TaxpayerId', 'taxpayerID', 'TaxpayerID',
+                'taxpayer_id', 'businessId', 'BusinessId',
+            )
+        )
+        terminal_position = TerminalService._to_positive_int(
+            TerminalService._find_nested_value(
+                response_data,
+                'terminalPosition', 'TerminalPosition', 'terminal_position',
+                'position', 'Position',
+            )
         )
 
         # If dry-run or confirmation is required, stay pending activation.
@@ -334,6 +474,10 @@ class TerminalService:
             status_value = 'pending_activation' if result.dry_run else 'active'
 
         terminal.mra_terminal_id = mra_terminal_id
+        if taxpayer_id:
+            terminal.mra_taxpayer_id = taxpayer_id
+        if terminal_position:
+            terminal.terminal_position = terminal_position
         terminal.mra_api_key = access_key
         terminal.mra_token = token
         terminal.token_expires_at = timezone.now() + timedelta(hours=24) if token else None
@@ -436,8 +580,21 @@ class ConfigurationService:
         if not data:
             return {'source': 'dry_run', 'config_type': config_type}
 
-        if config_type in data and isinstance(data[config_type], dict):
-            return data[config_type]
+        aliases = {
+            'global_configuration': 'globalConfiguration',
+            'terminal_configuration': 'terminalConfiguration',
+            'taxpayer_configuration': 'taxpayerConfiguration',
+            'terminal_site_products': 'terminalSiteProducts',
+        }
+        containers = [data]
+        nested_data = data.get('data') if isinstance(data, dict) else None
+        if isinstance(nested_data, dict):
+            containers.append(nested_data)
+
+        for container in containers:
+            for key in (config_type, aliases.get(config_type, '')):
+                if key and isinstance(container.get(key), dict):
+                    return container[key]
 
         if 'configurations' in data and isinstance(data['configurations'], dict):
             found = data['configurations'].get(config_type)
@@ -578,9 +735,17 @@ class ConfigurationService:
         return OfflineLimitPolicy()
 
     @staticmethod
-    def fetch_and_store_configuration(business, config_types=None):
+    def fetch_and_store_configuration(business, config_types=None, terminal=None):
         if config_types is None:
-            config_types = ['tax_rules', 'receipt_format', 'product_codes', 'system_settings']
+            config_types = [
+                'global_configuration',
+                'terminal_configuration',
+                'taxpayer_configuration',
+                'tax_rules',
+                'receipt_format',
+                'product_codes',
+                'system_settings',
+            ]
 
         sync_log = ConfigurationSyncLog.objects.create(
             business=business,
@@ -590,12 +755,8 @@ class ConfigurationService:
         )
 
         try:
-            payload = {
-                'businessTin': business.tin or '',
-                'configTypes': config_types,
-            }
-            client = MRAEISClient()
-            result = client.call('get_latest_config', payload=payload, method='POST', mutating=False)
+            client = MRAEISClient(terminal=terminal)
+            result = client.call('get_latest_config', payload=None, method='POST', mutating=False)
             response_data = result.data or {}
 
             for config_type in config_types:

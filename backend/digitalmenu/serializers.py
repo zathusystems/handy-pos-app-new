@@ -2,7 +2,13 @@ from rest_framework import serializers
 from django.conf import settings
 from django.db.models import Q
 from .models import Menu, MenuConfig, MenuOption, MenuOptionGroup
-from .utils import get_business_currency, get_takeaway_packaging_price
+from .utils import (
+    get_business_currency,
+    get_takeaway_packaging_price,
+    option_assignment_for_menu,
+    resolve_menu_option,
+    resolve_menu_options,
+)
 from inventory.serializers import InventoryItemSerializer
 
 
@@ -43,7 +49,11 @@ class MenuSerializer(serializers.ModelSerializer):
             Q(menu=obj) | Q(menu_assignments__menu=obj),
             is_visible=True,
         ).distinct().prefetch_related('options', 'menu_assignments')
-        return MenuOptionGroupSerializer(groups, many=True).data
+        return MenuOptionGroupSerializer(
+            groups,
+            many=True,
+            context={**self.context, 'menu': obj},
+        ).data
 
 
 class MenuOptionSerializer(serializers.ModelSerializer):
@@ -61,22 +71,27 @@ class MenuOptionSerializer(serializers.ModelSerializer):
 
 
 class MenuOptionGroupSerializer(serializers.ModelSerializer):
-    options = MenuOptionSerializer(many=True, read_only=True)
+    options = serializers.SerializerMethodField()
     menu_item_name = serializers.SerializerMethodField()
     attached_menu_ids = serializers.SerializerMethodField()
     attached_menu_count = serializers.SerializerMethodField()
+    removed_option_ids = serializers.SerializerMethodField()
+    customized_option_ids = serializers.SerializerMethodField()
+    removed_options = serializers.SerializerMethodField()
 
     class Meta:
         model = MenuOptionGroup
         fields = [
             'id', 'menu', 'menu_item_name', 'name', 'group_type', 'is_required',
             'min_select', 'max_select', 'sort_order', 'is_visible', 'is_shared',
-            'attached_menu_ids', 'attached_menu_count', 'options',
+            'attached_menu_ids', 'attached_menu_count', 'removed_option_ids',
+            'customized_option_ids', 'removed_options', 'options',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'created_at', 'updated_at', 'menu_item_name', 'options',
-            'attached_menu_ids', 'attached_menu_count',
+            'attached_menu_ids', 'attached_menu_count', 'removed_option_ids',
+            'customized_option_ids', 'removed_options',
         ]
 
     def get_menu_item_name(self, obj):
@@ -95,6 +110,70 @@ class MenuOptionGroupSerializer(serializers.ModelSerializer):
 
     def get_attached_menu_count(self, obj):
         return len(self.get_attached_menu_ids(obj))
+
+    def _target_menu(self, obj):
+        target_menu = self.context.get('menu')
+        if target_menu:
+            return target_menu
+
+        request = self.context.get('request')
+        menu_id = request.query_params.get('menu_id') if request else None
+        if menu_id:
+            return Menu.objects.filter(id=menu_id).first()
+        return obj.menu
+
+    def _target_assignment(self, obj):
+        return option_assignment_for_menu(obj, self._target_menu(obj))
+
+    def get_removed_option_ids(self, obj):
+        assignment = self._target_assignment(obj)
+        values = assignment.excluded_option_ids if assignment else []
+        return [str(value) for value in values] if isinstance(values, list) else []
+
+    def get_customized_option_ids(self, obj):
+        assignment = self._target_assignment(obj)
+        values = assignment.option_overrides if assignment else {}
+        return [str(value) for value in values.keys()] if isinstance(values, dict) else []
+
+    def get_removed_options(self, obj):
+        removed_ids = set(self.get_removed_option_ids(obj))
+        if not removed_ids:
+            return []
+
+        removed = []
+        for option in obj.options.all():
+            if str(option.id) not in removed_ids:
+                continue
+            resolved = resolve_menu_option(option, self._target_menu(obj), include_excluded=True)
+            data = MenuOptionSerializer(option, context=self.context).data
+            if resolved:
+                data.update(resolved['values'])
+                linked_item = resolved.get('linked_inventory_item')
+                data['linked_inventory_item'] = resolved['values'].get('linked_inventory_item')
+                data['linked_inventory_item_name'] = linked_item.name if linked_item else ''
+            data['is_removed'] = True
+            data['is_overridden'] = bool(resolved and resolved['is_overridden'])
+            data['source_option_id'] = str(option.id)
+            removed.append(data)
+        return removed
+
+    def get_options(self, obj):
+        target_menu = self._target_menu(obj)
+        resolved_options = resolve_menu_options(obj, target_menu)
+        serialized = []
+        for resolved in resolved_options:
+            option = resolved['source']
+            values = resolved['values']
+            data = MenuOptionSerializer(option, context=self.context).data
+            for field, value in values.items():
+                data[field] = value
+            linked_item = resolved.get('linked_inventory_item')
+            data['linked_inventory_item'] = values.get('linked_inventory_item')
+            data['linked_inventory_item_name'] = linked_item.name if linked_item else ''
+            data['is_overridden'] = resolved['is_overridden']
+            data['source_option_id'] = str(option.id)
+            serialized.append(data)
+        return serialized
 
     def validate(self, attrs):
         is_required = attrs.get('is_required', getattr(self.instance, 'is_required', False))

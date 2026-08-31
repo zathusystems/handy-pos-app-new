@@ -3,7 +3,12 @@ from django.views.decorators.http import require_http_methods
 from django.db.models import Q
 from business.models import Business, Branch
 from .models import Menu, MenuConfig, MenuOptionGroup
-from .utils import get_business_currency, get_takeaway_packaging_price, sync_menu_config_currency
+from .utils import (
+    get_business_currency,
+    get_takeaway_packaging_price,
+    resolve_menu_options,
+    sync_menu_config_currency,
+)
 from inventory.models import InventoryItem
 
 
@@ -59,20 +64,23 @@ def public_menu_view(request, business_slug, branch_slug):
         option_groups = []
         for group in groups_by_menu.get(menu_item.id, []):
             options = []
-            for option in group.options.filter(is_visible=True):
+            for resolved in resolve_menu_options(group, menu_item, visible_only=True):
+                option = resolved['source']
+                values = resolved['values']
+                linked_inventory_item = resolved.get('linked_inventory_item')
                 options.append({
                     'id': str(option.id),
-                    'name': option.name,
-                    'description': option.description,
-                    'price_mode': option.price_mode,
-                    'price_delta': float(option.price_delta or 0),
-                    'price_override': float(option.price_override) if option.price_override is not None else None,
-                    'recipe': option.recipe or [],
-                    'linked_inventory_item': str(option.linked_inventory_item_id) if option.linked_inventory_item_id else None,
-                    'linked_inventory_item_name': option.linked_inventory_item.name if option.linked_inventory_item else '',
-                    'linked_inventory_quantity': float(option.linked_inventory_quantity or 0),
-                    'is_default': option.is_default,
-                    'sort_order': option.sort_order,
+                    'name': values.get('name', option.name),
+                    'description': values.get('description', option.description),
+                    'price_mode': values.get('price_mode', option.price_mode),
+                    'price_delta': float(values.get('price_delta') or 0),
+                    'price_override': float(values['price_override']) if values.get('price_override') is not None else None,
+                    'recipe': values.get('recipe') or [],
+                    'linked_inventory_item': values.get('linked_inventory_item'),
+                    'linked_inventory_item_name': linked_inventory_item.name if linked_inventory_item else '',
+                    'linked_inventory_quantity': float(values.get('linked_inventory_quantity') or 0),
+                    'is_default': bool(values.get('is_default')),
+                    'sort_order': int(values.get('sort_order') or 0),
                 })
             option_groups.append({
                 'id': str(group.id),

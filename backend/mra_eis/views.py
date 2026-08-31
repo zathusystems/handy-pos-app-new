@@ -334,11 +334,20 @@ class MRAConfigurationViewSet(viewsets.ReadOnlyModelViewSet):
         business = get_object_or_404(accessible_businesses, id=business_id)
 
         config_types = request.data.get('config_types', None)
+        terminal_id = request.query_params.get('terminal_id')
+        terminal = None
+        if terminal_id:
+            terminal = get_object_or_404(
+                Terminal,
+                id=terminal_id,
+                business=business,
+            )
 
         try:
             sync_log = ConfigurationService.fetch_and_store_configuration(
                 business=business,
-                config_types=config_types
+                config_types=config_types,
+                terminal=terminal,
             )
 
             return Response(
