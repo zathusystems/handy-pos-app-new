@@ -13,6 +13,7 @@ from django.views.decorators.http import require_GET
 from .models import TakeOrder, TakeOrderItem
 from .serializers import TakeOrderSerializer, TakeOrderCreateSerializer, TakeOrderItemSerializer
 from business.models import Branch
+from business.access import get_accessible_business_ids
 from inventory.models import InventoryItem
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
 from .takeaway import normalise_takeaway_items
@@ -157,11 +158,14 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
     
     def get_queryset(self):
-        """Filter take orders by branch"""
+        """Filter take orders to businesses assigned to the current user."""
+        queryset = TakeOrder.objects.filter(
+            business_id__in=get_accessible_business_ids(self.request.user)
+        )
         branch_id = self.request.query_params.get('branch_id')
         if branch_id:
-            return TakeOrder.objects.filter(branch_id=branch_id).prefetch_related('items')
-        return TakeOrder.objects.none()
+            queryset = queryset.filter(branch_id=branch_id)
+        return queryset.prefetch_related('items')
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -171,8 +175,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """Retrieve a single take order by ID"""
         try:
-            # Get the take order by pk directly without filtering by branch_id
-            take_order = TakeOrder.objects.get(pk=kwargs['pk'])
+            take_order = self.get_queryset().get(pk=kwargs['pk'])
             serializer = self.get_serializer(take_order)
             return Response(serializer.data)
         except TakeOrder.DoesNotExist:
@@ -186,7 +189,10 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         branch_id = request.data.get('branch_id')
         
         try:
-            branch = Branch.objects.get(id=branch_id)
+            branch = Branch.objects.get(
+                id=branch_id,
+                business_id__in=get_accessible_business_ids(request.user),
+            )
         except Branch.DoesNotExist:
             return Response(
                 {'error': 'Branch not found'},
@@ -206,9 +212,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
     def update_status(self, request, pk=None):
         """Update take order status"""
         try:
-            # Get the take order by pk directly without filtering by branch_id
-            # This allows the endpoint to work without requiring branch_id query param
-            take_order = TakeOrder.objects.get(pk=pk)
+            take_order = self.get_queryset().get(pk=pk)
         except TakeOrder.DoesNotExist:
             return Response(
                 {'error': 'Take order not found'},
@@ -281,7 +285,7 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
     def add_items(self, request, pk=None):
         """Append items to an open take order before sale processing."""
         try:
-            take_order = TakeOrder.objects.prefetch_related('items').get(pk=pk)
+            take_order = self.get_queryset().get(pk=pk)
         except TakeOrder.DoesNotExist:
             return Response(
                 {'error': 'Take order not found'},

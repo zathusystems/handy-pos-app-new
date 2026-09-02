@@ -120,6 +120,13 @@ class OrderSerializer(serializers.ModelSerializer):
             'customer_notes',
             'buyer_name',
             'buyer_tin',
+            'buyer_authorization_code',
+            'is_export',
+            'is_relief_supply',
+            'vat5_project_number',
+            'vat5_certificate_number',
+            'vat5_quantity',
+            'eis_validation_metadata',
             'subtotal',
             'total',
             'tip',
@@ -146,7 +153,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'updated_at',
             'items'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'business', 'is_invoice_sale', 'invoice_id', 'is_paid', 'fiscal_invoice_number', 'eis_uuid', 'eis_submitted_at', 'qr_code_payload', 'digital_signature', 'is_fiscal_locked']
+        read_only_fields = ['created_at', 'updated_at', 'business', 'is_invoice_sale', 'invoice_id', 'is_paid', 'fiscal_invoice_number', 'eis_uuid', 'eis_submitted_at', 'qr_code_payload', 'digital_signature', 'is_fiscal_locked', 'eis_validation_metadata']
 
     def get_eis_sync_state(self, obj):
         status = str(getattr(obj, 'eis_status', '') or '').upper()
@@ -181,6 +188,12 @@ class OrderSerializer(serializers.ModelSerializer):
             'customerNotes': 'customer_notes',
             'buyerName': 'buyer_name',
             'buyerTin': 'buyer_tin',
+            'buyerAuthorizationCode': 'buyer_authorization_code',
+            'isExport': 'is_export',
+            'isReliefSupply': 'is_relief_supply',
+            'vat5ProjectNumber': 'vat5_project_number',
+            'vat5CertificateNumber': 'vat5_certificate_number',
+            'vat5Quantity': 'vat5_quantity',
             'chargesAmount': 'charges_amount',
             'chargesSnapshot': 'charges_snapshot',
             'createdAt': 'created_at',
@@ -288,18 +301,9 @@ class OrderSerializer(serializers.ModelSerializer):
 
             if payment_method == 'on account':
                 customer = validated_data.get('customer')
-                if not customer.account_enabled:
+                if customer and not customer.account_enabled:
                     raise serializers.ValidationError({
                         'customer': 'This customer account is not enabled for credit sales.'
-                    })
-
-                credit_limit = Decimal(str(customer.credit_limit or 0))
-                current_balance = Decimal(str(customer.current_balance or 0))
-                sale_total = Decimal(str(validated_data.get('total') or 0))
-                if credit_limit > 0 and current_balance + sale_total > credit_limit:
-                    available_credit = credit_limit - current_balance
-                    raise serializers.ValidationError({
-                        'customer': f'Credit limit exceeded. Available credit is {available_credit}.'
                     })
 
             try:
@@ -319,14 +323,56 @@ class OrderSerializer(serializers.ModelSerializer):
             validated_data['tax_type'] = tax_snapshot['tax_type']
             validated_data['vat_amount'] = tax_snapshot['vat_amount']
             validated_data['net_amount'] = tax_snapshot['net_amount']
-            validated_data['gross_amount'] = tax_snapshot['gross_amount']
-            charges_amount = Decimal(str(validated_data.get('charges_amount') or 0))
-            if charges_amount < 0:
-                charges_amount = Decimal('0.00')
+            eis_enabled = False
+            try:
+                from mra_eis.services import is_business_eis_enabled
+
+                eis_enabled = is_business_eis_enabled(business)
+            except Exception:
+                eis_enabled = False
+
+            from .charge_utils import calculate_configured_business_charges
+            from .levy_utils import calculate_mra_levy_charges
+
+            configured_charges = calculate_configured_business_charges(
+                business,
+                net_subtotal=tax_snapshot['net_amount'],
+                gross_total=tax_snapshot['gross_amount'],
+                eis_enabled=eis_enabled,
+            )
+            mra_levy_charges = calculate_mra_levy_charges(business, items_data)
+            mra_levy_amount = sum(
+                (Decimal(str(charge.get('amount') or 0)) for charge in mra_levy_charges),
+                Decimal('0.00'),
+            )
+            mra_levy_amount = mra_levy_amount.quantize(Decimal('0.01'))
+            charges_snapshot = [
+                *configured_charges['snapshot'],
+                *mra_levy_charges,
+            ]
+            charges_amount = (
+                configured_charges['amount'] + mra_levy_amount
+            ).quantize(Decimal('0.01'))
+            gross_amount = (
+                tax_snapshot['gross_amount']
+                + configured_charges['exclusive_amount']
+                + mra_levy_amount
+            ).quantize(Decimal('0.01'))
+            validated_data['gross_amount'] = gross_amount
+            validated_data['total'] = gross_amount + tip_amount
             validated_data['charges_amount'] = charges_amount
-            validated_data['charges_snapshot'] = validated_data.get('charges_snapshot') or []
-            if charges_amount > 0:
-                validated_data['gross_amount'] = validated_data['gross_amount'] + charges_amount
+            validated_data['charges_snapshot'] = charges_snapshot
+
+            if payment_method == 'on account':
+                customer = validated_data.get('customer')
+                credit_limit = Decimal(str(customer.credit_limit or 0))
+                current_balance = Decimal(str(customer.current_balance or 0))
+                sale_total = Decimal(str(validated_data['total'] or 0))
+                if credit_limit > 0 and current_balance + sale_total > credit_limit:
+                    available_credit = credit_limit - current_balance
+                    raise serializers.ValidationError({
+                        'customer': f'Credit limit exceeded. Available credit is {available_credit}.'
+                    })
 
             # Create the order with tax snapshot fields
             order = Order.objects.create(id=order_id, **validated_data)

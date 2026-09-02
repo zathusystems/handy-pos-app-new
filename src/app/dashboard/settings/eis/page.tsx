@@ -68,6 +68,12 @@ interface Terminal {
   terminalPosition?: number;
   status: string;
   isOnline: boolean;
+  blockingStatus?: {
+    is_blocked?: boolean;
+    blocking_reason?: string;
+    source?: string;
+    checked_at?: string | null;
+  } | null;
   activatedAt?: string;
   lastSyncAt?: string;
 }
@@ -75,7 +81,14 @@ interface Terminal {
 interface ConfigurationSummary {
   count: number;
   types: string[];
+  versions: Record<string, string>;
   lastSyncedAt?: string;
+  taxpayer: {
+    tin?: string;
+    vatRegistrationNumber?: string;
+    vatRegistered?: boolean;
+    taxpayerType?: string;
+  };
 }
 
 const DEFAULT_SETTINGS: EisSettings = {
@@ -90,7 +103,12 @@ const DEFAULT_SETTINGS: EisSettings = {
   blockSalesIfTaxMappingMissing: false,
 };
 
-const DEFAULT_CONFIG: ConfigurationSummary = { count: 0, types: [] };
+const DEFAULT_CONFIG: ConfigurationSummary = {
+  count: 0,
+  types: [],
+  versions: {},
+  taxpayer: {},
+};
 const ACTIVE_BRANCH_KEY = 'handypos-active-branch';
 const DEVICE_SERIAL_KEY = 'handypos-device-serial';
 const LEGACY_DEVICE_SERIAL_KEY = 'handypos-eis-device-serial';
@@ -153,7 +171,10 @@ const getDetectedOS = (): string => {
 const getDeviceSerial = (): string => {
   if (typeof window === 'undefined') return 'handy-pos-device';
   const existing = localStorage.getItem(DEVICE_SERIAL_KEY) || localStorage.getItem(LEGACY_DEVICE_SERIAL_KEY);
-  if (existing) return existing;
+  if (existing) {
+    localStorage.setItem(DEVICE_SERIAL_KEY, existing);
+    return existing;
+  }
 
   const serial = `HANDY-${getDetectedOS().slice(0, 3).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
   localStorage.setItem(DEVICE_SERIAL_KEY, serial);
@@ -162,6 +183,35 @@ const getDeviceSerial = (): string => {
 
 const readEisValue = (businessData: any, key: string): unknown => {
   return businessData?.[key] ?? businessData?.settings?.[key];
+};
+
+const readConfigValue = (configData: any, keys: string[]): unknown => {
+  if (!configData || typeof configData !== 'object') return undefined;
+  const containers = [configData, configData.data, configData.raw];
+  for (const container of containers) {
+    if (!container || typeof container !== 'object') continue;
+    for (const key of keys) {
+      const match = Object.keys(container).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+      if (match && container[match] !== null && container[match] !== undefined && container[match] !== '') {
+        return container[match];
+      }
+    }
+  }
+  return undefined;
+};
+
+const configTypeLabel = (configType: string): string => {
+  const labels: Record<string, string> = {
+    global_configuration: 'Global rules',
+    terminal_configuration: 'Terminal rules',
+    taxpayer_configuration: 'Taxpayer details',
+    tax_rules: 'Tax rules',
+    receipt_format: 'Receipt format',
+    product_codes: 'Product catalog',
+    system_settings: 'System settings',
+    terminal_site_products: 'Terminal products',
+  };
+  return labels[configType] || configType.split('_').join(' ');
 };
 
 const mapSettings = (businessData: any): EisSettings => {
@@ -192,6 +242,7 @@ const mapTerminal = (payload: any): Terminal => ({
   terminalPosition: payload?.terminal_position ? Number(payload.terminal_position) : undefined,
   status: String(payload?.status || 'pending_activation'),
   isOnline: toBoolean(payload?.is_online),
+  blockingStatus: payload?.blocking_status || null,
   activatedAt: payload?.activated_at,
   lastSyncAt: payload?.last_sync_at,
 });
@@ -216,7 +267,10 @@ export default function EISSettingsPage() {
     [branches, selectedBranchId]
   );
   const terminalIsActive = terminal?.status === 'active';
-  const terminalIsPending = Boolean(terminal && !terminalIsActive);
+  const terminalIsSuspended = terminal?.status === 'suspended';
+  const terminalIsPending = Boolean(terminal && !terminalIsActive && !terminalIsSuspended);
+  const [isCheckingBlock, setIsCheckingBlock] = useState(false);
+  const [isCheckingUnblock, setIsCheckingUnblock] = useState(false);
 
   const loadTerminal = useCallback(async (branchId: string) => {
     if (!businessId || !branchId) {
@@ -224,16 +278,15 @@ export default function EISSettingsPage() {
       return;
     }
 
+    setTerminal(null);
     try {
-      const response = await authFetch.fetch('/mra-eis/terminals/');
-      const branchTerminals = asList(response).filter(
-        (item) => String(item?.business || '') === businessId
-          && String(item?.branch || '') === String(branchId)
-      );
-      const deviceSerial = getDeviceSerial().toLowerCase();
-      const match = branchTerminals.find(
-        (item) => String(item?.device_serial || '').trim().toLowerCase() === deviceSerial
-      ) || branchTerminals[0];
+      const params = new URLSearchParams({
+        business_id: businessId,
+        branch_id: String(branchId),
+        device_serial: getDeviceSerial(),
+      });
+      const response = await authFetch.fetch(`/mra-eis/terminals/?${params.toString()}`);
+      const match = asList(response)[0];
       setTerminal(match ? mapTerminal(match) : null);
     } catch (error) {
       console.error('[EIS] Failed to load terminal:', error);
@@ -253,13 +306,44 @@ export default function EISSettingsPage() {
       const types = Array.from(
         new Set(activeRows.map((row) => String(row?.config_type || '')).filter(Boolean))
       );
-      const latest = activeRows
-        .map((row) => row?.fetched_from_mra_at || row?.created_at)
+      const latestByType: Record<string, any> = {};
+      for (const row of activeRows) {
+        const type = String(row?.config_type || '');
+        if (!type) continue;
+        const rowDate = String(row?.fetched_from_mra_at || row?.created_at || '');
+        const currentDate = String(latestByType[type]?.fetched_from_mra_at || latestByType[type]?.created_at || '');
+        if (!latestByType[type] || rowDate > currentDate) latestByType[type] = row;
+      }
+      const latest = Object.values(latestByType)
+        .map((row: any) => row?.fetched_from_mra_at || row?.created_at)
         .filter(Boolean)
         .sort()
         .at(-1);
+      const taxpayerData = latestByType.taxpayer_configuration?.config_data;
+      const taxpayerType = readConfigValue(taxpayerData, ['taxpayerType', 'taxPayerType', 'mraTaxpayerType']);
+      const taxpayerVat = readConfigValue(taxpayerData, [
+        'isVATRegistered', 'vatRegistered', 'isVatRegistered', 'vat_registered',
+      ]);
 
-      setConfiguration({ count: activeRows.length, types, lastSyncedAt: latest });
+      setConfiguration({
+        count: activeRows.length,
+        types,
+        versions: Object.fromEntries(
+          Object.entries(latestByType).map(([type, row]: [string, any]) => [type, String(row?.config_version || 'unknown')])
+        ),
+        lastSyncedAt: latest,
+        taxpayer: {
+          tin: String(readConfigValue(taxpayerData, [
+            'tin', 'taxpayerTin', 'taxpayerTIN', 'taxIdentificationNumber',
+            'taxIdentificationNo', 'taxpayerIdentificationNumber',
+          ]) || '').trim() || undefined,
+          vatRegistrationNumber: String(readConfigValue(taxpayerData, [
+            'vatRegistrationNumber', 'vatRegistrationNo', 'vatNumber', 'vat_registration_number',
+          ]) || '').trim() || undefined,
+          vatRegistered: taxpayerVat === undefined ? undefined : toBoolean(taxpayerVat),
+          taxpayerType: taxpayerType ? String(taxpayerType) : undefined,
+        },
+      });
     } catch (error) {
       console.error('[EIS] Failed to load configuration status:', error);
       setConfiguration(DEFAULT_CONFIG);
@@ -339,13 +423,6 @@ export default function EISSettingsPage() {
         method: 'PATCH',
         body: JSON.stringify({
           enable_eis: settings.enableEis,
-          tin: settings.tin.trim(),
-          vat_registration_number: settings.vatRegistered
-            ? settings.vatRegistrationNumber.trim()
-            : '',
-          vat_registered: settings.vatRegistered,
-          mra_taxpayer_type: settings.mraTaxpayerType,
-          mra_enrolled: settings.mraEnrolled,
           eis_environment: settings.eisEnvironment,
           block_sales_if_eis_down: settings.blockSalesIfEisDown,
           block_sales_if_tax_mapping_missing: settings.blockSalesIfTaxMappingMissing,
@@ -408,9 +485,15 @@ export default function EISSettingsPage() {
         }
       );
 
-      setTerminal(mapTerminal(response));
+      const nextTerminal = mapTerminal(response);
+      setTerminal(nextTerminal);
       setTacCode('');
-      toast({ title: 'Branch connected to MRA EIS' });
+      toast({
+        title: nextTerminal.status === 'active' ? 'Terminal activated' : 'Activation submitted',
+        description: nextTerminal.status === 'active'
+          ? 'This device is ready for MRA EIS.'
+          : 'MRA has not confirmed this device yet. Refresh the status after confirmation.',
+      });
     } catch (error) {
       toast({
         title: 'Could not connect this branch',
@@ -430,7 +513,11 @@ export default function EISSettingsPage() {
       setTerminal((current) => current ? {
         ...current,
         status: String(response?.status || current.status),
+        mraTerminalId: String(response?.mra_terminal_id || current.mraTerminalId || ''),
+        deviceSerial: String(response?.device_serial || current.deviceSerial || ''),
+        terminalPosition: response?.terminal_position ?? current.terminalPosition,
         isOnline: toBoolean(response?.is_online, current.isOnline),
+        blockingStatus: response?.blocking_status || current.blockingStatus || null,
         lastSyncAt: response?.last_sync_at || current.lastSyncAt,
       } : current);
       toast({ title: 'Terminal status refreshed' });
@@ -442,6 +529,66 @@ export default function EISSettingsPage() {
       });
     } finally {
       setIsRefreshingTerminal(false);
+    }
+  };
+
+  const checkTerminalBlocking = async () => {
+    if (!terminal?.id) return;
+    setIsCheckingBlock(true);
+    try {
+      const response = await authFetch.fetch(`/mra-eis/terminals/${terminal.id}/check_blocking_status/`, {
+        method: 'POST',
+      });
+      setTerminal((current) => current ? {
+        ...current,
+        status: String(response?.status || current.status),
+        blockingStatus: response?.blocking_status || current.blockingStatus || null,
+      } : current);
+      toast({
+        title: response?.is_blocked === true ? 'Terminal is blocked by MRA' : 'Terminal block status checked',
+        description: response?.is_blocked === true
+          ? String(response?.blocking_reason || 'New EIS sales are blocked on this terminal.')
+          : 'MRA did not report a block on this terminal.',
+        variant: response?.is_blocked === true ? 'destructive' : 'default',
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not check terminal block status',
+        description: errorMessage(error, 'Please connect to MRA and try again.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCheckingBlock(false);
+    }
+  };
+
+  const checkTerminalUnblock = async () => {
+    if (!terminal?.id) return;
+    setIsCheckingUnblock(true);
+    try {
+      const response = await authFetch.fetch(`/mra-eis/terminals/${terminal.id}/check_unblock_status/`, {
+        method: 'POST',
+      });
+      setTerminal((current) => current ? {
+        ...current,
+        status: String(response?.status || current.status),
+        blockingStatus: response?.blocking_status || current.blockingStatus || null,
+      } : current);
+      toast({
+        title: response?.is_unblocked === true ? 'Terminal unblocked' : 'Terminal is still blocked',
+        description: response?.is_unblocked === true
+          ? 'This terminal can issue new EIS sales again.'
+          : String(response?.remark || 'MRA has not released this terminal yet.'),
+        variant: response?.is_unblocked === true ? 'default' : 'destructive',
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not check unblock status',
+        description: errorMessage(error, 'Please connect to MRA and try again.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCheckingUnblock(false);
     }
   };
 
@@ -527,8 +674,8 @@ export default function EISSettingsPage() {
             <div>
               <p className="font-medium">Your normal POS flow is unchanged</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Enable EIS only after you have the business TIN and a Terminal Activation Code from MRA.
-                Product mappings will be managed separately in Inventory.
+                Enable EIS when your business has been registered in MRA and you have a Terminal Activation Code.
+                Taxpayer details and product mappings come from MRA and are handled in later setup steps.
               </p>
             </div>
           </CardContent>
@@ -537,18 +684,15 @@ export default function EISSettingsPage() {
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Business details</CardTitle>
-              <CardDescription>Use the taxpayer details registered with MRA.</CardDescription>
+              <CardTitle>MRA configuration</CardTitle>
+              <CardDescription>Taxpayer identity, VAT status, and tax rules are supplied by MRA.</CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-5 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="eis-tin">Taxpayer Identification Number (TIN)</Label>
-                <Input
-                  id="eis-tin"
-                  value={settings.tin}
-                  onChange={(event) => updateSetting('tin', event.target.value)}
-                  placeholder="Enter your MRA TIN"
-                />
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-md border bg-muted/20 p-4 sm:col-span-2">
+                <p className="font-medium">Nothing to enter here</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Activate a terminal, then sync the MRA configuration. Handy POS will save the taxpayer and tax values returned by MRA.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label>Environment</Label>
@@ -564,51 +708,13 @@ export default function EISSettingsPage() {
                 </Select>
                 <p className="text-xs text-muted-foreground">Use Production only after MRA onboarding is complete.</p>
               </div>
-              <div className="flex items-center justify-between gap-4 rounded-md border p-3 sm:col-span-2">
-                <div>
-                  <Label htmlFor="vat-registered">VAT registered</Label>
-                  <p className="mt-1 text-xs text-muted-foreground">Turn this on only if MRA issued a VAT registration number.</p>
-                </div>
-                <Switch
-                  id="vat-registered"
-                  checked={settings.vatRegistered}
-                  onCheckedChange={(checked) => {
-                    updateSetting('vatRegistered', checked);
-                    updateSetting('mraTaxpayerType', checked ? 'VAT' : 'NON_VAT');
-                  }}
-                  aria-label="VAT registered"
-                />
-              </div>
-              {settings.vatRegistered && (
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="vat-number">VAT registration number</Label>
-                  <Input
-                    id="vat-number"
-                    value={settings.vatRegistrationNumber}
-                    onChange={(event) => updateSetting('vatRegistrationNumber', event.target.value)}
-                    placeholder="Enter your VAT registration number"
-                  />
-                </div>
-              )}
-              <div className="flex items-center justify-between gap-4 rounded-md border p-3 sm:col-span-2">
-                <div>
-                  <Label htmlFor="mra-enrolled">Already enrolled with MRA EIS</Label>
-                  <p className="mt-1 text-xs text-muted-foreground">This records your MRA enrollment status; it does not replace terminal activation.</p>
-                </div>
-                <Switch
-                  id="mra-enrolled"
-                  checked={settings.mraEnrolled}
-                  onCheckedChange={(checked) => updateSetting('mraEnrolled', checked)}
-                  aria-label="Already enrolled with MRA EIS"
-                />
-              </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Connect a branch</CardTitle>
-              <CardDescription>Each branch or device needs the TAC issued by MRA.</CardDescription>
+              <CardTitle>Activate this device</CardTitle>
+              <CardDescription>Each branch and device needs the TAC issued by MRA.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-5 sm:grid-cols-2">
@@ -637,7 +743,7 @@ export default function EISSettingsPage() {
                       value={tacCode}
                       onChange={(event) => setTacCode(event.target.value)}
                       placeholder="Paste the TAC from MRA"
-                      disabled={terminalIsPending}
+                      disabled={terminalIsPending || terminalIsSuspended}
                     />
                   </div>
                 </div>
@@ -651,13 +757,42 @@ export default function EISSettingsPage() {
                       <p className="font-medium">{selectedBranch?.name || 'Selected branch'} is connected</p>
                       <p className="mt-1 text-sm text-muted-foreground">
                         Terminal {terminal?.mraTerminalId || terminal?.terminalId || 'registered'} · {terminal?.isOnline ? 'Online' : 'Offline'}
+                        {terminal?.terminalPosition ? ` · Position ${terminal.terminalPosition}` : ''}
                       </p>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={refreshTerminal} disabled={isRefreshingTerminal}>
-                    {isRefreshingTerminal ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    Refresh status
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={refreshTerminal} disabled={isRefreshingTerminal}>
+                      {isRefreshingTerminal ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                      Refresh status
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={checkTerminalBlocking} disabled={isCheckingBlock}>
+                      {isCheckingBlock ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                      Check MRA block
+                    </Button>
+                  </div>
+                </div>
+              ) : terminalIsSuspended ? (
+                <div className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+                    <div>
+                      <p className="font-medium">Terminal blocked</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {terminal.blockingStatus?.blocking_reason || 'MRA has blocked new fiscal sales on this terminal.'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={checkTerminalBlocking} disabled={isCheckingBlock}>
+                      {isCheckingBlock ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                      Check block
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={checkTerminalUnblock} disabled={isCheckingUnblock}>
+                      {isCheckingUnblock ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                      Check unblock
+                    </Button>
+                  </div>
                 </div>
               ) : terminalIsPending ? (
                 <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -713,12 +848,42 @@ export default function EISSettingsPage() {
                   <p className="mt-1 text-sm font-medium">{formatDate(configuration.lastSyncedAt)}</p>
                 </div>
               </div>
+              {configuration.taxpayer.tin || configuration.taxpayer.vatRegistrationNumber || configuration.taxpayer.taxpayerType ? (
+                <div className="grid gap-3 rounded-md border bg-muted/20 p-4 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">MRA taxpayer ID</p>
+                    <p className="mt-1 break-words text-sm font-medium">{configuration.taxpayer.tin || 'Not supplied'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">VAT status</p>
+                    <p className="mt-1 text-sm font-medium">
+                      {configuration.taxpayer.vatRegistered === undefined
+                        ? 'Not supplied'
+                        : configuration.taxpayer.vatRegistered
+                          ? 'VAT registered'
+                          : 'Not VAT registered'}
+                      {configuration.taxpayer.vatRegistrationNumber ? ` · ${configuration.taxpayer.vatRegistrationNumber}` : ''}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Taxpayer type</p>
+                    <p className="mt-1 text-sm font-medium">{configuration.taxpayer.taxpayerType || 'Not supplied'}</p>
+                  </div>
+                </div>
+              ) : null}
               <Button variant="outline" onClick={syncConfiguration} disabled={!terminalIsActive || isSyncingConfiguration}>
                 {isSyncingConfiguration ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Sync MRA configuration
               </Button>
               {configuration.types.length > 0 && (
-                <p className="text-xs text-muted-foreground">Available: {configuration.types.join(', ')}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {configuration.types.map((type) => (
+                    <div key={type} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+                      <span className="capitalize">{configTypeLabel(type)}</span>
+                      <span className="font-mono text-muted-foreground">v{configuration.versions[type] || 'unknown'}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>

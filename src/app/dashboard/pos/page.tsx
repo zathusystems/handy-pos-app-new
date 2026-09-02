@@ -1054,7 +1054,7 @@ export default function PosPage() {
     const laybuyDepositAmount = Number(buyerDetails?.laybuyDeposit ?? 0);
     const laybuyPaymentMethod = buyerDetails?.laybuyPaymentMethod?.trim() || 'Cash';
     const buyerFields: Partial<Order> = {};
-    const buyerPayload: Record<string, string | number> = {};
+    const buyerPayload: Record<string, string | number | boolean> = {};
 
     if (buyerCustomerId) {
       buyerFields.customerId = buyerCustomerId;
@@ -1076,7 +1076,44 @@ export default function PosPage() {
     if (buyerTin) {
       buyerFields.customerTin = buyerTin;
       buyerFields.customer_tin = buyerTin;
+      buyerFields.buyerTin = buyerTin;
+      buyerFields.buyer_tin = buyerTin;
       buyerPayload.customer_tin = buyerTin;
+      buyerPayload.buyer_tin = buyerTin;
+    }
+    const buyerAuthorizationCode = buyerDetails?.authorizationCode?.trim();
+    if (buyerAuthorizationCode) {
+      buyerFields.buyerAuthorizationCode = buyerAuthorizationCode;
+      buyerFields.buyer_authorization_code = buyerAuthorizationCode;
+      buyerPayload.buyer_authorization_code = buyerAuthorizationCode;
+    }
+    if (buyerDetails?.isExport !== undefined) {
+      buyerFields.isExport = buyerDetails.isExport === true;
+      buyerFields.is_export = buyerDetails.isExport === true;
+      buyerPayload.is_export = buyerDetails.isExport === true;
+    }
+    if (buyerDetails?.isReliefSupply !== undefined) {
+      buyerFields.isReliefSupply = buyerDetails.isReliefSupply === true;
+      buyerFields.is_relief_supply = buyerDetails.isReliefSupply === true;
+      buyerPayload.is_relief_supply = buyerDetails.isReliefSupply === true;
+    }
+    const vat5ProjectNumber = buyerDetails?.vat5ProjectNumber?.trim();
+    if (vat5ProjectNumber) {
+      buyerFields.vat5ProjectNumber = vat5ProjectNumber;
+      buyerFields.vat5_project_number = vat5ProjectNumber;
+      buyerPayload.vat5_project_number = vat5ProjectNumber;
+    }
+    const vat5CertificateNumber = buyerDetails?.vat5CertificateNumber?.trim();
+    if (vat5CertificateNumber) {
+      buyerFields.vat5CertificateNumber = vat5CertificateNumber;
+      buyerFields.vat5_certificate_number = vat5CertificateNumber;
+      buyerPayload.vat5_certificate_number = vat5CertificateNumber;
+    }
+    const vat5Quantity = Number(buyerDetails?.vat5Quantity ?? 0);
+    if (Number.isFinite(vat5Quantity) && vat5Quantity > 0) {
+      buyerFields.vat5Quantity = vat5Quantity;
+      buyerFields.vat5_quantity = vat5Quantity;
+      buyerPayload.vat5_quantity = vat5Quantity;
     }
     if (paymentMethod === 'Laybuy' && Number.isFinite(laybuyDepositAmount) && laybuyDepositAmount > 0) {
       buyerFields.laybuyDeposit = laybuyDepositAmount;

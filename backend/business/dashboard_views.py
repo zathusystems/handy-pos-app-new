@@ -9,6 +9,7 @@ from pos_sessions.models import Order, OrderItem, Session
 from inventory.models import InventoryItem, PurchaseOrderItem
 from take_orders.models import TakeOrder
 from .models import Business, Branch, CustomerAccountTransaction, CustomerLaybuy, CustomerLaybuyPayment
+from .access import get_accessible_business_queryset
 from decimal import Decimal
 import re
 import logging
@@ -20,19 +21,33 @@ class DashboardViewSet(viewsets.ViewSet):
 
     def _get_user_business(self, request):
         """Get the user's business (owner or assigned staff business)."""
-        business = Business.objects.filter(owner=request.user).first()
-        if business:
-            return business
+        businesses = get_accessible_business_queryset(request.user).order_by('id')
 
-        try:
-            from staff.models import Staff
-            staff = Staff.objects.select_related('business').filter(
-                user=request.user,
-                is_active=True
-            ).first()
-            return staff.business if staff and staff.business else None
-        except Exception:
-            return None
+        # A user may own or administer more than one business. Resolve the
+        # business from the selected branch before falling back to a business
+        # query parameter or the first accessible business.
+        raw_branch_ref = request.query_params.get('branch_id')
+        branch_ref = self._normalize_branch_reference(raw_branch_ref)
+        branch_queryset = Branch.objects.filter(business_id__in=businesses.values('id'))
+        branch = None
+        if isinstance(branch_ref, int):
+            branch = branch_queryset.filter(id=branch_ref).first()
+        elif isinstance(branch_ref, str) and branch_ref:
+            normalized_branch = branch_ref.strip().lower()
+            if normalized_branch in {'main', 'main-branch', 'main_branch'}:
+                branch = branch_queryset.filter(name__iendswith='Main Branch').order_by('created_at', 'id').first()
+            if not branch:
+                branch = (
+                    branch_queryset.filter(slug=branch_ref).first()
+                    or branch_queryset.filter(name__iexact=branch_ref).first()
+                )
+        if branch:
+            return branch.business
+
+        requested_business_id = request.query_params.get('business_id')
+        if requested_business_id:
+            businesses = businesses.filter(id=requested_business_id)
+        return businesses.first()
 
     def _get_active_branch(self, request):
         """Get the active branch for the user"""

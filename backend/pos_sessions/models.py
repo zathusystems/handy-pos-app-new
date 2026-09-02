@@ -136,6 +136,13 @@ class Order(models.Model):
     customer_notes = models.TextField(blank=True, null=True)
     buyer_name = models.CharField(max_length=255, blank=True, null=True)
     buyer_tin = models.CharField(max_length=50, blank=True, null=True)
+    buyer_authorization_code = models.CharField(max_length=100, blank=True, null=True)
+    is_export = models.BooleanField(default=False)
+    is_relief_supply = models.BooleanField(default=False)
+    vat5_project_number = models.CharField(max_length=100, blank=True, null=True)
+    vat5_certificate_number = models.CharField(max_length=100, blank=True, null=True)
+    vat5_quantity = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    eis_validation_metadata = models.JSONField(default=dict, blank=True)
     
     # Pricing
     subtotal = models.DecimalField(max_digits=12, decimal_places=2)

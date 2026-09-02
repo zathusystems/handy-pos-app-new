@@ -11,6 +11,7 @@ from django.db import transaction
 from django.db.models import Q
 import re
 from decimal import Decimal, InvalidOperation
+from business.access import get_accessible_business_ids
 
 NON_BLOCKING_OFFLINE_DRY_RUN_REASONS = {
     'submission_call_failed',
@@ -163,7 +164,9 @@ class OrderItemViewSet(viewsets.ModelViewSet):
         """Filter order items by order"""
         order_id = self.request.query_params.get('order_id')
         
-        queryset = OrderItem.objects.all()
+        queryset = OrderItem.objects.filter(
+            order__business_id__in=get_accessible_business_ids(self.request.user)
+        )
         
         if order_id:
             queryset = queryset.filter(order_id=order_id)
@@ -182,7 +185,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         session_id = self.request.query_params.get('session_id')
         branch_id = self.request.query_params.get('branch_id')
         
-        queryset = Order.objects.all()
+        queryset = Order.objects.filter(
+            business_id__in=get_accessible_business_ids(self.request.user)
+        )
         
         if session_id:
             queryset = queryset.filter(session_id=session_id)
@@ -208,7 +213,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         # Resolve branch ID to branch object if needed
         if 'branch' in data and isinstance(data['branch'], str):
             try:
-                branch_obj = Branch.objects.get(id=data['branch'])
+                branch_obj = Branch.objects.get(
+                    id=data['branch'],
+                    business_id__in=get_accessible_business_ids(request.user),
+                )
                 data['branch'] = branch_obj.id
             except Branch.DoesNotExist:
                 return Response(
@@ -217,7 +225,10 @@ class OrderViewSet(viewsets.ModelViewSet):
                 )
         elif 'branch' in data:
             try:
-                branch_obj = Branch.objects.get(id=data['branch'])
+                branch_obj = Branch.objects.get(
+                    id=data['branch'],
+                    business_id__in=get_accessible_business_ids(request.user),
+                )
             except Branch.DoesNotExist:
                 return Response(
                     {'error': f'Branch {data["branch"]} not found'},
@@ -333,9 +344,15 @@ class OrderViewSet(viewsets.ModelViewSet):
                         business_settings = None
 
                     if bool(getattr(business_settings, 'enable_eis', False)):
-                        from mra_eis.services import POSOrderSubmissionService
+                        from mra_eis.services import POSOrderSubmissionService, TerminalService
 
-                        mra_result = POSOrderSubmissionService.prepare_pos_order_submission(order)
+                        mra_result = POSOrderSubmissionService.prepare_pos_order_submission(
+                            order,
+                            request_device_serial=TerminalService.extract_request_device_serial(request),
+                            enforce_device_binding=bool(
+                                getattr(settings, 'MRA_EIS_ENFORCE_TERMINAL_DEVICE_BINDING', False)
+                            ),
+                        )
                         print(
                             f"[Order] Prepared MRA payload for order {order.id}: "
                             f"fiscal={mra_result.get('fiscal_invoice_number')} "
@@ -394,7 +411,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        orders = Order.objects.filter(session_id=session_id)
+        orders = self.get_queryset().filter(session_id=session_id)
         serializer = self.get_serializer(orders, many=True)
         return Response(serializer.data)
 
@@ -428,6 +445,7 @@ class SessionViewSet(viewsets.ModelViewSet):
             else self.request.query_params.get('branch_id')
         )
 
+        accessible_business_ids = get_accessible_business_ids(user)
         owned_business_ids = list(
             Business.objects.filter(owner=user).values_list('id', flat=True)
         )
@@ -446,12 +464,8 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         if is_global_admin:
             queryset = Session.objects.all()
-        elif is_owner:
-            queryset = Session.objects.filter(business_id__in=owned_business_ids)
-        elif staff_profile and staff_profile.business_id:
-            queryset = Session.objects.filter(business_id=staff_profile.business_id)
         else:
-            queryset = Session.objects.none()
+            queryset = Session.objects.filter(business_id__in=accessible_business_ids)
 
         if include_user_filter and not can_view_all_sessions:
             queryset = queryset.filter(user=user)
@@ -481,6 +495,12 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         if not business and getattr(branch, 'business', None):
             business = branch.business
+
+        accessible_business_ids = get_accessible_business_ids(self.request.user)
+        if not business or business.id not in accessible_business_ids:
+            raise ValidationError({'business': 'Business is not available for this account'})
+        if branch.business_id != business.id:
+            raise ValidationError({'branch': 'Branch does not belong to the selected business'})
 
         existing_active = Session.objects.filter(
             user=self.request.user,

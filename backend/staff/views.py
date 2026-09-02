@@ -214,7 +214,7 @@ class StaffViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
                     'can_manage_customers': True,
                     'can_manage_invoices': True,
                     'can_view_reports': True,
-                    'can_manage_settings': False,  # Only owner
+                    'can_manage_settings': True,
                     'can_view_kitchen': True,
                 },
                 StaffRole.MANAGER: {

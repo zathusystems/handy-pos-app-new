@@ -16,7 +16,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.test.utils import get_runner
 from django.utils import timezone
 
-from business.models import Branch, Business
+from business.models import Branch, Business, BusinessSettings
 from inventory.models import InventoryItem, MRAProductMapping as InventoryMRAProductMapping
 from mra_eis.models import MRAAPIError, MRAInvoice, SyncRetryQueue, Terminal, TerminalActivationCode
 from mra_eis.services import (
@@ -522,6 +522,16 @@ class Command(BaseCommand):
                 dirty_fields.append('mra_taxpayer_type')
             if dirty_fields:
                 business.save(update_fields=dirty_fields + ['updated_at'])
+
+        # The readiness command explicitly exercises EIS and therefore opts
+        # its isolated test business in before calling EIS-only services.
+        BusinessSettings.objects.update_or_create(
+            business=business,
+            defaults={
+                'enable_eis': True,
+                'eis_environment': 'TEST',
+            },
+        )
 
         # Always create a dedicated branch for each run so terminal/TAC bindings
         # do not collide with previous readiness evidence runs.

@@ -37,9 +37,39 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.handypos.on
 const SYNC_QUEUE_KEY = 'handypos-sync-queue';
 const SYNC_QUEUE_MIGRATION_KEY = 'handypos-sync-queue-migrated-v1';
 const AUTH_TOKENS_KEY = 'handypos-auth-tokens';
+const DEVICE_SERIAL_KEY = 'handypos-device-serial';
+const LEGACY_DEVICE_SERIAL_KEY = 'handypos-eis-device-serial';
 const MAX_RETRIES = 3;
 const SYNC_INTERVAL = 30000; // 30 seconds
 const TRANSIENT_NETWORK_RETRY_DELAY_MS = 800;
+
+const getDeviceSerial = (): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    const existing =
+      localStorage.getItem(DEVICE_SERIAL_KEY) || localStorage.getItem(LEGACY_DEVICE_SERIAL_KEY);
+    if (existing) {
+      localStorage.setItem(DEVICE_SERIAL_KEY, existing);
+      return existing;
+    }
+
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const os = userAgent.includes('android')
+      ? 'AND'
+      : userAgent.includes('win')
+        ? 'WIN'
+        : userAgent.includes('mac')
+          ? 'MAC'
+          : userAgent.includes('linux')
+            ? 'LNX'
+            : 'WEB';
+    const serial = `HANDY-${os}-${Date.now().toString(36).toUpperCase()}`;
+    localStorage.setItem(DEVICE_SERIAL_KEY, serial);
+    return serial;
+  } catch {
+    return '';
+  }
+};
 
 class AuthenticatedFetch {
   private tokens: AuthTokens | null = null;
@@ -438,6 +468,10 @@ class AuthenticatedFetch {
     };
     if (this.tokens?.access) {
       headers['Authorization'] = `Bearer ${this.tokens.access}`;
+    }
+    const deviceSerial = getDeviceSerial();
+    if (deviceSerial) {
+      headers['X-HandyPOS-Device-Serial'] = deviceSerial;
     }
     return headers;
   }

@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 
 from subscription.models import Deposit, DepositStatus, Subscription
 from subscription.serializers import DepositSerializer
+from business.access import get_accessible_business_queryset
 
 from .models import PaymentGatewayConfiguration, PaymentWebhookEvent, SubscriptionPaymentAttempt
 from .pricing import (
@@ -470,9 +471,14 @@ def render_app_redirect_bridge_page(app_redirect_url, *, billing_redirect_path='
 
 def get_accessible_subscription_queryset(user):
     queryset = Subscription.objects.select_related('business', 'business__owner').order_by('id')
-    if user.is_staff:
+    if getattr(user, 'is_superuser', False):
         return queryset
-    return queryset.filter(business__owner=user)
+    return queryset.filter(
+        business_id__in=get_accessible_business_queryset(
+            user,
+            admin_staff_only=True,
+        ).values('id')
+    )
 
 
 def resolve_subscription_for_payment(user, business_id=None):
@@ -516,9 +522,14 @@ def get_accessible_deposit_queryset(user):
         'subscription__business',
         'subscription__business__owner',
     )
-    if user.is_staff:
+    if getattr(user, 'is_superuser', False):
         return queryset
-    return queryset.filter(subscription__business__owner=user)
+    return queryset.filter(
+        subscription__business_id__in=get_accessible_business_queryset(
+            user,
+            admin_staff_only=True,
+        ).values('id')
+    )
 
 
 def resolve_deposit_for_payment(user, deposit_reference, *, business_id=None):
@@ -544,9 +555,14 @@ def get_accessible_attempt_queryset(user):
         'deposit__subscription__business',
         'deposit__subscription__business__owner',
     )
-    if user.is_staff:
+    if getattr(user, 'is_superuser', False):
         return queryset
-    return queryset.filter(deposit__subscription__business__owner=user)
+    return queryset.filter(
+        deposit__subscription__business_id__in=get_accessible_business_queryset(
+            user,
+            admin_staff_only=True,
+        ).values('id')
+    )
 
 
 def find_active_subscription_checkout_attempt(subscription):

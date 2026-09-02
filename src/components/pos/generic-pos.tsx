@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { CartItem, PaymentMethod } from '@/app/dashboard/pos/page';
 import type { BusinessCharge, Customer, InventoryItem, Order, TaxRate } from '@/lib/db';
+import type { AppliedBusinessCharge } from '@/lib/business-charges';
 import { useCurrency } from '@/hooks/use-currency';
 import { authFetch } from '@/lib/auth-fetch';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,7 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { calculateAppliedCharges, sumAppliedCharges } from '@/lib/business-charges';
+import { calculateAppliedMraLevies } from '@/lib/mra-levies';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
@@ -94,6 +96,12 @@ export type BuyerDetails = {
   name?: string;
   phone?: string;
   tin?: string;
+  authorizationCode?: string;
+  isExport?: boolean;
+  isReliefSupply?: boolean;
+  vat5ProjectNumber?: string;
+  vat5CertificateNumber?: string;
+  vat5Quantity?: number;
   laybuyDeposit?: number;
   laybuyPaymentMethod?: string;
 };
@@ -174,11 +182,30 @@ const normalizeBuyerDetails = (details?: BuyerDetails | null): BuyerDetails | un
   const name = details.name?.trim();
   const phone = details.phone?.trim();
   const tin = details.tin?.trim();
+  const authorizationCode = details.authorizationCode?.trim();
+  const isExport = details.isExport === true;
+  const isReliefSupply = details.isReliefSupply === true;
+  const vat5ProjectNumber = details.vat5ProjectNumber?.trim();
+  const vat5CertificateNumber = details.vat5CertificateNumber?.trim();
+  const vat5Quantity = Number(details.vat5Quantity ?? 0);
+  const hasVat5Quantity = Number.isFinite(vat5Quantity) && vat5Quantity > 0;
   const laybuyDeposit = Number(details.laybuyDeposit ?? 0);
   const hasLaybuyDeposit = Number.isFinite(laybuyDeposit) && laybuyDeposit > 0;
   const laybuyPaymentMethod = details.laybuyPaymentMethod?.trim();
 
-  if (!customerId && !name && !phone && !tin && !hasLaybuyDeposit) {
+  if (
+    !customerId &&
+    !name &&
+    !phone &&
+    !tin &&
+    !authorizationCode &&
+    !isExport &&
+    !isReliefSupply &&
+    !vat5ProjectNumber &&
+    !vat5CertificateNumber &&
+    !hasVat5Quantity &&
+    !hasLaybuyDeposit
+  ) {
     return undefined;
   }
 
@@ -187,6 +214,12 @@ const normalizeBuyerDetails = (details?: BuyerDetails | null): BuyerDetails | un
     name: name || undefined,
     phone: phone || undefined,
     tin: tin || undefined,
+    authorizationCode: authorizationCode || undefined,
+    isExport: isExport || undefined,
+    isReliefSupply: isReliefSupply || undefined,
+    vat5ProjectNumber: vat5ProjectNumber || undefined,
+    vat5CertificateNumber: vat5CertificateNumber || undefined,
+    vat5Quantity: hasVat5Quantity ? vat5Quantity : undefined,
     laybuyDeposit: hasLaybuyDeposit ? laybuyDeposit : undefined,
     laybuyPaymentMethod: laybuyPaymentMethod || undefined,
   };
@@ -368,11 +401,14 @@ type ProductTaxMappingDetail = {
   mappingId?: string;
   mappingBranchId?: string;
   mappingSource?: 'local' | 'default' | 'none';
+  mraLevies?: Array<{ levyTypeId: string; levyRate: number }>;
 };
 
 type CartItemTaxDetail = {
   amount: number;
   rate: number;
+  netAmount: number;
+  grossAmount: number;
   taxType: NormalizedTaxType;
   method: NormalizedTaxCalculationMethod;
   status: MappingStatus;
@@ -906,6 +942,7 @@ const PaymentDialog = ({
     onStepChange,
     businessType,
     activeCharges = [],
+    mraAppliedCharges = [],
 }: {
     subtotal: number;
     tax: number;
@@ -921,6 +958,7 @@ const PaymentDialog = ({
     onConfigurePrinter: () => void;
     defaultTaxRate?: TaxRate | null;
     activeCharges?: BusinessCharge[];
+    mraAppliedCharges?: AppliedBusinessCharge[];
     displayMode?: 'dialog' | 'inline';
     onStepChange?: (step: 'payment' | 'confirmation') => void;
     businessType?: BusinessType;
@@ -938,6 +976,12 @@ const PaymentDialog = ({
     const [buyerName, setBuyerName] = useState('');
     const [buyerPhone, setBuyerPhone] = useState('');
     const [buyerTin, setBuyerTin] = useState('');
+    const [buyerAuthorizationCode, setBuyerAuthorizationCode] = useState('');
+    const [isExport, setIsExport] = useState(false);
+    const [isReliefSupply, setIsReliefSupply] = useState(false);
+    const [vat5ProjectNumber, setVat5ProjectNumber] = useState('');
+    const [vat5CertificateNumber, setVat5CertificateNumber] = useState('');
+    const [vat5Quantity, setVat5Quantity] = useState<number | string>('');
     const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
     const [calculatedTax, setCalculatedTax] = useState(tax);
     const [calculatedNetAmount, setCalculatedNetAmount] = useState(subtotal);
@@ -1036,6 +1080,12 @@ const PaymentDialog = ({
         setBuyerName('');
         setBuyerPhone('');
         setBuyerTin('');
+        setBuyerAuthorizationCode('');
+        setIsExport(false);
+        setIsReliefSupply(false);
+        setVat5ProjectNumber('');
+        setVat5CertificateNumber('');
+        setVat5Quantity('');
         setCalculatedTax(tax);
         setCalculatedNetAmount(subtotal);
         setCalculatedGrossAmount(subtotal + tax);
@@ -1210,6 +1260,9 @@ const PaymentDialog = ({
                                     mraProductName: rawMapping.mra_product_name || rawMapping.mraProductName || '',
                                     mraTaxType: taxType,
                                     mraTaxRate: Number(rawMapping.mra_tax_rate ?? rawMapping.mraTaxRate ?? 0),
+                                    mraLevies: Array.isArray(rawMapping.mra_levies ?? rawMapping.mraLevies)
+                                        ? (rawMapping.mra_levies ?? rawMapping.mraLevies)
+                                        : [],
                                     mraUnitMeasure: rawMapping.mra_unit_measure || rawMapping.mraUnitMeasure || '',
                                     taxCalculationMethod: calculationMethod,
                                     isApproved: Boolean(rawMapping.is_approved ?? rawMapping.isApproved),
@@ -1309,6 +1362,9 @@ const PaymentDialog = ({
                                         mraProductName: readyMapping.mra_product_name || readyMapping.mraProductName || '',
                                         mraTaxType: taxType,
                                         mraTaxRate: Number(readyMapping.mra_tax_rate ?? readyMapping.mraTaxRate ?? 0),
+                                        mraLevies: Array.isArray(readyMapping.mra_levies ?? readyMapping.mraLevies)
+                                            ? (readyMapping.mra_levies ?? readyMapping.mraLevies)
+                                            : [],
                                         mraUnitMeasure: readyMapping.mra_unit_measure || readyMapping.mraUnitMeasure || '',
                                         taxCalculationMethod: calculationMethod,
                                         isApproved: Boolean(readyMapping.is_approved ?? readyMapping.isApproved),
@@ -1458,6 +1514,9 @@ const PaymentDialog = ({
                                 ''
                             ).trim() || undefined,
                             mappingSource: 'local',
+                            mraLevies: Array.isArray(localMapping?.mraLevies ?? localMapping?.mra_levies)
+                                ? (localMapping?.mraLevies ?? localMapping?.mra_levies)
+                                : [],
                         };
                     } else {
                         const hasLocalMapping = Boolean(localMapping);
@@ -1504,6 +1563,9 @@ const PaymentDialog = ({
                                     ''
                                 ).trim() || undefined,
                                 mappingSource: 'local',
+                                mraLevies: Array.isArray(localMapping?.mraLevies ?? localMapping?.mra_levies)
+                                    ? (localMapping?.mraLevies ?? localMapping?.mra_levies)
+                                    : [],
                             };
                         } else if (!shouldEnforceTaxMapping && hasLocalMapping && normalizedFallbackRate > 0) {
                             const effectiveTaxRate = normalizedFallbackRate / 100;
@@ -1542,6 +1604,9 @@ const PaymentDialog = ({
                                     ''
                                 ).trim() || undefined,
                                 mappingSource: 'local',
+                                mraLevies: Array.isArray(localMapping?.mraLevies ?? localMapping?.mra_levies)
+                                    ? (localMapping?.mraLevies ?? localMapping?.mra_levies)
+                                    : [],
                             };
                         } else if (!shouldEnforceTaxMapping && defaultTaxRateDecimal > 0) {
                             itemTax = lineAmount * defaultTaxRateDecimal / (1 + defaultTaxRateDecimal);
@@ -1563,6 +1628,7 @@ const PaymentDialog = ({
                                 taxableAmount: itemNet,
                                 mappingStatus,
                                 mappingSource: 'default',
+                                mraLevies: [],
                             };
                         } else {
                             totalNet += lineAmount;
@@ -1579,6 +1645,7 @@ const PaymentDialog = ({
                                 taxableAmount: lineAmount,
                                 mappingStatus,
                                 mappingSource: 'none',
+                                mraLevies: [],
                             };
                         }
                     }
@@ -1616,12 +1683,15 @@ const PaymentDialog = ({
     }, [cart, subtotal, tax, taxLabel, eisEnabled, shouldEnforceTaxMapping, defaultTaxRateDecimal, branchId, normalizedActiveBranchId]);
 
     const appliedCharges = useMemo(() => (
-        calculateAppliedCharges({
-            charges: activeCharges,
-            netSubtotal: calculatedNetAmount,
-            grossTotal: calculatedGrossAmount,
-        })
-    ), [activeCharges, calculatedGrossAmount, calculatedNetAmount]);
+        [
+            ...calculateAppliedCharges({
+                charges: activeCharges.filter((charge) => !eisEnabled || charge.chargeType !== 'LEVY'),
+                netSubtotal: calculatedNetAmount,
+                grossTotal: calculatedGrossAmount,
+            }),
+            ...(eisEnabled ? mraAppliedCharges : []),
+        ]
+    ), [activeCharges, calculatedGrossAmount, calculatedNetAmount, eisEnabled, mraAppliedCharges]);
     const exclusiveChargesTotal = useMemo(
         () => sumAppliedCharges(appliedCharges.filter((charge) => charge.calculationMethod === 'exclusive')),
         [appliedCharges]
@@ -1830,6 +1900,14 @@ const PaymentDialog = ({
                 name: buyerName,
                 phone: buyerPhone,
                 tin: buyerTin,
+                authorizationCode: buyerAuthorizationCode,
+                isExport: eisEnabled ? isExport : undefined,
+                isReliefSupply: eisEnabled ? isReliefSupply : undefined,
+                vat5ProjectNumber: eisEnabled && isReliefSupply ? vat5ProjectNumber : undefined,
+                vat5CertificateNumber: eisEnabled && isReliefSupply ? vat5CertificateNumber : undefined,
+                vat5Quantity: eisEnabled && isReliefSupply
+                    ? Number.parseFloat(String(vat5Quantity || ''))
+                    : undefined,
                 laybuyDeposit: method === 'Laybuy' ? normalizedLaybuyDeposit : undefined,
                 laybuyPaymentMethod: method === 'Laybuy' ? laybuyPaymentMethod : undefined,
             });
@@ -2433,6 +2511,7 @@ const PaymentDialog = ({
                         receiptLegalMarkerFontWeight={receiptDisplaySettings.receiptLegalMarkerFontWeight}
                         receiptLegalMarkerScaleX={receiptDisplaySettings.receiptLegalMarkerScaleX}
                         receiptQrCodeSize={receiptDisplaySettings.receiptQrCodeSize}
+                        fiscalMode={Boolean(eisEnabled)}
                         copyNumber={receiptCopyNumber}
                     />
                 </div>
@@ -2464,6 +2543,7 @@ const PaymentDialog = ({
                                 receiptLegalMarkerFontWeight={receiptDisplaySettings.receiptLegalMarkerFontWeight}
                                 receiptLegalMarkerScaleX={receiptDisplaySettings.receiptLegalMarkerScaleX}
                                 receiptQrCodeSize={receiptDisplaySettings.receiptQrCodeSize}
+                                fiscalMode={Boolean(eisEnabled)}
                                 copyNumber={1}
                                 rootId="receipt-preview-area"
                             />
@@ -2849,6 +2929,86 @@ const PaymentDialog = ({
                                     disabled={isProcessingPayment}
                                 />
                             </div>
+                            {eisEnabled && (
+                                <div className="space-y-3 rounded-md border border-primary/20 bg-primary/5 p-3">
+                                    <div>
+                                        <p className="text-sm font-medium">MRA sale details</p>
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Complete these only for an export, VAT-relief, or buyer-authorized sale.
+                                        </p>
+                                    </div>
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                        <div className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+                                            <div>
+                                                <label htmlFor="mra-export-sale" className="text-xs font-medium">Export sale</label>
+                                                <p className="text-[11px] text-muted-foreground">Mark goods supplied for export.</p>
+                                            </div>
+                                            <Switch
+                                                id="mra-export-sale"
+                                                checked={isExport}
+                                                onCheckedChange={setIsExport}
+                                                disabled={isProcessingPayment}
+                                            />
+                                        </div>
+                                        <div className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+                                            <div>
+                                                <label htmlFor="mra-relief-sale" className="text-xs font-medium">VAT relief supply</label>
+                                                <p className="text-[11px] text-muted-foreground">Requires a valid VAT5 certificate.</p>
+                                            </div>
+                                            <Switch
+                                                id="mra-relief-sale"
+                                                checked={isReliefSupply}
+                                                onCheckedChange={setIsReliefSupply}
+                                                disabled={isProcessingPayment}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-medium text-muted-foreground">Buyer authorization code</label>
+                                        <Input
+                                            placeholder="If required by MRA"
+                                            value={buyerAuthorizationCode}
+                                            onChange={(e) => setBuyerAuthorizationCode(e.target.value)}
+                                            disabled={isProcessingPayment}
+                                        />
+                                    </div>
+                                    {isReliefSupply && (
+                                        <div className="grid gap-2 sm:grid-cols-3">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-muted-foreground">VAT5 project number</label>
+                                                <Input
+                                                    placeholder="Project number"
+                                                    value={vat5ProjectNumber}
+                                                    onChange={(e) => setVat5ProjectNumber(e.target.value)}
+                                                    disabled={isProcessingPayment}
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-muted-foreground">VAT5 certificate number</label>
+                                                <Input
+                                                    placeholder="Certificate number"
+                                                    value={vat5CertificateNumber}
+                                                    onChange={(e) => setVat5CertificateNumber(e.target.value)}
+                                                    disabled={isProcessingPayment}
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-muted-foreground">VAT5 quantity</label>
+                                                <Input
+                                                    type="number"
+                                                    min="0.001"
+                                                    step="0.001"
+                                                    placeholder="Quantity"
+                                                    value={vat5Quantity}
+                                                    onChange={(e) => setVat5Quantity(e.target.value)}
+                                                    disabled={isProcessingPayment}
+                                                    inputMode="decimal"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
@@ -3344,6 +3504,8 @@ export const GenericPos = ({
         perItemTax[itemKey] = {
           amount: itemTax,
           rate: ratePercent,
+          netAmount: itemNet,
+          grossAmount: itemGross,
           taxType,
           method,
           status,
@@ -3371,13 +3533,31 @@ export const GenericPos = ({
 
   const subtotal = cartSummary.net;
   const tax = cartSummary.tax;
+  const mraAppliedCharges = useMemo(() => (
+    eisEnabled
+      ? calculateAppliedMraLevies({
+          cart,
+          mappingByItemId,
+          lineNetAmounts: Object.fromEntries(
+            Object.entries(cartSummary.perItemTax).map(([itemId, detail]) => [itemId, detail.netAmount])
+          ),
+        })
+      : []
+  ), [cart, cartSummary.perItemTax, eisEnabled, mappingByItemId]);
+  const applicableBusinessCharges = useMemo(
+    () => activeCharges.filter((charge) => !eisEnabled || charge.chargeType !== 'LEVY'),
+    [activeCharges, eisEnabled]
+  );
   const appliedCartCharges = useMemo(() => (
-    calculateAppliedCharges({
-      charges: activeCharges,
-      netSubtotal: subtotal,
-      grossTotal: cartSummary.gross,
-    })
-  ), [activeCharges, cartSummary.gross, subtotal]);
+    [
+      ...calculateAppliedCharges({
+        charges: applicableBusinessCharges,
+        netSubtotal: subtotal,
+        grossTotal: cartSummary.gross,
+      }),
+      ...mraAppliedCharges,
+    ]
+  ), [applicableBusinessCharges, cartSummary.gross, mraAppliedCharges, subtotal]);
   const exclusiveCartChargesTotal = useMemo(
     () => sumAppliedCharges(appliedCartCharges.filter((charge) => charge.calculationMethod === 'exclusive')),
     [appliedCartCharges]
@@ -3870,6 +4050,7 @@ export const GenericPos = ({
           taxLabel={taxLabel}
           defaultTaxRate={defaultTaxRate}
           activeCharges={activeCharges}
+          mraAppliedCharges={mraAppliedCharges}
           onCheckout={onCheckout}
           onClose={() => {
             setPaymentSessionId((id) => id + 1);
@@ -4076,6 +4257,7 @@ export const GenericPos = ({
               taxLabel={taxLabel}
               defaultTaxRate={defaultTaxRate}
               activeCharges={activeCharges}
+              mraAppliedCharges={mraAppliedCharges}
               onCheckout={onCheckout}
               onClose={handlePaymentDialogClose}
               currencyFormatter={formatCurrency}

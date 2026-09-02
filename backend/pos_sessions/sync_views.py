@@ -25,6 +25,7 @@ from business.customer_accounts import (
     record_credit_sale_for_order,
     resolve_customer_for_account_payload,
 )
+from business.access import get_accessible_business_ids
 from business.models import Business, Branch, CustomerLaybuy, TaxRate
 from .stock_validation import (
     _business_allows_negative_stock,
@@ -32,6 +33,9 @@ from .stock_validation import (
     _recipe_entries_for_modifier,
     validate_stock_available_for_order_lines,
 )
+from .charge_utils import calculate_configured_business_charges
+from .levy_utils import calculate_mra_levy_charges
+from mra_eis.services import is_business_eis_enabled, TerminalService
 
 NON_BLOCKING_OFFLINE_DRY_RUN_REASONS = {
     'submission_call_failed',
@@ -55,6 +59,20 @@ def _to_decimal(value, default=Decimal('0')):
     """Parse numeric payload values safely."""
     parsed = _to_optional_decimal(value)
     return parsed if parsed is not None else default
+
+
+def _parse_bool(value, default=False):
+    """Parse boolean sync fields without treating the string ``"false"`` as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    normalized = str(value or '').strip().lower()
+    if normalized in {'true', '1', 'yes', 'y', 'on'}:
+        return True
+    if normalized in {'false', '0', 'no', 'n', 'off'}:
+        return False
+    return default
 
 
 def _extract_laybuy_deposit(data):
@@ -162,20 +180,23 @@ def _calculate_item_tax_values(line_base_amount, tax_type='standard', tax_rate=D
     }
 
 
-def _resolve_user_business(user):
+def _resolve_user_business(user, branch_id=None):
     """
-    Resolve business for both owners and staff users.
-    """
-    business = Business.objects.filter(owner=user).first()
-    if business:
-        return business
+    Resolve a business within the user's allowed scope.
 
-    try:
-        from staff.models import Staff
-        staff = Staff.objects.select_related('business').filter(user=user, is_active=True).first()
-        return staff.business if staff and staff.business else None
-    except Exception:
-        return None
+    Prefer the requested branch so users assigned to more than one business
+    cannot accidentally sync against the first business returned by the ORM.
+    """
+    business_ids = get_accessible_business_ids(user)
+    if branch_id:
+        branch = Branch.objects.filter(
+            id=branch_id,
+            business_id__in=business_ids,
+        ).select_related('business').first()
+        if branch:
+            return branch.business
+
+    return Business.objects.filter(id__in=business_ids).order_by('id').first()
 
 
 def _build_order_sync_payload(order):
@@ -197,6 +218,13 @@ def _build_order_sync_payload(order):
         'customer_notes': order.customer_notes,
         'buyer_name': order.buyer_name,
         'buyer_tin': order.buyer_tin,
+        'buyer_authorization_code': order.buyer_authorization_code,
+        'is_export': order.is_export,
+        'is_relief_supply': order.is_relief_supply,
+        'vat5_project_number': order.vat5_project_number,
+        'vat5_certificate_number': order.vat5_certificate_number,
+        'vat5_quantity': float(order.vat5_quantity) if order.vat5_quantity is not None else None,
+        'eis_validation_metadata': order.eis_validation_metadata or {},
         'is_invoice_sale': order.is_invoice_sale,
         'invoice_id': order.invoice_id,
         'is_paid': order.is_paid,
@@ -305,12 +333,13 @@ def sync_push(request):
         last_synced_at = request.data.get('last_synced_at')
         branch_id = request.data.get('branch_id')
         changes = request.data.get('changes', [])
+        request_device_serial = TerminalService.extract_request_device_serial(request)
         
         print(f"[Sync Push Sessions] Received {len(changes)} changes from frontend")
         print(f"[Sync Push Sessions] Last synced: {last_synced_at}, Branch: {branch_id}")
         
         # Get user's business (owner or assigned staff business)
-        business = _resolve_user_business(request.user)
+        business = _resolve_user_business(request.user, branch_id=branch_id)
         if not business:
             return Response(
                 {'error': 'User does not have an associated business'},
@@ -348,9 +377,23 @@ def sync_push(request):
                             continue
                     elif entity_type == 'Order':
                         if operation == 'create':
-                            result = handle_create_order(entity_id, data, business, branch_id, request.user)
+                            result = handle_create_order(
+                                entity_id,
+                                data,
+                                business,
+                                branch_id,
+                                request.user,
+                                request_device_serial=request_device_serial,
+                            )
                         elif operation == 'update':
-                            result = handle_update_order(entity_id, data, business, branch_id, request.user)
+                            result = handle_update_order(
+                                entity_id,
+                                data,
+                                business,
+                                branch_id,
+                                request.user,
+                                request_device_serial=request_device_serial,
+                            )
                         elif operation == 'delete':
                             result = handle_delete_order(entity_id, business, branch_id)
                         else:
@@ -480,7 +523,7 @@ def sync_pull(request):
         print(f"[Sync Pull Sessions] Pulling changes since {since_dt} for branch {branch_id}")
         
         # Get user's business (owner or assigned staff business)
-        business = _resolve_user_business(request.user)
+        business = _resolve_user_business(request.user, branch_id=branch_id)
         if not business:
             return Response(
                 {'error': 'User does not have an associated business'},
@@ -733,7 +776,15 @@ def handle_delete_session(session_id, business, branch_id):
         }
 
 
-def handle_create_order(order_id, data, business, branch_id, user):
+def handle_create_order(
+    order_id,
+    data,
+    business,
+    branch_id,
+    user,
+    *,
+    request_device_serial='',
+):
     """Handle creation of order from frontend"""
     from business.models import Branch
     from django.db import IntegrityError
@@ -804,11 +855,18 @@ def handle_create_order(order_id, data, business, branch_id, user):
             for item_data in data['items']:
                 # The item_data contains 'inventoryItemId' which is the actual inventory item ID
                 # NOT the order item ID (which is in 'id')
-                item_id = item_data.get('inventoryItemId') or item_data.get('inventory_item_id') or item_data.get('id', '')
                 item_name = item_data.get('name', 'Unknown')
                 item_recipe = item_data.get('recipe') if isinstance(item_data.get('recipe'), list) else []
                 is_prepared_menu_item = bool(item_data.get('is_prepared_menu_item') or item_data.get('isPreparedMenuItem'))
-                if is_prepared_menu_item or (not str(item_id or '').strip() and item_recipe):
+                item_id = item_data.get('inventoryItemId') or item_data.get('inventory_item_id')
+                if not item_id and not (is_prepared_menu_item or item_recipe):
+                    item_id = item_data.get('id', '')
+                # A menu-created meal is usually backed by a produced
+                # inventory item and still needs its own MRA mapping. Only a
+                # legacy recipe-only line without a sellable inventory ID is
+                # exempt from this early inventory lookup; the EIS service
+                # will reject that line before submission.
+                if not str(item_id or '').strip() and (is_prepared_menu_item or item_recipe):
                     print(f"[Sync Sessions] Skipping inventory MRA mapping check for prepared menu item: {item_name}")
                     continue
                 
@@ -1074,12 +1132,32 @@ def handle_create_order(order_id, data, business, branch_id, user):
         else:
             print(f"[Sync Sessions] No items in order, using provided totals")
 
-        charges_amount = _quantize_money(
-            _to_decimal(data.get('chargesAmount') or data.get('charges_amount'), Decimal('0'))
+        configured_charges = calculate_configured_business_charges(
+            business,
+            net_subtotal=subtotal,
+            gross_total=total,
+            eis_enabled=is_business_eis_enabled(business),
         )
-        charges_snapshot = data.get('chargesSnapshot') or data.get('charges_snapshot') or []
-        if charges_amount > 0:
-            total = float(_quantize_money(_to_decimal(total, Decimal('0')) + charges_amount))
+        mra_levy_charges = calculate_mra_levy_charges(
+            business,
+            data.get('items') or [],
+        )
+        mra_levy_amount = _quantize_money(sum(
+            (_to_decimal(charge.get('amount'), Decimal('0')) for charge in mra_levy_charges),
+            Decimal('0'),
+        ))
+        charges_snapshot = [
+            *configured_charges['snapshot'],
+            *mra_levy_charges,
+        ]
+        charges_amount = _quantize_money(
+            configured_charges['amount'] + mra_levy_amount
+        )
+        total = float(_quantize_money(
+            _to_decimal(total, Decimal('0'))
+            + configured_charges['exclusive_amount']
+            + mra_levy_amount
+        ))
         
         normalized_payment_method = str(payment_method or '').strip().lower()
         payment_method_is_credit = normalized_payment_method == 'on account'
@@ -1170,6 +1248,15 @@ def handle_create_order(order_id, data, business, branch_id, user):
             'customer_notes': data.get('customer_notes') or data.get('customerNotes'),
             'buyer_name': data.get('buyer_name') or data.get('buyerName'),
             'buyer_tin': data.get('buyer_tin') or data.get('buyerTin'),
+            'buyer_authorization_code': data.get('buyer_authorization_code') or data.get('buyerAuthorizationCode'),
+            'is_export': _parse_bool(data.get('is_export', data.get('isExport')), False),
+            'is_relief_supply': _parse_bool(data.get('is_relief_supply', data.get('isReliefSupply')), False),
+            'vat5_project_number': data.get('vat5_project_number') or data.get('vat5ProjectNumber'),
+            'vat5_certificate_number': data.get('vat5_certificate_number') or data.get('vat5CertificateNumber'),
+            'vat5_quantity': _to_decimal(
+                data.get('vat5_quantity', data.get('vat5Quantity')),
+                Decimal('0'),
+            ) if data.get('vat5_quantity', data.get('vat5Quantity')) not in (None, '') else None,
             'subtotal': _quantize_money(subtotal),
             'total': _quantize_money(total),
             'cogs': Decimal('0.00') if payment_method_is_laybuy else _quantize_money(_to_decimal(data.get('cogs'), Decimal('0'))),
@@ -1438,7 +1525,13 @@ def handle_create_order(order_id, data, business, branch_id, user):
             if eis_enabled:
                 from mra_eis.services import POSOrderSubmissionService
 
-                mra_result = POSOrderSubmissionService.prepare_pos_order_submission(order)
+                mra_result = POSOrderSubmissionService.prepare_pos_order_submission(
+                    order,
+                    request_device_serial=request_device_serial,
+                    enforce_device_binding=bool(
+                        getattr(settings, 'MRA_EIS_ENFORCE_TERMINAL_DEVICE_BINDING', False)
+                    ),
+                )
                 print(
                     f"[Sync Sessions] Prepared MRA payload for order {order.id}: "
                     f"fiscal={mra_result.get('fiscal_invoice_number')} dry_run={mra_result.get('dry_run')}"
@@ -1571,7 +1664,15 @@ def handle_create_order(order_id, data, business, branch_id, user):
         }
 
 
-def handle_update_order(order_id, data, business, branch_id, user):
+def handle_update_order(
+    order_id,
+    data,
+    business,
+    branch_id,
+    user,
+    *,
+    request_device_serial='',
+):
     """Handle update of order from frontend"""
     try:
         order = Order.objects.get(id=order_id, business=business, branch_id=branch_id)
@@ -1605,6 +1706,19 @@ def handle_update_order(order_id, data, business, branch_id, user):
             order.buyer_name = data.get('buyer_name') or data.get('buyerName')
         if 'buyerTin' in data or 'buyer_tin' in data:
             order.buyer_tin = data.get('buyer_tin') or data.get('buyerTin')
+        if 'buyerAuthorizationCode' in data or 'buyer_authorization_code' in data:
+            order.buyer_authorization_code = data.get('buyer_authorization_code') or data.get('buyerAuthorizationCode')
+        if 'isExport' in data or 'is_export' in data:
+            order.is_export = _parse_bool(data.get('is_export', data.get('isExport')), False)
+        if 'isReliefSupply' in data or 'is_relief_supply' in data:
+            order.is_relief_supply = _parse_bool(data.get('is_relief_supply', data.get('isReliefSupply')), False)
+        if 'vat5ProjectNumber' in data or 'vat5_project_number' in data:
+            order.vat5_project_number = data.get('vat5_project_number') or data.get('vat5ProjectNumber')
+        if 'vat5CertificateNumber' in data or 'vat5_certificate_number' in data:
+            order.vat5_certificate_number = data.get('vat5_certificate_number') or data.get('vat5CertificateNumber')
+        if 'vat5Quantity' in data or 'vat5_quantity' in data:
+            vat5_quantity = data.get('vat5_quantity', data.get('vat5Quantity'))
+            order.vat5_quantity = _to_decimal(vat5_quantity, Decimal('0')) if vat5_quantity not in (None, '') else None
         if 'customer' in data or 'customer_id' in data or 'customerId' in data:
             customer = resolve_customer_for_account_payload(
                 business,

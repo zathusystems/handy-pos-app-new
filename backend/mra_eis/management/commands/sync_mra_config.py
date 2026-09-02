@@ -4,7 +4,7 @@ Management command to sync MRA configurations periodically
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from business.models import Business
-from mra_eis.services import ConfigurationService
+from mra_eis.services import ConfigurationService, is_business_eis_enabled
 
 
 class Command(BaseCommand):
@@ -26,6 +26,13 @@ class Command(BaseCommand):
             businesses = Business.objects.filter(is_active=True)
 
         for business in businesses:
+            if not is_business_eis_enabled(business):
+                self.stdout.write(
+                    self.style.WARNING(
+                        f'- Skipping {business.name}: MRA EIS is disabled.'
+                    )
+                )
+                continue
             try:
                 self.stdout.write(f"Syncing configuration for {business.name}...")
                 sync_log = ConfigurationService.fetch_and_store_configuration(business)

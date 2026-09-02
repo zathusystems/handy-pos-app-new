@@ -18,6 +18,21 @@ function toBackendBranchId(id: string): string {
   return normalized;
 }
 
+function extractApiList<T>(response: any): T[] {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.results)) return response.results;
+  if (Array.isArray(response?.data)) return response.data;
+  return [];
+}
+
+function getTerminalBranchId(terminal: any): string {
+  const branch = terminal?.branch;
+  if (branch && typeof branch === 'object') {
+    return String(branch.id ?? branch.pk ?? branch.branch_id ?? '').trim();
+  }
+  return String(branch ?? terminal?.branch_id ?? terminal?.branchId ?? '').trim();
+}
+
 /**
  * Convert snake_case to camelCase
  */
@@ -377,6 +392,102 @@ export async function syncInventoryFromBackend(branchId: string): Promise<{
       updated: 0,
       created: 0,
       error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Ask MRA for the current portal-approved site products before syncing the
+ * regular inventory endpoint. The pull is deliberately opt-in and only used
+ * by EIS-enabled inventory/POS flows.
+ */
+export async function refreshInventoryFromMraApprovedProducts(
+  branchId: string,
+  options: { refreshFromMra?: boolean; syncLocal?: boolean; businessId?: string | null } = {}
+): Promise<{
+  ok: boolean;
+  created: number;
+  updated: number;
+  synced: number;
+  error?: string;
+}> {
+  const normalizedBranchId = toBackendBranchId(branchId);
+  if (!normalizedBranchId) {
+    return { ok: false, created: 0, updated: 0, synced: 0, error: 'Select a branch first.' };
+  }
+
+  try {
+    const businessQuery = options.businessId
+      ? `business_id=${encodeURIComponent(String(options.businessId))}`
+      : '';
+    let terminals: any[] = [];
+    try {
+      const terminalsResponse = await authFetch.fetch<any>(
+        `/mra-eis/terminals/?${businessQuery ? `${businessQuery}&` : ''}branch_id=${encodeURIComponent(normalizedBranchId)}`
+      );
+      terminals = extractApiList<any>(terminalsResponse);
+    } catch (branchLookupError) {
+      console.warn('[InventorySync] Branch terminal lookup failed; trying all accessible terminals.', branchLookupError);
+    }
+
+    if (!terminals.some((candidate) => String(candidate?.status || '').toLowerCase() === 'active')) {
+      const terminalsResponse = await authFetch.fetch<any>(
+        `/mra-eis/terminals/${businessQuery ? `?${businessQuery}` : ''}`
+      );
+      terminals = extractApiList<any>(terminalsResponse);
+    }
+
+    const activeTerminals = terminals.filter(
+      (candidate) => String(candidate?.status || '').toLowerCase() === 'active'
+    );
+    const terminal = activeTerminals.find(
+      (candidate) => String(candidate?.status || '').toLowerCase() === 'active' &&
+        toBackendBranchId(getTerminalBranchId(candidate)) === normalizedBranchId
+    ) || activeTerminals[0];
+
+    if (!terminal?.id) {
+      return {
+        ok: false,
+        created: 0,
+        updated: 0,
+        synced: 0,
+        error: 'Activate an EIS terminal for this branch first.',
+      };
+    }
+
+    const pullResponse = await authFetch.fetch<any>(
+      `/mra-eis/terminals/${terminal.id}/pull_approved_products/`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ refreshFromMra: options.refreshFromMra !== false }),
+      }
+    );
+
+    if (options.syncLocal === false) {
+      return {
+        ok: true,
+        created: Number(pullResponse?.created || 0),
+        updated: Number(pullResponse?.updated || 0),
+        synced: 0,
+      };
+    }
+
+    const syncResult = await syncInventoryFromBackend(branchId);
+    return {
+      ok: !syncResult.error,
+      created: Number(pullResponse?.created ?? syncResult.created ?? 0),
+      updated: Number(pullResponse?.updated ?? syncResult.updated ?? 0),
+      synced: syncResult.synced,
+      error: syncResult.error,
+    };
+  } catch (error) {
+    console.error('[InventorySync] Failed to refresh MRA approved products:', error);
+    return {
+      ok: false,
+      created: 0,
+      updated: 0,
+      synced: 0,
+      error: error instanceof Error ? error.message : 'Could not sync products from MRA.',
     };
   }
 }

@@ -73,12 +73,37 @@ function getStoredAllowNegativeIngredientStock(): boolean | undefined {
   return value === true || value === 'true';
 }
 
+function getStoredEnableEis(): boolean | undefined {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+  const settings = parseStoredJson<{
+    enableEis?: unknown;
+    enable_eis?: unknown;
+    eisEnabled?: unknown;
+    eis_enabled?: unknown;
+  }>(
+    safeLocalStorageGetItem(LOCAL_STORAGE_KEYS.BUSINESS_SETTINGS)
+  );
+  const value =
+    settings?.enableEis ??
+    settings?.enable_eis ??
+    settings?.eisEnabled ??
+    settings?.eis_enabled;
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  return value === true || value === 'true';
+}
+
 function mergeStoredBusinessSettings(business: Business, storedTin: string): Business {
   const allowNegativeIngredientStock = getStoredAllowNegativeIngredientStock();
+  const enableEis = getStoredEnableEis();
   const mergedBusiness = {
     ...business,
     ...(normalizeTin((business as any).tin) || !storedTin ? {} : { tin: storedTin }),
     ...(allowNegativeIngredientStock === undefined ? {} : { allowNegativeIngredientStock }),
+    ...(enableEis === undefined ? {} : { enableEis }),
   };
 
   if (JSON.stringify(mergedBusiness) !== JSON.stringify(business)) {

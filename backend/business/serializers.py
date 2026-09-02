@@ -386,9 +386,19 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """Create invoice with line items"""
-        business = self.context['request'].user.businesses.first()
+        # The view supplies the business after checking the owner's or Admin
+        # staff member's scope. Keep a guarded fallback for direct serializer
+        # use in tests and management code.
+        business = validated_data.pop('business', None)
+        if business is None:
+            from .access import get_accessible_business
+
+            business = get_accessible_business(
+                self.context['request'].user,
+                admin_staff_only=True,
+            )
         if not business:
-            raise serializers.ValidationError('User must have a business')
+            raise serializers.ValidationError('User must have an accessible business')
 
         # Extract lines
         lines_data = validated_data.pop('lines', [])
@@ -594,9 +604,14 @@ class BranchSerializer(serializers.ModelSerializer):
             'id', 'business', 'name', 'slug', 'address', 'city', 'state',
             'postal_code', 'country', 'phone', 'email', 'latitude', 'longitude',
             'is_active', 'mra_branch_code', 'mra_device_location',
+            'mra_site_id', 'mra_site_name', 'mra_terminal_id',
+            'mra_terminal_position', 'is_eis_warehouse', 'eis_mapping_source',
+            'eis_mapping_updated_at',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'business', 'slug', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'business', 'slug', 'eis_mapping_updated_at', 'created_at', 'updated_at'
+        ]
 
 
 class BranchCreateSerializer(serializers.ModelSerializer):
@@ -606,7 +621,9 @@ class BranchCreateSerializer(serializers.ModelSerializer):
         fields = [
             'name', 'address', 'city', 'state', 'postal_code', 'country',
             'phone', 'email', 'latitude', 'longitude', 'mra_branch_code',
-            'mra_device_location'
+            'mra_device_location', 'mra_site_id', 'mra_site_name',
+            'mra_terminal_id', 'mra_terminal_position', 'is_eis_warehouse',
+            'eis_mapping_source',
         ]
 
 

@@ -8,6 +8,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
+from .access import get_accessible_business_ids
+from .models import Branch
 from .sync_views_invoices import sync_push as invoice_sync_push, sync_pull as invoice_sync_pull, _get_invoice_changes
 from .sync_views_expenses import sync_push as expense_sync_push, sync_pull as expense_sync_pull, _get_expense_changes
 from .sync_views_customers import sync_push as customer_sync_push, sync_pull as customer_sync_pull, _get_customer_changes
@@ -24,6 +26,36 @@ def sync_push(request):
     try:
         data = request.data
         changes = data.get('changes', [])
+        branch_id = data.get('branch_id')
+        business_id = data.get('business_id')
+        accessible_business_ids = get_accessible_business_ids(request.user)
+
+        # Sync payloads may identify a business directly (business-level
+        # entities) or through a branch. Validate either reference before
+        # forwarding changes to the entity handlers.
+        if business_id and str(business_id) not in {str(value) for value in accessible_business_ids}:
+            return Response(
+                {'error': 'Business is not available for this account'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if branch_id:
+            branch = Branch.objects.filter(
+                id=branch_id,
+                business_id__in=accessible_business_ids,
+            ).first()
+            if not branch:
+                return Response(
+                    {'error': 'Branch is not available for this account'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            business_id = business_id or branch.business_id
+
+        if not business_id:
+            return Response(
+                {'error': 'business_id or branch_id is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         # Separate changes by entity type
         invoice_changes = [c for c in changes if c.get('entity_type') == 'Invoice']
@@ -72,15 +104,11 @@ def sync_push(request):
         # Tax rates are business-level, so we need to get business_id from request
         if tax_changes:
             try:
-                business_id = request.data.get('business_id')
                 print(f'[Sync] Processing tax changes with business_id: {business_id}')
                 
                 if not business_id:
                     # Try to get from branch_id if business_id not provided
-                    from .models import Branch
-                    branch_id = request.data.get('branch_id')
                     if branch_id:
-                        branch = Branch.objects.get(id=branch_id)
                         business_id = branch.business_id
                         print(f'[Sync] Got business_id from branch: {business_id}')
                 
@@ -107,12 +135,9 @@ def sync_push(request):
 
         if charge_changes:
             try:
-                business_id = request.data.get('business_id')
                 if not business_id:
-                    from .models import Branch
-                    branch_id = request.data.get('branch_id')
                     if branch_id:
-                        business_id = Branch.objects.get(id=branch_id).business_id
+                        business_id = branch.business_id
 
                 if business_id:
                     acknowledged, errors = _process_charge_changes(business_id, charge_changes)
@@ -153,6 +178,16 @@ def sync_pull(request):
                 {'error': 'branch_id is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        branch = Branch.objects.filter(
+            id=branch_id,
+            business_id__in=get_accessible_business_ids(request.user),
+        ).first()
+        if not branch:
+            return Response(
+                {'error': 'Branch is not available for this account'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         
         all_changes = {}
         
@@ -189,8 +224,6 @@ def sync_pull(request):
         # Pull tax rates using internal helper
         # Tax rates are business-level, so we need to get business_id from branch
         try:
-            from .models import Branch
-            branch = Branch.objects.get(id=branch_id)
             business_id = branch.business_id
             tax_rates, error = _get_tax_changes(business_id, since)
             if error:
@@ -201,8 +234,6 @@ def sync_pull(request):
             print(f'[Sync] Error pulling tax rates: {e}')
 
         try:
-            from .models import Branch
-            branch = Branch.objects.get(id=branch_id)
             charges, error = _get_charge_changes(branch.business_id, since)
             if error:
                 print(f'[Sync] Error pulling charges: {error}')

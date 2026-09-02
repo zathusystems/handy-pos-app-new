@@ -14,7 +14,8 @@ from django.db.models import Q
 
 from .models import Supplier, InventoryItem, PurchaseOrder
 from .serializers import InventoryItemSerializer, PurchaseOrderSerializer
-from business.models import Business
+from business.access import get_accessible_business_ids
+from business.models import Business, Branch
 
 # Import handlers from specialized sync modules
 from .sync_views_inventory import (
@@ -49,20 +50,23 @@ from .sync_views_purchase_records import (
 )
 
 
-def _resolve_user_business(user):
+def _resolve_user_business(user, branch_id=None):
     """
-    Resolve business for both owners and staff users.
-    """
-    business = Business.objects.filter(owner=user).first()
-    if business:
-        return business
+    Resolve a business within the user's allowed scope.
 
-    try:
-        from staff.models import Staff
-        staff = Staff.objects.select_related('business').filter(user=user, is_active=True).first()
-        return staff.business if staff and staff.business else None
-    except Exception:
-        return None
+    Prefer the branch supplied by the client so an owner or Admin staff
+    member working with multiple businesses does not sync into the wrong one.
+    """
+    business_ids = get_accessible_business_ids(user)
+    if branch_id:
+        branch = Branch.objects.filter(
+            id=branch_id,
+            business_id__in=business_ids,
+        ).select_related('business').first()
+        if branch:
+            return branch.business
+
+    return Business.objects.filter(id__in=business_ids).order_by('id').first()
 
 
 @api_view(['POST'])
@@ -95,7 +99,7 @@ def sync_push(request):
         print(f"[Sync Push] Last synced: {last_synced_at}, Branch: {branch_id}")
         
         # Get user's business (owner or assigned staff business)
-        business = _resolve_user_business(request.user)
+        business = _resolve_user_business(request.user, branch_id=branch_id)
         if not business:
             return Response(
                 {'error': 'User does not have an associated business'},
@@ -272,7 +276,7 @@ def sync_pull(request):
         print(f"[Sync Pull] Pulling changes since {since_dt} for branch {branch_id}")
         
         # Get user's business (owner or assigned staff business)
-        business = _resolve_user_business(request.user)
+        business = _resolve_user_business(request.user, branch_id=branch_id)
         if not business:
             return Response(
                 {'error': 'User does not have an associated business'},

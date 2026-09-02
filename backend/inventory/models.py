@@ -209,6 +209,14 @@ class MRAProductMapping(models.Model):
         default='inclusive',
         help_text="How is tax calculated for this product? (Immutable once approved)"
     )
+    mra_levies = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Levy metadata returned by MRA for this mapped product. "
+            "Rates are not entered locally."
+        ),
+    )
     
     # Approval Status
     is_approved = models.BooleanField(

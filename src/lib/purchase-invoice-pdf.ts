@@ -460,3 +460,34 @@ export async function generatePurchaseInvoicePDF({
     .from(container)
     .save();
 }
+
+export function printPurchaseInvoice({
+  purchase,
+  business,
+  currencyCode = 'USD',
+}: GeneratePurchaseInvoicePdfOptions): void {
+  if (typeof window === 'undefined') {
+    throw new Error('Printing is only available in a browser window.');
+  }
+
+  const printWindow = window.open('', '_blank', 'width=1000,height=800');
+  if (!printWindow) {
+    throw new Error('The print window was blocked. Allow pop-ups and try again.');
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(buildPurchaseInvoiceHtml(purchase, business, currencyCode));
+  printWindow.document.close();
+
+  const startPrint = () => {
+    printWindow.focus();
+    printWindow.print();
+    window.setTimeout(() => printWindow.close(), 1000);
+  };
+
+  if (printWindow.document.readyState === 'complete') {
+    window.setTimeout(startPrint, 100);
+  } else {
+    printWindow.addEventListener('load', startPrint, { once: true });
+  }
+}

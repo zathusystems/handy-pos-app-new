@@ -23,35 +23,30 @@ from .serializers import (
 )
 from .services import (
     TerminalService, ConfigurationService, ProductMappingService,
-    InvoiceService, ReceiptService, RetryService, POSOrderSubmissionService
+    InvoiceService, ReceiptService, RetryService, POSOrderSubmissionService,
+    MRAIntegrationError, is_business_eis_enabled,
 )
 from rest_framework.views import APIView
+from business.access import get_accessible_business_queryset
 
 
 def _get_accessible_business_queryset(user):
     """
     Return businesses user can operate on for MRA actions.
-    Supports owners, superusers, and active staff assignments.
+    Supports owners, superusers, and assigned active Admin staff.
     """
-    from business.models import Business
+    return get_accessible_business_queryset(user, admin_staff_only=True)
 
-    if getattr(user, 'is_superuser', False):
-        return Business.objects.all()
 
-    owned_qs = Business.objects.filter(owner=user)
-    if owned_qs.exists():
-        return owned_qs
-
-    try:
-        from staff.models import Staff
-
-        staff_business_ids = Staff.objects.filter(
-            user=user,
-            is_active=True
-        ).values_list('business_id', flat=True)
-        return Business.objects.filter(id__in=staff_business_ids)
-    except Exception:
-        return Business.objects.none()
+def _eis_disabled_response():
+    """Return the consistent response for a business that has not opted in."""
+    return Response(
+        {
+            'error': 'MRA EIS is not enabled for this business. Enable it in Settings before using EIS features.',
+            'code': 'EIS_DISABLED',
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 def _normalize_mra_tax_type(value):
@@ -79,108 +74,11 @@ def _normalize_mra_tax_rate(value, tax_type):
 
 
 def _normalize_product_code_item(item):
-    if not isinstance(item, dict):
-        return None
-
-    code = (
-        item.get('code')
-        or item.get('mra_product_code')
-        or item.get('product_code')
-        or item.get('productCode')
-        or item.get('item_code')
-        or item.get('itemCode')
-        or item.get('hs_code')
-        or item.get('hsCode')
-    )
-    if code is None:
-        return None
-
-    code = str(code).strip().upper()
-    if not code:
-        return None
-
-    name = (
-        item.get('name')
-        or item.get('mra_product_name')
-        or item.get('product_name')
-        or item.get('productName')
-        or item.get('description')
-        or code
-    )
-    name = str(name).strip() or code
-
-    category = (
-        item.get('category')
-        or item.get('product_category')
-        or item.get('productCategory')
-        or item.get('group')
-        or item.get('group_name')
-        or item.get('groupName')
-        or 'General'
-    )
-    category = str(category).strip() or 'General'
-
-    tax_type = _normalize_mra_tax_type(
-        item.get('default_tax_type')
-        or item.get('defaultTaxType')
-        or item.get('tax_type')
-        or item.get('taxType')
-        or item.get('vat_type')
-        or item.get('vatType')
-        or item.get('vat_category')
-        or item.get('vatCategory')
-    )
-    tax_rate = _normalize_mra_tax_rate(
-        item.get('default_tax_rate')
-        or item.get('defaultTaxRate')
-        or item.get('tax_rate')
-        or item.get('taxRate')
-        or item.get('vat_rate')
-        or item.get('vatRate'),
-        tax_type,
-    )
-
-    return {
-        'code': code,
-        'name': name,
-        'category': category,
-        'default_tax_type': tax_type,
-        'default_tax_rate': tax_rate,
-    }
+    return ConfigurationService._normalize_product_catalog_item(item)
 
 
 def _extract_product_codes_from_config(config_data):
-    if not config_data:
-        return []
-
-    queue = [config_data]
-    extracted = []
-    seen_codes = set()
-
-    while queue:
-        current = queue.pop(0)
-
-        if isinstance(current, list):
-            for entry in current:
-                if isinstance(entry, (dict, list)):
-                    queue.append(entry)
-            continue
-
-        if not isinstance(current, dict):
-            continue
-
-        normalized_item = _normalize_product_code_item(current)
-        if normalized_item:
-            code = normalized_item['code']
-            if code not in seen_codes:
-                seen_codes.add(code)
-                extracted.append(normalized_item)
-
-        for value in current.values():
-            if isinstance(value, (dict, list)):
-                queue.append(value)
-
-    return extracted
+    return ConfigurationService.extract_product_catalog(config_data)
 
 
 class TerminalViewSet(viewsets.ModelViewSet):
@@ -194,9 +92,20 @@ class TerminalViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Filter terminals by business"""
         business_ids = _get_accessible_business_queryset(self.request.user).values_list('id', flat=True)
-        return Terminal.objects.filter(
+        queryset = Terminal.objects.filter(
             business_id__in=business_ids
         ).select_related('business', 'branch')
+
+        business_id = self.request.query_params.get('business_id')
+        branch_id = self.request.query_params.get('branch_id')
+        device_serial = self.request.query_params.get('device_serial')
+        if business_id:
+            queryset = queryset.filter(business_id=business_id)
+        if branch_id:
+            queryset = queryset.filter(branch_id=branch_id)
+        if device_serial:
+            queryset = queryset.filter(device_serial__iexact=device_serial.strip())
+        return queryset
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -215,11 +124,19 @@ class TerminalViewSet(viewsets.ModelViewSet):
             # Get business and branch from request
             business_id = request.query_params.get('business_id')
             branch_id = request.query_params.get('branch_id')
+            if not business_id or not branch_id:
+                return Response(
+                    {'error': 'business_id and branch_id are required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             from business.models import Business, Branch
             accessible_businesses = _get_accessible_business_queryset(request.user)
             business = get_object_or_404(accessible_businesses, id=business_id)
             branch = get_object_or_404(Branch, id=branch_id, business=business)
+
+            if not is_business_eis_enabled(business):
+                return _eis_disabled_response()
 
             terminal = TerminalService.activate_terminal(
                 business=business,
@@ -236,7 +153,7 @@ class TerminalViewSet(viewsets.ModelViewSet):
                 TerminalDetailSerializer(terminal).data,
                 status=status.HTTP_201_CREATED
             )
-        except ValueError as e:
+        except (ValueError, MRAIntegrationError) as e:
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -246,6 +163,8 @@ class TerminalViewSet(viewsets.ModelViewSet):
     def refresh_token(self, request, pk=None):
         """Refresh MRA authentication token"""
         terminal = self.get_object()
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
         try:
             TerminalService.refresh_token(terminal)
             return Response(
@@ -270,8 +189,12 @@ class TerminalViewSet(viewsets.ModelViewSet):
 
         serializer = TerminalStatusSerializer({
             'terminal_id': terminal.terminal_id,
+            'mra_terminal_id': terminal.mra_terminal_id or '',
+            'device_serial': terminal.device_serial or '',
+            'terminal_position': terminal.terminal_position,
             'status': terminal.status,
             'is_online': terminal.is_online,
+            'blocking_status': TerminalService.get_cached_blocking_status(terminal),
             'online_invoice_counter': terminal.online_invoice_counter,
             'offline_invoice_counter': terminal.offline_invoice_counter,
             'pending_offline_invoices': pending_offline,
@@ -280,6 +203,157 @@ class TerminalViewSet(viewsets.ModelViewSet):
         })
 
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def pull_approved_products(self, request, pk=None):
+        """Pull MRA portal-approved site products into this branch's POS inventory."""
+        terminal = self.get_object()
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
+
+        refresh_from_mra = request.data.get('refreshFromMra', request.data.get('refresh_from_mra', True))
+        if isinstance(refresh_from_mra, str):
+            refresh_from_mra = refresh_from_mra.strip().lower() not in {'false', '0', 'no', 'off'}
+
+        try:
+            result = ProductMappingService.pull_approved_products_to_inventory(
+                business=terminal.business,
+                terminal=terminal,
+                user=request.user,
+                refresh_from_mra=bool(refresh_from_mra),
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        except (ValueError, MRAIntegrationError) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def warehouse_inventory(self, request, pk=None):
+        """Return the official MRA warehouse stock available for transfer."""
+        terminal = self.get_object()
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
+
+        try:
+            page_size = min(max(int(request.query_params.get('page_size', 200)), 1), 500)
+            max_pages = min(max(int(request.query_params.get('max_pages', 25)), 1), 25)
+            result = ProductMappingService.fetch_warehouse_inventory(
+                business=terminal.business,
+                terminal=terminal,
+                page_size=page_size,
+                max_pages=max_pages,
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        except (TypeError, ValueError, MRAIntegrationError) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def transfer_inventory(self, request, pk=None):
+        """Transfer warehouse stock to a local branch through MRA EIS."""
+        terminal = self.get_object()
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
+
+        from business.models import Branch
+
+        to_branch_id = request.data.get('toBranchId') or request.data.get('to_branch_id')
+        to_branch = None
+        if to_branch_id:
+            to_branch = get_object_or_404(
+                Branch,
+                id=to_branch_id,
+                business=terminal.business,
+                is_active=True,
+            )
+        from_warehouse = request.data.get(
+            'fromWarehouseToSite', request.data.get('from_warehouse_to_site', True)
+        )
+        if isinstance(from_warehouse, str):
+            from_warehouse = from_warehouse.strip().lower() not in {'false', '0', 'no', 'off'}
+
+        try:
+            result = ProductMappingService.transfer_inventory(
+                business=terminal.business,
+                terminal=terminal,
+                items=request.data.get('items', []),
+                to_branch=to_branch,
+                to_site_id=request.data.get('toSiteId') or request.data.get('to_site_id') or '',
+                from_site_id=request.data.get('fromSiteId') or request.data.get('from_site_id') or '',
+                from_warehouse_to_site=bool(from_warehouse),
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        except (ValueError, MRAIntegrationError) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def reconcile_inventory(self, request, pk=None):
+        """Compare local approved inventory with official EIS warehouse stock."""
+        terminal = self.get_object()
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
+
+        branch = terminal.branch
+        branch_id = request.data.get('branchId') or request.data.get('branch_id')
+        if branch_id:
+            from business.models import Branch
+
+            branch = get_object_or_404(
+                Branch,
+                id=branch_id,
+                business=terminal.business,
+                is_active=True,
+            )
+
+        try:
+            result = ProductMappingService.reconcile_inventory_with_eis(
+                business=terminal.business,
+                terminal=terminal,
+                branch=branch,
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        except (ValueError, MRAIntegrationError) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def check_blocking_status(self, request, pk=None):
+        """Refresh the terminal's block decision from MRA."""
+        terminal = self.get_object()
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
+
+        try:
+            result = TerminalService.get_terminal_blocking_message(terminal)
+            terminal.refresh_from_db()
+            return Response(
+                {
+                    **result,
+                    'status': terminal.status,
+                    'blocking_status': TerminalService.get_cached_blocking_status(terminal),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except MRAIntegrationError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def check_unblock_status(self, request, pk=None):
+        """Ask MRA whether a suspended terminal has been released."""
+        terminal = self.get_object()
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
+
+        try:
+            result = TerminalService.check_terminal_unblock_status(terminal)
+            terminal.refresh_from_db()
+            return Response(
+                {
+                    **result,
+                    'status': terminal.status,
+                    'blocking_status': TerminalService.get_cached_blocking_status(terminal),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except MRAIntegrationError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'])
     def update_online_status(self, request, pk=None):
@@ -333,6 +407,9 @@ class MRAConfigurationViewSet(viewsets.ReadOnlyModelViewSet):
         accessible_businesses = _get_accessible_business_queryset(request.user)
         business = get_object_or_404(accessible_businesses, id=business_id)
 
+        if not is_business_eis_enabled(business):
+            return _eis_disabled_response()
+
         config_types = request.data.get('config_types', None)
         terminal_id = request.query_params.get('terminal_id')
         terminal = None
@@ -354,7 +431,8 @@ class MRAConfigurationViewSet(viewsets.ReadOnlyModelViewSet):
                 {
                     'status': sync_log.status,
                     'config_types': sync_log.config_types,
-                    'completed_at': sync_log.completed_at
+                    'completed_at': sync_log.completed_at,
+                    'stored_configurations': getattr(sync_log, 'stored_configurations', []),
                 },
                 status=status.HTTP_200_OK
             )
@@ -440,6 +518,9 @@ class MRAInvoiceViewSet(viewsets.ModelViewSet):
         business_ids = _get_accessible_business_queryset(request.user).values_list('id', flat=True)
         terminal = get_object_or_404(Terminal, id=terminal_id, business_id__in=business_ids)
 
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
+
         try:
             invoice = InvoiceService.create_invoice(
                 terminal=terminal,
@@ -466,6 +547,9 @@ class MRAInvoiceViewSet(viewsets.ModelViewSet):
         """Submit invoice to MRA"""
         invoice = self.get_object()
 
+        if not is_business_eis_enabled(invoice.business):
+            return _eis_disabled_response()
+
         try:
             InvoiceService.submit_invoice(invoice)
             return Response(
@@ -482,6 +566,9 @@ class MRAInvoiceViewSet(viewsets.ModelViewSet):
     def queue_offline(self, request, pk=None):
         """Queue invoice for offline sync"""
         invoice = self.get_object()
+
+        if not is_business_eis_enabled(invoice.business):
+            return _eis_disabled_response()
 
         try:
             queue_entry = InvoiceService.queue_offline_invoice(invoice)
@@ -501,6 +588,9 @@ class MRAInvoiceViewSet(viewsets.ModelViewSet):
         terminal_id = request.query_params.get('terminal_id')
         business_ids = _get_accessible_business_queryset(request.user).values_list('id', flat=True)
         terminal = get_object_or_404(Terminal, id=terminal_id, business_id__in=business_ids)
+
+        if not is_business_eis_enabled(terminal.business):
+            return _eis_disabled_response()
 
         try:
             result = InvoiceService.sync_offline_invoices(terminal)
@@ -554,7 +644,15 @@ class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
     def generate(self, request):
         """Generate receipt for an invoice"""
         invoice_id = request.query_params.get('invoice_id')
-        invoice = get_object_or_404(MRAInvoice, id=invoice_id)
+        business_ids = _get_accessible_business_queryset(request.user).values_list('id', flat=True)
+        invoice = get_object_or_404(
+            MRAInvoice,
+            id=invoice_id,
+            business_id__in=business_ids,
+        )
+
+        if not is_business_eis_enabled(invoice.business):
+            return _eis_disabled_response()
 
         try:
             receipt = ReceiptService.generate_receipt(invoice)
@@ -652,15 +750,27 @@ class MRAProductCodesView(APIView):
 
         # Primary source: active synced MRA product code configuration for the business.
         if business:
-            product_config = ConfigurationService.get_active_configuration(business, 'product_codes')
-            if product_config:
-                extracted_products = _extract_product_codes_from_config(product_config.config_data)
-                if extracted_products:
-                    mra_products = extracted_products
-                    catalog_source = 'mra_configuration'
-                    config_version = product_config.config_version
+            extracted_products, product_config = ConfigurationService.get_product_catalog(business)
+            if extracted_products:
+                mra_products = [
+                    {
+                        key: value
+                        for key, value in product.items()
+                        if not key.startswith('_')
+                    }
+                    for product in extracted_products
+                ]
+                catalog_source = 'mra_configuration'
+                config_version = product_config.config_version if product_config else None
 
-        strict_product_codes = bool(getattr(settings, 'MRA_EIS_STRICT_PRODUCT_CODES', False))
+        # Strict catalog enforcement applies only after a business opts into
+        # EIS. Older/non-EIS businesses may continue using ordinary inventory
+        # and should never be blocked by MRA configuration availability.
+        strict_product_codes = bool(
+            business
+            and is_business_eis_enabled(business)
+            and getattr(settings, 'MRA_EIS_STRICT_PRODUCT_CODES', False)
+        )
         if strict_product_codes and not mra_products:
             message = (
                 'No active MRA product code configuration found. '
@@ -941,6 +1051,9 @@ class PreparePendingPOSOrdersView(APIView):
             business = get_object_or_404(accessible_businesses, id=business_id)
         else:
             business = accessible_businesses.first()
+
+        if not is_business_eis_enabled(business):
+            return _eis_disabled_response()
 
         branch = None
         if branch_id:

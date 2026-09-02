@@ -17,6 +17,15 @@ class TerminalActivationCodeSerializer(serializers.ModelSerializer):
 
 
 class TerminalSerializer(serializers.ModelSerializer):
+    blocking_status = serializers.SerializerMethodField()
+
+    def get_blocking_status(self, obj):
+        # The status is intentionally derived from the audit trail so older
+        # terminals do not need a destructive schema/data migration.
+        from .services import TerminalService
+
+        return TerminalService.get_cached_blocking_status(obj)
+
     class Meta:
         model = Terminal
         fields = [
@@ -25,6 +34,7 @@ class TerminalSerializer(serializers.ModelSerializer):
             'mra_taxpayer_id', 'terminal_position',
             'mra_terminal_id',
             'status', 'is_online',
+            'blocking_status',
             'online_invoice_counter', 'offline_invoice_counter',
             'activated_at', 'last_sync_at', 'created_at', 'updated_at'
         ]
@@ -51,6 +61,39 @@ class TerminalActivationSerializer(serializers.Serializer):
     os_type = serializers.CharField(max_length=50)
     device_serial = serializers.CharField(max_length=255)
     mac_address = serializers.CharField(max_length=17, required=False, allow_blank=True)
+
+    def validate_tac_code(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Terminal Activation Code is required.')
+        return value
+
+    def validate_device_serial(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Device serial is required.')
+        return value
+
+    def validate_pos_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('POS name is required.')
+        return value
+
+    def validate_pos_version(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('POS version is required.')
+        return value
+
+    def validate_os_type(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Operating system is required.')
+        return value
+
+    def validate_mac_address(self, value):
+        return value.strip()
 
 
 class MRAConfigurationSerializer(serializers.ModelSerializer):
@@ -112,6 +155,7 @@ class MRAInvoiceSerializer(serializers.ModelSerializer):
         model = MRAInvoice
         fields = [
             'id', 'invoice_number', 'mra_invoice_id',
+            'fiscal_julian_date', 'fiscal_invoice_number',
             'seller_tin', 'seller_name', 'buyer_tin', 'buyer_name',
             'items', 'net_amount', 'tax_amount', 'gross_amount',
             'tax_breakdown', 'invoice_signature',
@@ -119,7 +163,8 @@ class MRAInvoiceSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'invoice_number', 'mra_invoice_id', 'invoice_signature',
+            'id', 'invoice_number', 'mra_invoice_id', 'fiscal_julian_date',
+            'fiscal_invoice_number', 'invoice_signature',
             'status', 'submitted_at', 'created_at', 'updated_at'
         ]
 
@@ -202,8 +247,12 @@ class MRAAPIErrorSerializer(serializers.ModelSerializer):
 class TerminalStatusSerializer(serializers.Serializer):
     """Serializer for terminal status response"""
     terminal_id = serializers.CharField()
+    mra_terminal_id = serializers.CharField(allow_blank=True)
+    device_serial = serializers.CharField(allow_blank=True)
+    terminal_position = serializers.IntegerField(allow_null=True)
     status = serializers.CharField()
     is_online = serializers.BooleanField()
+    blocking_status = serializers.JSONField(allow_null=True, required=False)
     online_invoice_counter = serializers.IntegerField()
     offline_invoice_counter = serializers.IntegerField()
     pending_offline_invoices = serializers.IntegerField()

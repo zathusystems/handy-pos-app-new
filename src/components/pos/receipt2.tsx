@@ -83,6 +83,12 @@ type TaxBucket = {
   vatAmount: number;
 };
 
+type LevyBucket = {
+  name: string;
+  rate: number;
+  amount: number;
+};
+
 const LOCAL_STORAGE_KEYS = {
   BRANCHES: 'handypos-branches',
   ACTIVE_BRANCH: 'handypos-active-branch',
@@ -226,7 +232,10 @@ const resolveQrPayload = (rawValue: unknown): string => {
         (parsed as any).qrCodePayload ||
         (parsed as any).qr_code_payload ||
         (parsed as any).qrPayload ||
-        (parsed as any).qr_payload;
+        (parsed as any).qr_payload ||
+        (parsed as any).validationURL ||
+        (parsed as any).validationUrl ||
+        (parsed as any).validation_url;
       return toTrimmedString(nestedPayload);
     }
   } catch {
@@ -278,7 +287,7 @@ const resolveVatCategory = (item: any, taxRate: number): string => {
 
   const taxType = normalizeTaxType(item.tax_type ?? item.taxType);
   if (taxType.includes('exempt')) {
-    return 'C';
+    return 'E';
   }
   if (taxType.includes('zero')) {
     return 'B';
@@ -407,6 +416,39 @@ const buildTaxBuckets = (
   });
 };
 
+const buildLevyBuckets = (order: any): LevyBucket[] => {
+  const rawCharges = order?.chargesSnapshot ?? order?.charges_snapshot;
+  if (!Array.isArray(rawCharges)) {
+    return [];
+  }
+
+  const buckets = new Map<string, LevyBucket>();
+  rawCharges.forEach((charge) => {
+    if (!charge || typeof charge !== 'object') {
+      return;
+    }
+    const value = charge as Record<string, unknown>;
+    const chargeType = toTrimmedString(value.chargeType ?? value.charge_type).toUpperCase();
+    if (chargeType !== 'LEVY') {
+      return;
+    }
+    const name = toTrimmedString(
+      value.levyTypeId ?? value.levy_type_id ?? value.name
+    ) || 'LEVY';
+    const rate = toFiniteNumber(value.rate ?? value.levyRate ?? value.levy_rate, 0);
+    const amount = toFiniteNumber(value.amount ?? value.levyAmount ?? value.levy_amount, 0);
+    if (amount <= 0) {
+      return;
+    }
+    const key = `${name.toUpperCase()}:${rate}`;
+    const existing = buckets.get(key) || { name, rate, amount: 0 };
+    existing.amount += amount;
+    buckets.set(key, existing);
+  });
+
+  return Array.from(buckets.values());
+};
+
 const LegalRow = ({
   left,
   right,
@@ -426,11 +468,9 @@ export const Receipt2 = ({
   business,
   currencyFormatter,
   paperWidth = '80mm',
-  showQRCode = true,
   showHeader = true,
   showFooter = true,
   showItemDetails = true,
-  showTaxBreakdown = true,
   copyNumber = 1,
   rootId = 'receipt-printable-area',
   receiptFontSize,
@@ -500,7 +540,9 @@ export const Receipt2 = ({
     (order as any).fiscalInvoiceNumber ?? (order as any).fiscal_invoice_number
   );
   const localReceiptNumber = explicitLocalReceiptNumber || generatedLocalReceiptNumber;
-  const receiptNumber = localReceiptNumber || fiscalInvoiceNumber || rawOrderNumber || '-';
+  const receiptNumber = fiscalMode
+    ? fiscalInvoiceNumber || rawOrderNumber || '-'
+    : localReceiptNumber || rawOrderNumber || '-';
   const orderDateRaw = toTrimmedString((order as any).createdAt ?? (order as any).created_at);
   const parsedOrderDate = orderDateRaw ? new Date(orderDateRaw) : new Date();
   const orderDate = Number.isNaN(parsedOrderDate.getTime()) ? new Date() : parsedOrderDate;
@@ -516,6 +558,8 @@ export const Receipt2 = ({
     (order as any).buyerTin,
     (order as any).buyer_tin
   );
+  const fiscalBuyerName = buyerName || 'WALK-IN CUSTOMER';
+  const fiscalBuyerTin = buyerTin || 'N/A';
   const eisStatus = toTrimmedString((order as any).eisStatus ?? (order as any).eis_status).toUpperCase() || 'PENDING';
   const eisUuid = toTrimmedString((order as any).eisUuid ?? (order as any).eis_uuid);
   const digitalSignature = toTrimmedString(
@@ -550,6 +594,7 @@ export const Receipt2 = ({
     itemVatTotal > 0 ? itemVatTotal : normalizedOrderVat,
     fallbackTaxRate
   );
+  const levyBuckets = buildLevyBuckets(order);
   const receiptVatTotal =
     taxBuckets.reduce((sum, bucket) => sum + bucket.vatAmount, 0) || normalizedOrderVat;
   const explicitChangeAmount = toOptionalFiniteNumber(
@@ -596,7 +641,9 @@ export const Receipt2 = ({
   const qrPayload =
     resolvedQrPayload && resolvedQrPayload.length <= 512
       ? resolvedQrPayload
-      : fallbackCompliancePayload;
+      : fiscalMode
+        ? ''
+        : fallbackCompliancePayload;
 
   const resolvedPaperWidth = paperWidth === '58mm' ? '58mm' : '80mm';
   const isCompactPaper = resolvedPaperWidth === '58mm';
@@ -642,9 +689,14 @@ export const Receipt2 = ({
   const qrCodeUrl =
     `https://api.qrserver.com/v1/create-qr-code/?size=${qrPixelSize}x${qrPixelSize}&ecc=M&margin=0&data=${encodeURIComponent(qrPayload)}`;
   const shouldShowHeader = showHeader;
-  const shouldShowTaxBreakdown = false;
-  const shouldShowQRCode = fiscalMode && showQRCode;
+  // Fiscal output must contain MRA evidence even when ordinary printer
+  // preferences hide tax or QR details. Those preferences apply to normal
+  // receipts only.
+  const shouldShowTaxBreakdown = fiscalMode;
+  const shouldShowQRCode = fiscalMode && Boolean(qrPayload);
   const shouldShowFooter = showFooter;
+  const startMarker = fiscalMode ? '*** START OF LEGAL RECEIPT ***' : '*** START OF RECEIPT ***';
+  const endMarker = fiscalMode ? '*** END OF LEGAL RECEIPT ***' : '*** END OF RECEIPT ***';
 
   void currencyFormatter;
 
@@ -796,7 +848,7 @@ export const Receipt2 = ({
         data-receipt-qr-code-size={qrPixelSize}
       >
         <div className="receipt2-center">
-          <span className="receipt2-legal-marker">*** START OF RECEIPT ***</span>
+          <span className="receipt2-legal-marker">{startMarker}</span>
         </div>
         <div className="receipt2-break" />
         {copyNumber > 1 && (
@@ -843,8 +895,8 @@ export const Receipt2 = ({
         
         {fiscalMode && (
           <>
-            <div className="receipt2-line">BUYER&apos;S TIN : {buyerTin}</div>
-            <div className="receipt2-line">BUYER&apos;S NAME : {buyerName}</div>
+            <div className="receipt2-line">BUYER&apos;S TIN : {fiscalBuyerTin}</div>
+            <div className="receipt2-line">BUYER&apos;S NAME : {fiscalBuyerName}</div>
           </>
         )}
         <div className="receipt2-line">{fiscalMode ? 'RECEIPT NUMBER' : 'RECEIPT NO'} : {receiptNumber}</div>
@@ -892,6 +944,13 @@ export const Receipt2 = ({
               );
             })}
             <LegalRow left="TOTAL VAT" right={formatAmount(receiptVatTotal)} />
+            {levyBuckets.map((levy) => (
+              <LegalRow
+                key={`${levy.name}-${levy.rate}`}
+                left={`${levy.name.toUpperCase()} LEVY${levy.rate > 0 ? ` ${formatQuantity(levy.rate)}%` : ''}`}
+                right={formatAmount(levy.amount)}
+              />
+            ))}
           </>
         )}
     
@@ -923,7 +982,7 @@ export const Receipt2 = ({
 
         {shouldShowFooter && (
           <div className="receipt2-center">
-            <span className="receipt2-legal-marker">*** END OF RECEIPT ***</span>
+            <span className="receipt2-legal-marker">{endMarker}</span>
           </div>
         )}
         <div className="receipt2-bottom-space" />

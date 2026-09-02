@@ -39,6 +39,7 @@ import { safeLocalStorageGetItem, safeLocalStorageSetItem } from '@/lib/safe-loc
 import { addTakeOrderToSaleCart } from '@/lib/take-order-sale';
 import { markTakeOrdersCompleted } from '@/lib/take-order-status';
 import { calculateAppliedCharges, sumAppliedCharges } from '@/lib/business-charges';
+import { calculateAppliedMraLevies } from '@/lib/mra-levies';
 import { v4 as uuidv4 } from 'uuid';
 import {
   Dialog,
@@ -1306,6 +1307,17 @@ export function PosModal({
           console.log('[POS Modal] Refreshing inventory from backend for branch:', backendBranchId);
 
           const { syncService } = await import('@/lib/services/sync-service');
+          if (eisEnabled) {
+            const { refreshInventoryFromMraApprovedProducts } = await import('@/lib/services/inventory-sync');
+            const mraRefresh = await refreshInventoryFromMraApprovedProducts(branchId, {
+              refreshFromMra: true,
+              syncLocal: false,
+              businessId: business?.id,
+            });
+            if (!mraRefresh.ok) {
+              console.warn('[POS Modal] EIS product refresh skipped:', mraRefresh.error);
+            }
+          }
           await syncService.fetchAllInventoryFromBackend(branchId);
 
           const branchCandidates = getBranchIdCandidates(branchId);
@@ -1324,7 +1336,7 @@ export function PosModal({
       
       fetchInventoryFromBackend();
     }
-  }, [isOpen, branchId]);
+  }, [eisEnabled, isOpen, branchId]);
 
   const allSellableItems = useMemo(
     () => (allInventory || []).filter((item) => item.itemType === 'sellable'),
@@ -1546,9 +1558,12 @@ export function PosModal({
                     ) || undefined,
                     mraProductCode: readyMapping.mra_product_code || readyMapping.mraProductCode || '',
                     mraProductName: readyMapping.mra_product_name || readyMapping.mraProductName || item.name,
-                    mraTaxType: taxType,
-                    mraTaxRate: Number(readyMapping.mra_tax_rate ?? readyMapping.mraTaxRate ?? 0),
-                    mraUnitMeasure: readyMapping.mra_unit_measure || readyMapping.mraUnitMeasure || '',
+                                    mraTaxType: taxType,
+                                    mraTaxRate: Number(readyMapping.mra_tax_rate ?? readyMapping.mraTaxRate ?? 0),
+                                    mraLevies: Array.isArray(readyMapping.mra_levies ?? readyMapping.mraLevies)
+                                      ? (readyMapping.mra_levies ?? readyMapping.mraLevies)
+                                      : [],
+                                    mraUnitMeasure: readyMapping.mra_unit_measure || readyMapping.mraUnitMeasure || '',
                     taxCalculationMethod: calculationMethod,
                     isApproved: Boolean(readyMapping.is_approved ?? readyMapping.isApproved),
                     approvedAt: readyMapping.approved_at || readyMapping.approvedAt || undefined,
@@ -2099,6 +2114,36 @@ export function PosModal({
     if (buyerTin) {
       buyerFields.customerTin = buyerTin;
       buyerFields.customer_tin = buyerTin;
+      buyerFields.buyerTin = buyerTin;
+      buyerFields.buyer_tin = buyerTin;
+    }
+    const buyerAuthorizationCode = buyerDetails?.authorizationCode?.trim();
+    if (buyerAuthorizationCode) {
+      buyerFields.buyerAuthorizationCode = buyerAuthorizationCode;
+      buyerFields.buyer_authorization_code = buyerAuthorizationCode;
+    }
+    if (buyerDetails?.isExport !== undefined) {
+      buyerFields.isExport = buyerDetails.isExport === true;
+      buyerFields.is_export = buyerDetails.isExport === true;
+    }
+    if (buyerDetails?.isReliefSupply !== undefined) {
+      buyerFields.isReliefSupply = buyerDetails.isReliefSupply === true;
+      buyerFields.is_relief_supply = buyerDetails.isReliefSupply === true;
+    }
+    const vat5ProjectNumber = buyerDetails?.vat5ProjectNumber?.trim();
+    if (vat5ProjectNumber) {
+      buyerFields.vat5ProjectNumber = vat5ProjectNumber;
+      buyerFields.vat5_project_number = vat5ProjectNumber;
+    }
+    const vat5CertificateNumber = buyerDetails?.vat5CertificateNumber?.trim();
+    if (vat5CertificateNumber) {
+      buyerFields.vat5CertificateNumber = vat5CertificateNumber;
+      buyerFields.vat5_certificate_number = vat5CertificateNumber;
+    }
+    const vat5Quantity = Number(buyerDetails?.vat5Quantity ?? 0);
+    if (Number.isFinite(vat5Quantity) && vat5Quantity > 0) {
+      buyerFields.vat5Quantity = vat5Quantity;
+      buyerFields.vat5_quantity = vat5Quantity;
     }
     if (paymentMethod === 'Laybuy' && Number.isFinite(laybuyDepositAmount) && laybuyDepositAmount > 0) {
       buyerFields.laybuyDeposit = laybuyDepositAmount;
@@ -2212,6 +2257,7 @@ export function PosModal({
     // CRITICAL: Respect inclusive/exclusive tax calculation method per product
     let subtotal = 0;
     let tax = 0;
+    const lineNetAmounts: Record<string, number> = {};
     
     for (const cartItem of cart) {
       const itemPrice = Number(cartItem.price || 0);
@@ -2265,13 +2311,18 @@ export function PosModal({
       
       subtotal += itemSubtotal;
       tax += itemTax;
+      lineNetAmounts[String(cartItem.id)] = itemSubtotal;
     }
     
-    const appliedCharges = calculateAppliedCharges({
-      charges: activeCharges || [],
+    const localAppliedCharges = calculateAppliedCharges({
+      charges: (activeCharges || []).filter((charge) => !eisEnabled || charge.chargeType !== 'LEVY'),
       netSubtotal: subtotal,
       grossTotal: subtotal + tax,
     });
+    const mraAppliedCharges = eisEnabled
+      ? calculateAppliedMraLevies({ cart, mappingByItemId, lineNetAmounts })
+      : [];
+    const appliedCharges = [...localAppliedCharges, ...mraAppliedCharges];
     const exclusiveChargesTotal = sumAppliedCharges(
       appliedCharges.filter((charge) => charge.calculationMethod === 'exclusive')
     );

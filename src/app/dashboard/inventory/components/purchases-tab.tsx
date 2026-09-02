@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Truck, Loader2, ChevronDown, Cloud, CloudOff, Download, Pencil, Trash2 } from 'lucide-react';
+import { Truck, Loader2, ChevronDown, Cloud, CloudOff, Download, Pencil, Printer, Trash2 } from 'lucide-react';
 
 import { db, type Business as BusinessRecord, type InventoryItem, type PurchaseRecord } from '@/lib/db';
 import { useAuth } from '@/hooks/use-auth';
@@ -14,7 +14,7 @@ import { Separator } from '@/components/ui/separator';
 import { toast } from '@/hooks/use-toast';
 import { logAuditAction } from '@/lib/audit';
 import { syncService } from '@/lib/services/sync-service';
-import { generatePurchaseInvoicePDF } from '@/lib/purchase-invoice-pdf';
+import { generatePurchaseInvoicePDF, printPurchaseInvoice } from '@/lib/purchase-invoice-pdf';
 import { normalizePurchaseBatchQuantities } from '@/lib/purchase-quantity';
 import type { EditablePurchaseGroup } from './purchase-editor-types';
 import { PaginationControls, usePaginatedItems } from './pagination-controls';
@@ -198,6 +198,7 @@ export function PurchasesTab({ purchaseHistoryData, isMobile, searchTerm, onRece
     const [businessCurrency, setBusinessCurrency] = useState(currency);
     const [businessProfile, setBusinessProfile] = useState<BusinessRecord | null>(null);
     const [isExportingInvoice, setIsExportingInvoice] = useState(false);
+    const [isPrintingPurchase, setIsPrintingPurchase] = useState(false);
     const [isDeletingPurchase, setIsDeletingPurchase] = useState(false);
     const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
@@ -429,6 +430,40 @@ export function PurchasesTab({ purchaseHistoryData, isMobile, searchTerm, onRece
             });
         } finally {
             setIsExportingInvoice(false);
+        }
+    };
+
+    const handlePrintPurchase = () => {
+        if (!selectedPurchase) {
+            toast({
+                title: 'Select a purchase',
+                description: 'Choose a purchase to print.',
+            });
+            return;
+        }
+
+        setIsPrintingPurchase(true);
+        try {
+            printPurchaseInvoice({
+                purchase: selectedPurchase,
+                business: {
+                    name: businessProfile?.name || business?.name || 'Business',
+                    address: businessProfile?.address,
+                    phone: businessProfile?.phone,
+                    email: businessProfile?.email,
+                    tin: businessProfile?.tin,
+                },
+                currencyCode: businessCurrency,
+            });
+        } catch (error) {
+            console.error('[Purchases] Failed to print purchase invoice:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Print failed',
+                description: error instanceof Error ? error.message : 'Could not print this purchase.',
+            });
+        } finally {
+            setIsPrintingPurchase(false);
         }
     };
 
@@ -753,7 +788,7 @@ export function PurchasesTab({ purchaseHistoryData, isMobile, searchTerm, onRece
                             <Button
                                 variant="outline"
                                 onClick={handleDownloadInvoicePdf}
-                                disabled={!selectedPurchase || isExportingInvoice || isDeletingPurchase}
+                                disabled={!selectedPurchase || isExportingInvoice || isPrintingPurchase || isDeletingPurchase}
                             >
                                 {isExportingInvoice ? (
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -764,8 +799,20 @@ export function PurchasesTab({ purchaseHistoryData, isMobile, searchTerm, onRece
                             </Button>
                             <Button
                                 variant="outline"
+                                onClick={handlePrintPurchase}
+                                disabled={!selectedPurchase || isExportingInvoice || isPrintingPurchase || isDeletingPurchase}
+                            >
+                                {isPrintingPurchase ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Printer className="mr-2 h-4 w-4" />
+                                )}
+                                Print Purchase
+                            </Button>
+                            <Button
+                                variant="outline"
                                 onClick={() => handleEditPurchase(selectedPurchase)}
-                                disabled={!selectedPurchase || isDeletingPurchase || isExportingInvoice}
+                                disabled={!selectedPurchase || isDeletingPurchase || isExportingInvoice || isPrintingPurchase}
                             >
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Edit Purchase

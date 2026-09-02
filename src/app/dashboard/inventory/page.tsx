@@ -8,6 +8,7 @@ import {
   Search,
   Filter,
   Package,
+  Archive,
   History,
   Trash,
   Loader2,
@@ -34,6 +35,7 @@ import { PurchasesTab } from './components/purchases-tab';
 import { TransfersTab } from './components/transfers-tab';
 import { WasteTab } from './components/waste-tab';
 import { MRAMappingsTab } from './components/mra-mappings-tab';
+import { WarehouseStockTab } from './components/warehouse-stock-tab';
 
 import {
   Card,
@@ -191,6 +193,7 @@ export default function InventoryPage() {
   const [syncStatus, setSyncStatus] = useState({ hasPendingSync: false });
   const [activeTab, setActiveTab] = useState('inventory');
   const [businessCurrency, setBusinessCurrency] = useState('USD');
+  const [isEisEnabled, setIsEisEnabled] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(false);
@@ -223,28 +226,61 @@ export default function InventoryPage() {
   // Load business type and currency
   useEffect(() => {
     const loadBusinessSettings = async () => {
-      if (activeBusinessId) {
-        try {
-          const businessProfile = await db.business.get(activeBusinessId);
-          if (businessProfile) {
-            // Load business type - map from backend format to frontend BusinessType
-            if (businessProfile.type) {
-              const mappedType = normalizeBusinessType(businessProfile.type);
-              console.log('[InventoryPage] Setting business type to:', mappedType);
-              setCurrentBusinessType(mappedType);
-            }
-            // Load currency
-            if (businessProfile.currency) {
-              setBusinessCurrency(businessProfile.currency);
-            }
+      const authEisValue = (business as any)?.enableEis ?? (business as any)?.enable_eis;
+      if (authEisValue !== undefined && authEisValue !== null) {
+        setIsEisEnabled(
+          authEisValue === true || authEisValue === 'true' || authEisValue === 1 || authEisValue === '1'
+        );
+      }
+
+      if (!activeBusinessId) return;
+
+      try {
+        const businessProfile = await db.business.get(activeBusinessId);
+        let storedSettings: Record<string, any> = {};
+        if (typeof window !== 'undefined') {
+          try {
+            storedSettings = JSON.parse(
+              localStorage.getItem(LOCAL_STORAGE_KEYS.BUSINESS_SETTINGS) || '{}'
+            );
+          } catch {
+            storedSettings = {};
           }
-        } catch (error) {
-          console.error('Failed to load business settings:', error);
         }
+
+        if (businessProfile) {
+          if (businessProfile.type) {
+            const mappedType = normalizeBusinessType(businessProfile.type);
+            console.log('[InventoryPage] Setting business type to:', mappedType);
+            setCurrentBusinessType(mappedType);
+          }
+          if (businessProfile.currency) {
+            setBusinessCurrency(businessProfile.currency);
+          }
+
+          const eisValue =
+            (businessProfile as any).enableEis ??
+            (businessProfile as any).enable_eis ??
+            (business as any)?.enableEis ??
+            (business as any)?.enable_eis ??
+            storedSettings.enableEis ??
+            storedSettings.enable_eis;
+          setIsEisEnabled(
+            eisValue === true || eisValue === 'true' || eisValue === 1 || eisValue === '1'
+          );
+        } else if (authEisValue === undefined || authEisValue === null) {
+          const storedEisValue = storedSettings.enableEis ?? storedSettings.enable_eis;
+          setIsEisEnabled(
+            storedEisValue === true || storedEisValue === 'true' || storedEisValue === 1 || storedEisValue === '1'
+          );
+        }
+      } catch (error) {
+        console.error('Failed to load business settings:', error);
       }
     };
+
     loadBusinessSettings();
-  }, [activeBusinessId]);
+  }, [activeBusinessId, business]);
 
   // Listen for branch changes from header (custom event) and pull data
   useEffect(() => {
@@ -327,14 +363,29 @@ export default function InventoryPage() {
       try {
         // Fetch purchase history from backend
         console.log('[InventoryPage] Fetching purchase history from backend');
-        const purchaseResponse = await authFetch.fetch<any>(`/inventory/purchase-orders/?branch_id=${backendBranchId}`);
-        
-        let purchases = [];
-        if (purchaseResponse && Array.isArray(purchaseResponse)) {
-          purchases = purchaseResponse;
-        } else if (purchaseResponse?.results && Array.isArray(purchaseResponse.results)) {
-          purchases = purchaseResponse.results;
+        const purchaseQuery = new URLSearchParams({ branch_id: backendBranchId });
+        if (activeBusinessId) {
+          purchaseQuery.set('business_id', String(activeBusinessId));
         }
+        const purchaseResponse = await authFetch.fetch<any>(
+          `/inventory/purchase-orders/?${purchaseQuery.toString()}`
+        );
+
+        const purchases = Array.isArray(purchaseResponse)
+          ? purchaseResponse
+          : Array.isArray(purchaseResponse?.results)
+            ? purchaseResponse.results
+              : Array.isArray(purchaseResponse?.data)
+                ? purchaseResponse.data
+                : Array.isArray(purchaseResponse?.data?.results)
+                  ? purchaseResponse.data.results
+                  : Array.isArray(purchaseResponse?.data?.purchase_orders)
+                    ? purchaseResponse.data.purchase_orders
+              : Array.isArray(purchaseResponse?.purchase_orders)
+                ? purchaseResponse.purchase_orders
+                : Array.isArray(purchaseResponse?.purchaseOrders)
+                  ? purchaseResponse.purchaseOrders
+                  : [];
 
         console.log('[InventoryPage] Received', purchases.length, 'purchase records from backend');
         
@@ -388,7 +439,14 @@ export default function InventoryPage() {
             }
           }
 
-          const receivedDate = purchase.received_date;
+          const receivedDate =
+            purchase.received_date ||
+            purchase.receivedDate ||
+            purchase.created_at ||
+            purchase.createdAt ||
+            purchase.updated_at ||
+            purchase.updatedAt ||
+            new Date().toISOString();
           const items = Array.isArray(purchase.items) ? purchase.items : [];
 
           if (items.length === 0) {
@@ -409,7 +467,7 @@ export default function InventoryPage() {
             }
 
             // Determine product name
-            let productName = poItem.item_name || 'Unknown';
+            let productName = poItem.item_name || poItem.inventory_item_name || poItem.inventoryItemName || 'Unknown';
             if (productName === 'Unknown' && poItem.inventory_item) {
               try {
                 const inv = await db.inventory.get(poItem.inventory_item);
@@ -684,10 +742,21 @@ export default function InventoryPage() {
   // Read tab parameter from URL
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam && ['inventory', 'purchases', 'transfers', 'waste', 'mra'].includes(tabParam)) {
+    if (
+      tabParam && (
+        ['inventory', 'purchases', 'transfers', 'waste', 'mra'].includes(tabParam) ||
+        (tabParam === 'warehouse' && isEisEnabled)
+      )
+    ) {
       setActiveTab(tabParam);
     }
-  }, [searchParams]);
+  }, [isEisEnabled, searchParams]);
+
+  useEffect(() => {
+    if (!isEisEnabled && activeTab === 'warehouse') {
+      setActiveTab('inventory');
+    }
+  }, [activeTab, isEisEnabled]);
 
   // Read modal parameter from URL
   useEffect(() => {
@@ -1308,6 +1377,8 @@ export default function InventoryPage() {
           ? 'Search item, branch, or initiated by...'
           : activeTab === 'mra'
             ? 'Search product, MRA code, or mapping...'
+            : activeTab === 'warehouse'
+              ? 'Search EIS warehouse products...'
             : 'Search products or scan barcode...';
 
   // Barcode scanner listener - search for products by barcode on inventory screen
@@ -1401,6 +1472,12 @@ export default function InventoryPage() {
                             MRA Mappings
                             <span className="ml-1 text-xs text-muted-foreground">{mraCountLabel}</span>
                         </TabsTrigger>
+                        {isEisEnabled && (
+                          <TabsTrigger value="warehouse" className="whitespace-nowrap">
+                            <Archive className="mr-2 h-4 w-4" />
+                            EIS Warehouse
+                          </TabsTrigger>
+                        )}
                     </TabsList>
                     </div>
                     <div className="ml-auto flex w-full flex-wrap items-center gap-2 md:w-auto md:flex-nowrap">
@@ -1494,6 +1571,17 @@ export default function InventoryPage() {
                     refreshKey={mraRefreshKey}
                 />
             </TabsContent>
+            {isEisEnabled && (
+              <TabsContent value="warehouse">
+                <WarehouseStockTab
+                  businessId={activeBusinessId}
+                  branchId={activeBranchId}
+                  branches={branches}
+                  searchTerm={searchTerm}
+                  currency={businessCurrency}
+                />
+              </TabsContent>
+            )}
         </Tabs>
       </Card>
     </div>

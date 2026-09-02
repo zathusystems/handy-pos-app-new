@@ -249,7 +249,6 @@ export function MRAMappingsTab({ inventoryData, businessId, branchId, searchTerm
         method: 'POST',
         body: JSON.stringify({
           is_approved: true,
-          mra_synced: true,
         }),
       });
 
@@ -263,7 +262,7 @@ export function MRAMappingsTab({ inventoryData, businessId, branchId, searchTerm
 
       toast({
         title: 'Success',
-        description: 'Mapping approved and synced',
+        description: 'Mapping approved. Sync it from the MRA compliance view when ready.',
       });
     } catch (error) {
       console.error('Failed to approve mapping:', error);
@@ -451,7 +450,6 @@ export function MRAMappingsTab({ inventoryData, businessId, branchId, searchTerm
             method: 'POST',
             body: JSON.stringify({
               is_approved: true,
-              mra_synced: true,
             }),
           });
           approvedCount += 1;

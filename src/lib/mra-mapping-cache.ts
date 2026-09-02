@@ -316,6 +316,9 @@ const persistMappings = async (rawMappings: any[], fallbackBranchId: string): Pr
         mraProductName: rawMapping.mra_product_name || rawMapping.mraProductName || '',
         mraTaxType: taxType,
         mraTaxRate: Number(rawMapping.mra_tax_rate ?? rawMapping.mraTaxRate ?? 0),
+        mraLevies: Array.isArray(rawMapping.mra_levies ?? rawMapping.mraLevies)
+          ? (rawMapping.mra_levies ?? rawMapping.mraLevies)
+          : [],
         mraUnitMeasure: rawMapping.mra_unit_measure || rawMapping.mraUnitMeasure || '',
         taxCalculationMethod: normalizeTaxCalculationMethod(
           rawMapping.tax_calculation_method ??

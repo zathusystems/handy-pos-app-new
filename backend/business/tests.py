@@ -7,7 +7,18 @@ from rest_framework.test import APIClient
 
 from inventory.models import InventoryItem
 from pos_sessions.models import Order
-from .models import Branch, Business, Customer, CustomerAccountTransaction
+from .models import (
+    Branch,
+    Business,
+    BusinessCharge,
+    Customer,
+    CustomerAccountTransaction,
+    Expense,
+    Invoice,
+    TaxRate,
+)
+from staff.models import Staff, StaffRole
+from subscription.models import FeaturePricing, Subscription
 
 
 class CustomerAPITest(TestCase):
@@ -66,6 +77,156 @@ class CustomerAPITest(TestCase):
         self.assertEqual(response.data['id'], customer.id)
         self.assertEqual(response.data['name'], 'Updated Customer')
         self.assertIn('current_balance', response.data)
+
+
+class AdminStaffBusinessScopeAPITest(TestCase):
+    """Admin staff can use owner-scoped business endpoints safely."""
+
+    def setUp(self):
+        self.owner = get_user_model().objects.create_user(
+            email='scope-owner@example.com',
+            password='testpass123',
+        )
+        self.admin_user = get_user_model().objects.create_user(
+            email='scope-admin@example.com',
+            password='testpass123',
+        )
+        self.other_owner = get_user_model().objects.create_user(
+            email='scope-other-owner@example.com',
+            password='testpass123',
+        )
+        self.business = Business.objects.create(
+            owner=self.owner,
+            name='Scoped Admin Business',
+        )
+        self.other_business = Business.objects.create(
+            owner=self.other_owner,
+            name='Other Business',
+        )
+        self.branch = Branch.objects.create(
+            business=self.business,
+            name='Scoped Main Branch',
+            address='Main Street',
+            city='Blantyre',
+            country='Malawi',
+        )
+        self.other_branch = Branch.objects.create(
+            business=self.other_business,
+            name='Other Main Branch',
+            address='Other Street',
+            city='Lilongwe',
+            country='Malawi',
+        )
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=self.admin_user,
+            name='Scoped Admin',
+            email='scope-admin@example.com',
+            role=StaffRole.ADMIN,
+            is_active=True,
+        )
+        Subscription.objects.create(
+            business=self.business,
+            status='active',
+            account_balance=Decimal('1000000.00'),
+        )
+        FeaturePricing.objects.create(
+            feature='expense_management',
+            price_per_day=Decimal('0.00'),
+            is_active=True,
+        )
+        TaxRate.objects.create(
+            business=self.business,
+            name='Scoped VAT',
+            rate=Decimal('16.50'),
+            effective_from=timezone.localdate(),
+        )
+        TaxRate.objects.create(
+            business=self.other_business,
+            name='Other VAT',
+            rate=Decimal('16.50'),
+            effective_from=timezone.localdate(),
+        )
+        Invoice.objects.create(
+            business=self.business,
+            branch=self.branch,
+            invoice_number=1,
+            customer_name='Scoped Customer',
+            issue_date=timezone.now(),
+            due_date=timezone.now(),
+        )
+        Invoice.objects.create(
+            business=self.other_business,
+            branch=self.other_branch,
+            invoice_number=1,
+            customer_name='Other Customer',
+            issue_date=timezone.now(),
+            due_date=timezone.now(),
+        )
+        Expense.objects.create(
+            id='EXP-SCOPED-1',
+            business=self.business,
+            branch=self.branch,
+            title='Scoped Expense',
+            category='Supplies',
+            amount=Decimal('10.00'),
+            date=timezone.now(),
+            created_by='scope-admin@example.com',
+        )
+        Expense.objects.create(
+            id='EXP-OTHER-1',
+            business=self.other_business,
+            branch=self.other_branch,
+            title='Other Expense',
+            category='Supplies',
+            amount=Decimal('20.00'),
+            date=timezone.now(),
+            created_by='scope-other-owner@example.com',
+        )
+        BusinessCharge.objects.create(
+            business=self.business,
+            name='Scoped Levy',
+            rate=Decimal('2.00'),
+            effective_from=timezone.localdate(),
+        )
+        BusinessCharge.objects.create(
+            business=self.other_business,
+            name='Other Levy',
+            rate=Decimal('2.00'),
+            effective_from=timezone.localdate(),
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin_user)
+
+    def test_admin_staff_sees_only_assigned_business_records(self):
+        def rows(response):
+            payload = response.data
+            return payload.get('results', []) if isinstance(payload, dict) else payload
+
+        response = self.client.get('/api/business/businesses/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row['id'] for row in rows(response)}, {self.business.id})
+
+        response = self.client.get('/api/business/branches/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row['id'] for row in rows(response)}, {self.branch.id})
+
+        response = self.client.get('/api/business/tax-rates/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row['business'] for row in rows(response)}, {self.business.id})
+
+        response = self.client.get('/api/business/invoices/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row['business'] for row in rows(response)}, {self.business.id})
+
+        response = self.client.get('/api/business/expenses/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row['business'] for row in rows(response)}, {self.business.id})
+
+        response = self.client.get('/api/business/charges/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row['business'] for row in rows(response)}, {self.business.id})
 
 
 class BillingDocumentAPITest(TestCase):

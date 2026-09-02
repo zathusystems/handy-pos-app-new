@@ -449,6 +449,15 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
   const buyerPhoneDisplay = buyerDetails.phone || 'N/A';
   const buyerTinDisplay = buyerDetails.tin || 'N/A';
   const eisStatusDisplay = toTrimmedString((order as any).eisStatus ?? (order as any).eis_status).toUpperCase();
+  const fiscalMode = Boolean(
+    businessSettings?.enable_eis === true ||
+    businessSettings?.enableEis === true ||
+    (eisStatusDisplay && eisStatusDisplay !== 'PENDING') ||
+    (order as any).fiscalInvoiceNumber ||
+    (order as any).fiscal_invoice_number ||
+    (order as any).isFiscalLocked ||
+    (order as any).is_fiscal_locked
+  );
 
   const isVoided = order.status === 'Voided' || order.status === 'Cancelled';
   const isFiscalLocked = order.is_fiscal_locked;
@@ -1051,6 +1060,7 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
           receiptLegalMarkerFontWeight={receiptDisplaySettings.receiptLegalMarkerFontWeight}
           receiptLegalMarkerScaleX={receiptDisplaySettings.receiptLegalMarkerScaleX}
           receiptQrCodeSize={receiptDisplaySettings.receiptQrCodeSize}
+          fiscalMode={fiscalMode}
           copyNumber={receiptCopyNumber}
         />
       </div>

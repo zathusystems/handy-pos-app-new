@@ -355,7 +355,7 @@ export default function BillingPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { business, user } = useAuth();
+  const { business, user, loading: authLoading } = useAuth();
   const openedFromSubscriptionGuard = searchParams.get('subscriptionGuard') === '1';
   const businessId = business?.id || user?.businessId || null;
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
@@ -690,8 +690,14 @@ export default function BillingPage() {
   ]);
 
   useEffect(() => {
+    // Wait until AuthProvider restores the selected business. Loading billing
+    // without it can query the wrong owner's first subscription or return 404.
+    if (authLoading) {
+      return;
+    }
+
     void loadBillingData();
-  }, [loadBillingData]);
+  }, [authLoading, loadBillingData]);
 
   useEffect(() => {
     if (!showDepositDialog || !subscription) {

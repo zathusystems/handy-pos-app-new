@@ -10,6 +10,7 @@ from datetime import timedelta
 from .models import Subscription, Invoice, Deposit, DepositStatus, SubscriptionFeature, FeaturePricing
 from system_config.models import SystemConfig
 from business.models import Business
+from business.access import get_accessible_business
 import logging
 from .serializers import (
     SubscriptionSerializer, InvoiceSerializer, DepositSerializer, 
@@ -35,8 +36,14 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # Get subscriptions for businesses owned by current user
-        return Subscription.objects.filter(business__owner=self.request.user)
+        # Keep subscription visibility aligned with the business access rules.
+        # Superusers may support any business from the admin account; ordinary
+        # users may see their owned businesses and active staff assignments.
+        return self._get_accessible_subscription_queryset(
+            self.request,
+            allow_staff_access=True,
+            admin_staff_only=self.request.method not in permissions.SAFE_METHODS,
+        )
 
     def get_serializer_class(self):
         if self.action in {'update', 'partial_update'}:
@@ -66,16 +73,47 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         ).only('business_id').first()
         return staff_profile.business_id if staff_profile else None
 
-    def _resolve_subscription(self, request, allow_staff_access=False):
-        business_id = request.data.get('business') or request.query_params.get('business')
-        access_filter = Q(business__owner=request.user)
+    @classmethod
+    def _get_accessible_subscription_queryset(
+        cls,
+        request,
+        allow_staff_access=False,
+        admin_staff_only=False,
+    ):
+        user = request.user
+        if getattr(user, 'is_superuser', False):
+            return Subscription.objects.all().order_by('id')
 
+        access_filter = Q(business__owner=user)
         if allow_staff_access:
-            staff_business_id = self._get_active_staff_business_id(request)
-            if staff_business_id:
-                access_filter |= Q(business_id=staff_business_id)
+            try:
+                from staff.models import Staff, StaffRole
 
-        subscriptions = Subscription.objects.filter(access_filter).order_by('id').distinct()
+                staff_profiles = Staff.objects.filter(
+                    user=user,
+                    is_active=True,
+                )
+                if admin_staff_only:
+                    staff_profiles = staff_profiles.filter(role=StaffRole.ADMIN)
+                staff_business_ids = staff_profiles.values_list('business_id', flat=True)
+                access_filter |= Q(business_id__in=staff_business_ids)
+            except Exception:
+                pass
+
+        return Subscription.objects.filter(access_filter).order_by('id').distinct()
+
+    def _resolve_subscription(
+        self,
+        request,
+        allow_staff_access=False,
+        admin_staff_only=False,
+    ):
+        business_id = request.data.get('business') or request.query_params.get('business')
+        subscriptions = self._get_accessible_subscription_queryset(
+            request,
+            allow_staff_access=allow_staff_access,
+            admin_staff_only=admin_staff_only,
+        )
         if business_id:
             subscriptions = subscriptions.filter(business_id=business_id)
         return subscriptions.first()
@@ -89,10 +127,16 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            business = Business.objects.get(id=business_id, owner=request.user)
+            business = get_accessible_business(
+                request.user,
+                business_id,
+                admin_staff_only=True,
+            )
+            if not business:
+                raise Business.DoesNotExist
         except Business.DoesNotExist:
             return None, Response(
-                {'detail': 'Business not found or not owned by user'},
+                {'detail': 'Business not found or not available for this account'},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -305,7 +349,11 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def pause(self, request):
         """Pause subscription"""
-        subscription = self._resolve_subscription(request)
+        subscription = self._resolve_subscription(
+            request,
+            allow_staff_access=True,
+            admin_staff_only=True,
+        )
         if not subscription:
             return Response(
                 {'detail': 'No subscription found'},
@@ -320,7 +368,11 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def resume(self, request):
         """Resume subscription"""
-        subscription = self._resolve_subscription(request)
+        subscription = self._resolve_subscription(
+            request,
+            allow_staff_access=True,
+            admin_staff_only=True,
+        )
         if not subscription:
             return Response(
                 {'detail': 'No subscription found'},
@@ -348,24 +400,35 @@ class DepositViewSet(viewsets.ModelViewSet):
     pagination_class = DepositPagination
 
     def get_queryset(self):
-        # Get deposits for subscriptions of businesses owned by current user
-        queryset = Deposit.objects.filter(
-            subscription__business__owner=self.request.user
+        # Billing reads must use the same business scope as the current
+        # subscription endpoint, including active staff assignments.
+        accessible_subscriptions = SubscriptionViewSet._get_accessible_subscription_queryset(
+            self.request,
+            allow_staff_access=True,
+            admin_staff_only=self.request.method not in permissions.SAFE_METHODS,
         )
+        queryset = Deposit.objects.filter(subscription__in=accessible_subscriptions)
         business_id = self.request.query_params.get('business')
         if business_id:
             queryset = queryset.filter(subscription__business_id=business_id)
         else:
-            first_subscription = Subscription.objects.filter(
-                business__owner=self.request.user
-            ).order_by('id').first()
+            first_subscription = accessible_subscriptions.first()
             if first_subscription:
                 queryset = queryset.filter(subscription=first_subscription)
         return queryset
 
-    def _resolve_subscription(self, request):
+    def _resolve_subscription(
+        self,
+        request,
+        allow_staff_access=False,
+        admin_staff_only=False,
+    ):
         business_id = request.data.get('business') or request.query_params.get('business')
-        subscriptions = Subscription.objects.filter(business__owner=request.user).order_by('id')
+        subscriptions = SubscriptionViewSet._get_accessible_subscription_queryset(
+            request,
+            allow_staff_access=allow_staff_access,
+            admin_staff_only=admin_staff_only,
+        )
         if business_id:
             subscriptions = subscriptions.filter(business_id=business_id)
         return subscriptions.first()
@@ -377,7 +440,11 @@ class DepositViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Create a new deposit request"""
-        subscription = self._resolve_subscription(request)
+        subscription = self._resolve_subscription(
+            request,
+            allow_staff_access=True,
+            admin_staff_only=True,
+        )
         if not subscription:
             return Response(
                 {'detail': 'No subscription found'},
@@ -458,7 +525,7 @@ class DepositViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def summary(self, request):
         """Get deposit summary for current user"""
-        subscription = self._resolve_subscription(request)
+        subscription = self._resolve_subscription(request, allow_staff_access=True)
         if not subscription:
             return Response(
                 {'detail': 'No subscription found'},
@@ -491,30 +558,39 @@ class SubscriptionFeatureViewSet(viewsets.ModelViewSet):
         return bool(feature and (feature.price_per_day or 0) <= 0)
 
     def get_queryset(self):
-        # Get subscription features for subscriptions of businesses owned by current user
-        queryset = SubscriptionFeature.objects.filter(
-            subscription__business__owner=self.request.user
+        accessible_subscriptions = SubscriptionViewSet._get_accessible_subscription_queryset(
+            self.request,
+            allow_staff_access=True,
+            admin_staff_only=self.request.method not in permissions.SAFE_METHODS,
         )
+        queryset = SubscriptionFeature.objects.filter(subscription__in=accessible_subscriptions)
         business_id = self.request.query_params.get('business')
         if business_id:
             queryset = queryset.filter(subscription__business_id=business_id)
         else:
-            first_subscription = Subscription.objects.filter(
-                business__owner=self.request.user
-            ).order_by('id').first()
+            first_subscription = accessible_subscriptions.first()
             if first_subscription:
                 queryset = queryset.filter(subscription=first_subscription)
         return queryset
 
-    def _resolve_subscription(self, request):
+    def _resolve_subscription(
+        self,
+        request,
+        allow_staff_access=False,
+        admin_staff_only=False,
+    ):
         business_id = request.data.get('business') or request.query_params.get('business')
-        subscriptions = Subscription.objects.filter(business__owner=request.user).order_by('id')
+        subscriptions = SubscriptionViewSet._get_accessible_subscription_queryset(
+            request,
+            allow_staff_access=allow_staff_access,
+            admin_staff_only=admin_staff_only,
+        )
         if business_id:
             subscriptions = subscriptions.filter(business_id=business_id)
         return subscriptions.first()
 
     def list(self, request, *args, **kwargs):
-        subscription = self._resolve_subscription(request)
+        subscription = self._resolve_subscription(request, allow_staff_access=True)
         if subscription:
             # Best effort; don't fail GET due to SQLite write-lock races.
             try:
@@ -525,7 +601,11 @@ class SubscriptionFeatureViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Create a new subscription feature"""
-        subscription = self._resolve_subscription(request)
+        subscription = self._resolve_subscription(
+            request,
+            allow_staff_access=True,
+            admin_staff_only=True,
+        )
         if not subscription:
             return Response(
                 {'detail': 'No subscription found'},
@@ -598,7 +678,11 @@ class SubscriptionFeatureViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def toggle_feature(self, request):
         """Toggle a feature on/off for the subscription"""
-        subscription = self._resolve_subscription(request)
+        subscription = self._resolve_subscription(
+            request,
+            allow_staff_access=True,
+            admin_staff_only=True,
+        )
         if not subscription:
             return Response(
                 {'detail': 'No subscription found'},

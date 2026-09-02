@@ -656,6 +656,27 @@ class SubscriptionApiTests(APITestCase):
         self.assertEqual(str(response.data['business']), str(self.business.id))
         self.assertEqual(Decimal(str(response.data['account_balance'])), Decimal('42.00'))
 
+    def test_current_endpoint_returns_subscription_for_superuser_business(self):
+        support_user = User.objects.create_superuser(
+            email='support-admin@example.com',
+            password='testpass123',
+        )
+        Subscription.objects.create(
+            business=self.other_business,
+            status='active',
+            account_balance=Decimal('84.00'),
+        )
+
+        self.client.force_authenticate(user=support_user)
+        response = self.client.get(
+            '/api/subscription/subscriptions/current/',
+            {'business': self.other_business.id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(str(response.data['business']), str(self.other_business.id))
+        self.assertEqual(Decimal(str(response.data['account_balance'])), Decimal('84.00'))
+
     def test_current_endpoint_returns_404_for_staff_when_business_has_no_subscription(self):
         staff_user = User.objects.create_user(
             email='staff-no-sub@example.com',
@@ -972,7 +993,7 @@ class SubscriptionApiTests(APITestCase):
         subscription.refresh_from_db()
         self.assertTrue(subscription.enable_staff_management)
 
-    def test_staff_cannot_pause_subscription(self):
+    def test_admin_staff_can_pause_subscription(self):
         staff_user = User.objects.create_user(
             email='staff-pause@example.com',
             password='testpass123',
@@ -998,9 +1019,9 @@ class SubscriptionApiTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, 404, response.data)
+        self.assertEqual(response.status_code, 200, response.data)
         subscription.refresh_from_db()
-        self.assertEqual(subscription.status, 'active')
+        self.assertEqual(subscription.status, 'paused')
 
     def test_dashboard_summary_applies_daily_charge_only_once_per_day(self):
         dashboard_business = self.business_two

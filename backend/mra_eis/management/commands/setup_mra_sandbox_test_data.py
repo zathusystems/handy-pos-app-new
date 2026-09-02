@@ -9,7 +9,7 @@ from datetime import timedelta
 from decimal import Decimal
 import uuid
 
-from business.models import Business, Branch
+from business.models import Business, Branch, BusinessSettings
 from inventory.models import InventoryItem
 from mra_eis.models import (
     TerminalActivationCode,
@@ -89,10 +89,15 @@ class Command(BaseCommand):
                 'tin': '123456789',
                 'vat_registered': True,
                 'mra_enrolled': True,
+            }
+        )
+        BusinessSettings.objects.update_or_create(
+            business=business,
+            defaults={
                 'enable_eis': True,
                 'eis_environment': 'TEST',
                 'block_sales_if_eis_down': True,
-            }
+            },
         )
         return business
 
@@ -230,8 +235,8 @@ class Command(BaseCommand):
         self.stdout.write(f'  ID: {business.id}')
         self.stdout.write(f'  Name: {business.name}')
         self.stdout.write(f'  TIN: {business.tin}')
-        self.stdout.write(f'  EIS Enabled: {business.enable_eis}')
-        self.stdout.write(f'  Environment: {business.eis_environment}')
+        self.stdout.write(f'  EIS Enabled: {business.settings.enable_eis}')
+        self.stdout.write(f'  Environment: {business.settings.eis_environment}')
 
         self.stdout.write('\nBranch:')
         self.stdout.write(f'  ID: {branch.id}')

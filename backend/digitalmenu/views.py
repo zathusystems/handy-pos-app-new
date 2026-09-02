@@ -19,33 +19,30 @@ from .utils import (
     option_snapshot,
     sync_menu_config_currency,
 )
+from business.access import (
+    get_accessible_business,
+    get_accessible_business_ids as get_scoped_business_ids,
+    user_can_access_business as can_access_business,
+)
 
 
 class IsBusinessOwner(permissions.BasePermission):
-    """Permission to check if user owns the business"""
+    """Allow business owners and assigned Admin staff to manage menu data."""
     def has_object_permission(self, request, view, obj):
-        return obj.business.owner == request.user
+        return can_access_business(
+            request.user,
+            getattr(getattr(obj, 'business', None), 'id', None),
+            admin_staff_only=True,
+        )
 
 
 def get_accessible_business_ids(user):
     """Businesses owned by the user or assigned through an active staff profile."""
-    if not user or not user.is_authenticated:
-        return []
-
-    business_ids = list(user.businesses.values_list('id', flat=True))
-    try:
-        from staff.models import Staff
-        staff = Staff.objects.filter(user=user, is_active=True).first()
-        if staff and staff.business_id:
-            business_ids.append(staff.business_id)
-    except Exception:
-        pass
-
-    return list(dict.fromkeys(business_ids))
+    return get_scoped_business_ids(user)
 
 
 def user_can_access_business(user, business_id):
-    return business_id in get_accessible_business_ids(user)
+    return can_access_business(user, business_id)
 
 
 class MenuViewSet(viewsets.ModelViewSet):
@@ -819,24 +816,31 @@ class MenuConfigViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter menu configs to only those belonging to the current user's business"""
-        return MenuConfig.objects.filter(business__owner=self.request.user)
+        return MenuConfig.objects.filter(
+            business_id__in=get_scoped_business_ids(
+                self.request.user,
+                admin_staff_only=True,
+            )
+        )
 
     def create(self, request, *args, **kwargs):
         """Create or update menu config"""
         try:
-            from business.models import Business, Branch
+            from business.models import Branch
             
             print(f"[MenuConfig] Create request received")
             print(f"[MenuConfig] Request data: {request.data}")
             
             # Get business from authenticated user
-            try:
-                business = Business.objects.get(owner=request.user)
-                print(f"[MenuConfig] Found business: {business.id}")
-            except Business.DoesNotExist:
+            business = get_accessible_business(
+                request.user,
+                request.data.get('business') or request.query_params.get('business'),
+                admin_staff_only=True,
+            )
+            if not business:
                 print(f"[MenuConfig] No business found for user {request.user}")
                 return Response(
-                    {'error': 'User does not have an associated business'},
+                    {'error': 'User does not have an accessible business'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -890,12 +894,13 @@ class MenuConfigViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Auto-populate business from authenticated user"""
-        from business.models import Business
-        
-        try:
-            business = Business.objects.get(owner=self.request.user)
-        except Business.DoesNotExist:
-            raise serializers.ValidationError('User must have a business')
+        business = get_accessible_business(
+            self.request.user,
+            self.request.data.get('business') or self.request.query_params.get('business'),
+            admin_staff_only=True,
+        )
+        if not business:
+            raise serializers.ValidationError('User must have an accessible business')
         
         config = serializer.save(business=business)
         sync_menu_config_currency(config)
@@ -975,10 +980,19 @@ class MenuConfigViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            from business.models import Business, Branch
+            from business.models import Branch
             
             # Get business from authenticated user
-            business = Business.objects.get(owner=request.user)
+            business = get_accessible_business(
+                request.user,
+                request.data.get('business') or request.query_params.get('business'),
+                admin_staff_only=True,
+            )
+            if not business:
+                return Response(
+                    {'error': 'User does not have an accessible business'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             business_currency = get_business_currency(business)
             
             # Verify branch belongs to this business

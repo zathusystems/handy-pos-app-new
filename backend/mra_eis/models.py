@@ -142,6 +142,34 @@ class Terminal(models.Model):
         return self.offline_invoice_counter
 
 
+class FiscalInvoiceSequence(models.Model):
+    """One shared fiscal sequence for each terminal and MRA fiscal day."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    terminal = models.ForeignKey(
+        Terminal,
+        on_delete=models.CASCADE,
+        related_name='fiscal_sequences',
+    )
+    julian_date = models.PositiveIntegerField(
+        help_text='MRA Julian date represented by this sequence.',
+    )
+    last_sequence = models.BigIntegerField(
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-julian_date']
+        unique_together = ('terminal', 'julian_date')
+        indexes = [models.Index(fields=['terminal', 'julian_date'])]
+
+    def __str__(self):
+        return f'{self.terminal.terminal_id} / {self.julian_date}: {self.last_sequence}'
+
+
 class TerminalActivationCode(models.Model):
     """
     TAC (Terminal Activation Code) - one-time use code for terminal activation.
@@ -394,7 +422,17 @@ class MRAInvoice(models.Model):
     
     # Invoice identification (immutable)
     invoice_number = models.BigIntegerField(
-        help_text="Sequential invoice number per terminal"
+        help_text="Sequential invoice number per terminal fiscal day"
+    )
+    fiscal_julian_date = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='MRA Julian date used for fiscal sequencing.',
+    )
+    fiscal_invoice_number = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Full MRA fiscal invoice number, when available.',
     )
     mra_invoice_id = models.CharField(
         max_length=255,
@@ -465,8 +503,12 @@ class MRAInvoice(models.Model):
             models.Index(fields=['status']),
             models.Index(fields=['invoice_date']),
             models.Index(fields=['seller_tin']),
+            models.Index(fields=['terminal', 'fiscal_julian_date', 'invoice_number']),
         ]
-        unique_together = ('terminal', 'invoice_number', 'is_online')
+        unique_together = (
+            ('terminal', 'invoice_number', 'is_online'),
+            ('terminal', 'fiscal_julian_date', 'invoice_number'),
+        )
 
     def __str__(self):
         return f"Invoice #{self.invoice_number} - {self.status}"
@@ -608,7 +650,7 @@ class Receipt(models.Model):
     )
     
     # Receipt content
-    receipt_number = models.CharField(max_length=50)
+    receipt_number = models.CharField(max_length=100)
     receipt_text = models.TextField(help_text="Formatted receipt text")
     
     # QR Code data
@@ -693,6 +735,7 @@ class TerminalAuditLog(models.Model):
         ('token_refreshed', 'Token Refreshed'),
         ('online_status_changed', 'Online Status Changed'),
         ('configuration_updated', 'Configuration Updated'),
+        ('mra_request_signed', 'MRA Request Signed'),
         ('suspended', 'Terminal Suspended'),
         ('deactivated', 'Terminal Deactivated'),
     ]
@@ -792,6 +835,7 @@ class SyncRetryQueue(models.Model):
     """
     OPERATION_TYPES = [
         ('submit_invoice', 'Submit Invoice'),
+        ('submit_pos_order', 'Submit POS Order'),
         ('sync_offline_invoices', 'Sync Offline Invoices'),
         ('refresh_token', 'Refresh Token'),
         ('fetch_configuration', 'Fetch Configuration'),

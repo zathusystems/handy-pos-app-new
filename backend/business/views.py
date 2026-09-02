@@ -24,6 +24,12 @@ from .models import (
     Customer, CustomerAccountTransaction, CustomerLaybuy, Expense
 )
 from .customer_accounts import collect_laybuy, record_customer_payment, record_laybuy_payment
+from .access import (
+    get_accessible_business,
+    get_accessible_business_ids,
+    get_accessible_business_queryset,
+    user_can_access_business,
+)
 from .serializers import (
     BusinessSerializer, BusinessDetailSerializer, BusinessCreateSerializer,
     BusinessUpdateSerializer, BranchSerializer, BranchCreateSerializer,
@@ -44,11 +50,15 @@ from subscription.feature_access import SubscriptionFeatureGateMixin
 # ============================================================================
 
 class IsBusinessOwnerOrReadOnly(permissions.BasePermission):
-    """Permission to check if user is business owner"""
+    """Allow owners and assigned Admin staff to modify a business."""
     def has_object_permission(self, request, view, obj):
         if request.method in permissions.SAFE_METHODS:
             return True
-        return obj.owner == request.user
+        return user_can_access_business(
+            request.user,
+            getattr(obj, 'id', None),
+            admin_staff_only=True,
+        )
 
 
 def _default_main_branch_name(business_name):
@@ -65,20 +75,7 @@ def _default_main_branch_name(business_name):
 
 def _accessible_business_ids_for_user(user):
     """Businesses owned by the user or assigned through an active staff profile."""
-    business_ids = list(Business.objects.filter(owner=user).values_list('id', flat=True))
-
-    try:
-        from staff.models import Staff
-        staff_profile = Staff.objects.select_related('business').filter(
-            user=user,
-            is_active=True,
-        ).first()
-        if staff_profile and staff_profile.business_id:
-            business_ids.append(staff_profile.business_id)
-    except Exception:
-        pass
-
-    return list(dict.fromkeys(business_ids))
+    return get_accessible_business_ids(user)
 
 
 # ============================================================================
@@ -108,23 +105,7 @@ class BusinessViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter businesses by owner or staff assignment"""
-        from staff.models import Staff
-        
-        # Get businesses owned by user
-        owned_businesses = Business.objects.filter(owner=self.request.user)
-        
-        # Get businesses where user is a staff member
-        try:
-            staff = Staff.objects.get(user=self.request.user)
-            if staff.business:
-                # Combine owned businesses with assigned business
-                return Business.objects.filter(
-                    id__in=list(owned_businesses.values_list('id', flat=True)) + [staff.business.id]
-                ).distinct()
-        except Staff.DoesNotExist:
-            pass
-        
-        return owned_businesses
+        return get_accessible_business_queryset(self.request.user)
 
     def get_serializer_class(self):
         """Choose serializer based on action"""
@@ -313,8 +294,13 @@ class BranchViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Filter branches by business owner"""
-        return Branch.objects.filter(business__owner=self.request.user)
+        """Filter branches to owners and assigned Admin staff."""
+        return Branch.objects.filter(
+            business_id__in=get_accessible_business_ids(
+                self.request.user,
+                admin_staff_only=True,
+            )
+        )
 
     def get_serializer_class(self):
         """Choose serializer based on action"""
@@ -324,7 +310,14 @@ class BranchViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Create branch"""
-        serializer.save()
+        business = get_accessible_business(
+            self.request.user,
+            self.request.data.get('business') or self.request.query_params.get('business'),
+            admin_staff_only=True,
+        )
+        if not business:
+            raise serializers.ValidationError('User must have an accessible business')
+        serializer.save(business=business)
 
 
 # ============================================================================
@@ -347,6 +340,8 @@ class TaxRateViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
     """
     permission_classes = [permissions.IsAuthenticated]
     required_subscription_feature = 'tax_management'
+    feature_gate_allow_staff_access = True
+    feature_gate_admin_staff_only = True
     feature_gate_actions = {'create', 'update', 'partial_update', 'destroy', 'set_default'}
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'tax_type', 'mra_tax_code']
@@ -354,8 +349,13 @@ class TaxRateViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
     ordering = ['-is_default', '-created_at']
 
     def get_queryset(self):
-        """Filter tax rates by business owner"""
-        return TaxRate.objects.filter(business__owner=self.request.user)
+        """Filter tax rates to owners and assigned Admin staff."""
+        return TaxRate.objects.filter(
+            business_id__in=get_accessible_business_ids(
+                self.request.user,
+                admin_staff_only=True,
+            )
+        )
 
     def get_serializer_class(self):
         """Choose serializer based on action"""
@@ -367,9 +367,13 @@ class TaxRateViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Create tax rate"""
-        business = self.request.user.businesses.first()
+        business = get_accessible_business(
+            self.request.user,
+            self.request.data.get('business') or self.request.query_params.get('business'),
+            admin_staff_only=True,
+        )
         if not business:
-            raise serializers.ValidationError('User must have a business')
+            raise serializers.ValidationError('User must have an accessible business')
         serializer.save(business=business, created_by=self.request.user)
 
     def _ensure_tax_rate_mutable(self, tax_rate: TaxRate) -> None:
@@ -416,6 +420,8 @@ class BusinessChargeViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet)
 
     permission_classes = [permissions.IsAuthenticated]
     required_subscription_feature = 'tax_management'
+    feature_gate_allow_staff_access = True
+    feature_gate_admin_staff_only = True
     feature_gate_actions = {'create', 'update', 'partial_update', 'destroy'}
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'charge_type']
@@ -885,8 +891,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Filter invoices by business owner"""
-        queryset = Invoice.objects.filter(business__owner=self.request.user).select_related(
+        """Filter invoices to owners and assigned Admin staff."""
+        queryset = Invoice.objects.filter(
+            business_id__in=get_accessible_business_ids(
+                self.request.user,
+                admin_staff_only=True,
+            )
+        ).select_related(
             'branch',
             'customer',
         ).prefetch_related('lines')
@@ -914,9 +925,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         """Create invoice"""
-        business = self.request.user.businesses.first()
+        business = get_accessible_business(
+            self.request.user,
+            self.request.data.get('business') or self.request.query_params.get('business'),
+            admin_staff_only=True,
+        )
         if not business:
-            raise serializers.ValidationError('User must have a business')
+            raise serializers.ValidationError('User must have an accessible business')
         serializer.save(business=business)
 
     def create(self, request, *args, **kwargs):
@@ -963,6 +978,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     def submit_to_mra(self, request, pk=None):
         """Submit invoice to MRA"""
         invoice = self.get_object()
+
+        from mra_eis.services import is_business_eis_enabled
+        if not is_business_eis_enabled(invoice.business):
+            return Response(
+                {
+                    'error': 'MRA EIS is not enabled for this business. Enable it in Settings before submitting invoices.',
+                    'code': 'EIS_DISABLED',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         # Check if already submitted
         if invoice.mra_status == 'SUBMITTED':
@@ -1049,14 +1074,21 @@ class ExpenseViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
     """
     permission_classes = [permissions.IsAuthenticated]
     required_subscription_feature = 'expense_management'
+    feature_gate_allow_staff_access = True
+    feature_gate_admin_staff_only = True
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['title', 'category']
     ordering_fields = ['title', 'amount', 'date', 'status', 'created_at']
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Filter expenses by business owner and optionally by branch"""
-        queryset = Expense.objects.filter(business__owner=self.request.user)
+        """Filter expenses to owners and assigned Admin staff."""
+        queryset = Expense.objects.filter(
+            business_id__in=get_accessible_business_ids(
+                self.request.user,
+                admin_staff_only=True,
+            )
+        )
         
         # Filter by branch if provided in query parameters
         branch_id = self.request.query_params.get('branch', None)
@@ -1073,9 +1105,13 @@ class ExpenseViewSet(SubscriptionFeatureGateMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Create expense"""
-        business = self.request.user.businesses.first()
+        business = get_accessible_business(
+            self.request.user,
+            self.request.data.get('business') or self.request.query_params.get('business'),
+            admin_staff_only=True,
+        )
         if not business:
-            raise serializers.ValidationError('User must have a business')
+            raise serializers.ValidationError('User must have an accessible business')
         serializer.save(
             business=business,
             created_by=self.request.user.email,

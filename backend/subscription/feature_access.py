@@ -60,7 +60,11 @@ def _format_feature_gate_message(feature_name, reason):
     return f'{feature_label} is unavailable for this subscription.'
 
 
-def _resolve_business_id_for_request(request, allow_staff_access=False):
+def _resolve_business_id_for_request(
+    request,
+    allow_staff_access=False,
+    admin_staff_only=False,
+):
     requested_business_id = _get_requested_business_id(request)
     user = request.user
 
@@ -76,14 +80,17 @@ def _resolve_business_id_for_request(request, allow_staff_access=False):
 
     if allow_staff_access:
         try:
-            from staff.models import Staff
+            from staff.models import Staff, StaffRole
         except Exception:
             return None
 
-        staff_profile = Staff.objects.filter(
+        staff_profiles = Staff.objects.filter(
             user=user,
             is_active=True,
-        ).only('business_id').first()
+        )
+        if admin_staff_only:
+            staff_profiles = staff_profiles.filter(role=StaffRole.ADMIN)
+        staff_profile = staff_profiles.only('business_id').first()
 
         if not staff_profile or not staff_profile.business_id:
             return None
@@ -96,10 +103,16 @@ def _resolve_business_id_for_request(request, allow_staff_access=False):
     return None
 
 
-def check_request_subscription_feature(request, feature_name, allow_staff_access=False):
+def check_request_subscription_feature(
+    request,
+    feature_name,
+    allow_staff_access=False,
+    admin_staff_only=False,
+):
     business_id = _resolve_business_id_for_request(
         request,
         allow_staff_access=allow_staff_access,
+        admin_staff_only=admin_staff_only,
     )
     feature_label = _get_feature_label(feature_name)
 
@@ -125,6 +138,7 @@ def check_request_subscription_feature(request, feature_name, allow_staff_access
 class SubscriptionFeatureGateMixin:
     required_subscription_feature = None
     feature_gate_allow_staff_access = False
+    feature_gate_admin_staff_only = False
     feature_gate_actions = None
     feature_gate_exempt_actions = set()
 
@@ -147,6 +161,7 @@ class SubscriptionFeatureGateMixin:
             request,
             feature_name,
             allow_staff_access=getattr(self, 'feature_gate_allow_staff_access', False),
+            admin_staff_only=getattr(self, 'feature_gate_admin_staff_only', False),
         )
         if not allowed:
             raise PermissionDenied(detail=message)

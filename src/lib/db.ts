@@ -8,6 +8,8 @@ export interface Business {
     name: string;
     type: string;
     currency: string;
+    enableEis?: boolean;
+    enable_eis?: boolean;
     tin?: string;
     email?: string;
     phone?: string;
@@ -309,6 +311,20 @@ export interface Order {
     buyer_name?: string;
     buyerTin?: string;
     buyer_tin?: string;
+    buyerAuthorizationCode?: string;
+    buyer_authorization_code?: string;
+    isExport?: boolean;
+    is_export?: boolean;
+    isReliefSupply?: boolean;
+    is_relief_supply?: boolean;
+    vat5ProjectNumber?: string;
+    vat5_project_number?: string;
+    vat5CertificateNumber?: string;
+    vat5_certificate_number?: string;
+    vat5Quantity?: number;
+    vat5_quantity?: number;
+    eisValidationMetadata?: Record<string, unknown>;
+    eis_validation_metadata?: Record<string, unknown>;
     cogs: number; // Cost of Goods Sold for this order
     // Tax snapshot (MRA compliance - NEVER calculate tax dynamically)
     // These fields preserve the exact tax rules that applied at the time of sale
@@ -771,6 +787,8 @@ export interface MRAMapping {
     mra_tax_type?: 'standard' | 'zero' | 'exempt';
     mraTaxRate: number;
     mra_tax_rate?: number;
+    mraLevies?: Array<{ levyTypeId: string; levyRate: number }>;
+    mra_levies?: Array<{ levyTypeId: string; levyRate: number }>;
     mraUnitMeasure: string;
     taxCalculationMethod: 'inclusive' | 'exclusive';
     taxType?: string;

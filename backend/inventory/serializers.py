@@ -71,10 +71,12 @@ class MRAProductMappingSerializer(serializers.ModelSerializer):
             'id', 'inventory_item', 'inventory_item_name', 'branch', 'branch_name',
             'mra_product_code', 'mra_product_name', 'mra_tax_type',
             'mra_tax_rate', 'mra_unit_measure', 'tax_calculation_method',
+            'mra_levies',
             'is_approved', 'approved_at', 'mra_synced', 'last_synced_at', 'created_at'
         ]
         read_only_fields = [
-            'id', 'branch', 'approved_at', 'last_synced_at', 'created_at'
+            'id', 'inventory_item', 'branch', 'is_approved', 'approved_at',
+            'mra_synced', 'last_synced_at', 'created_at', 'mra_levies'
         ]
 
     def get_branch_name(self, obj):
@@ -373,11 +375,12 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'order_number', 'supplier', 'supplier_name', 'status',
             'total_items', 'total_cost', 'payment_status', 'amount_paid',
-            'amount_due', 'reference_number', 'vat_amount', 'items', 'created_at', 'updated_at'
+            'amount_due', 'reference_number', 'vat_amount', 'items',
+            'received_date', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'order_number', 'total_items', 'total_cost',
-            'amount_due', 'items', 'created_at', 'updated_at'
+            'amount_due', 'items', 'received_date', 'created_at', 'updated_at'
         ]
 
 
@@ -386,7 +389,7 @@ class PurchaseOrderDetailSerializer(PurchaseOrderSerializer):
     class Meta(PurchaseOrderSerializer.Meta):
         fields = PurchaseOrderSerializer.Meta.fields + [
             'supplier_tin', 'supplier_vat_registered', 'notes',
-            'created_by', 'received_date'
+            'created_by'
         ]
 
 

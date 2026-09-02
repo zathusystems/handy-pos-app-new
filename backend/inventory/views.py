@@ -43,32 +43,13 @@ from .serializers import (
 from .services import InventoryService, InventoryAuditService
 
 
-def _get_accessible_business_ids(user):
+def _get_accessible_business_ids(user, *, admin_staff_only=False):
     """
     Return business IDs the user can access (owner, staff assignment, or superuser).
     """
-    if getattr(user, 'is_superuser', False):
-        return list(Business.objects.values_list('id', flat=True))
+    from business.access import get_accessible_business_ids
 
-    business_ids = set(
-        Business.objects.filter(owner=user).values_list('id', flat=True)
-    )
-
-    try:
-        from staff.models import Staff
-
-        staff_business_ids = Staff.objects.filter(
-            user=user,
-            is_active=True
-        ).exclude(
-            business_id__isnull=True
-        ).values_list('business_id', flat=True)
-        business_ids.update(staff_business_ids)
-    except Exception:
-        # Staff module may be unavailable in some contexts; owner scope still works.
-        pass
-
-    return list(business_ids)
+    return get_accessible_business_ids(user, admin_staff_only=admin_staff_only)
 
 
 def _normalize_branch_lookup(branch_reference):
@@ -322,6 +303,7 @@ class MRAProductMappingViewSet(viewsets.ModelViewSet):
             mra_tax_rate=mapping_data['mra_tax_rate'],
             mra_unit_measure=mapping_data['mra_unit_measure'],
             tax_calculation_method=mapping_data.get('tax_calculation_method', 'inclusive'),
+            mra_levies=mapping_data.get('mra_levies') or [],
             is_approved=False,
             mra_synced=False,
         )
@@ -343,6 +325,19 @@ class MRAProductMappingViewSet(viewsets.ModelViewSet):
             mra_reference=mapping.mra_product_code or '',
         )
         return mapping
+
+    @staticmethod
+    def _prepare_mapping_data(inventory_item, mapping_data):
+        """Apply the active MRA catalog without affecting ordinary inventory."""
+        from mra_eis.services import MRAIntegrationError, ProductMappingService
+
+        try:
+            return ProductMappingService.apply_catalog_defaults(
+                inventory_item.business,
+                mapping_data,
+            )
+        except MRAIntegrationError as exc:
+            raise ValidationError({'mra_product_code': str(exc)}) from exc
 
     def create(self, request, *args, **kwargs):
         """Create one mapping or many mappings in a single request."""
@@ -403,9 +398,16 @@ class MRAProductMappingViewSet(viewsets.ModelViewSet):
                     )
 
                 created_mappings = []
+                prepared_payloads = []
+                for mapping_data in mappings_payload:
+                    inventory_item = inventory_items_by_id[str(mapping_data['inventory_item_id'])]
+                    prepared_payloads.append((
+                        inventory_item,
+                        self._prepare_mapping_data(inventory_item, mapping_data),
+                    ))
+
                 with transaction.atomic():
-                    for mapping_data in mappings_payload:
-                        inventory_item = inventory_items_by_id[str(mapping_data['inventory_item_id'])]
+                    for inventory_item, mapping_data in prepared_payloads:
                         created_mappings.append(
                             self._create_mapping_record(
                                 inventory_item=inventory_item,
@@ -441,9 +443,10 @@ class MRAProductMappingViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            mapping_data = self._prepare_mapping_data(inventory_item, serializer.validated_data)
             mapping = self._create_mapping_record(
                 inventory_item=inventory_item,
-                mapping_data=serializer.validated_data,
+                mapping_data=mapping_data,
                 user=request.user,
             )
 
@@ -461,6 +464,58 @@ class MRAProductMappingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    def update(self, request, *args, **kwargs):
+        """Update mapping details and require re-approval after changes."""
+        partial = kwargs.pop('partial', False)
+        mapping = self.get_object()
+        serializer = self.get_serializer(mapping, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        mapping_data = self._prepare_mapping_data(
+            mapping.inventory_item,
+            {
+                'mra_product_code': serializer.validated_data.get(
+                    'mra_product_code', mapping.mra_product_code
+                ),
+                'mra_product_name': serializer.validated_data.get(
+                    'mra_product_name', mapping.mra_product_name
+                ),
+                'mra_tax_type': serializer.validated_data.get(
+                    'mra_tax_type', mapping.mra_tax_type
+                ),
+                'mra_tax_rate': serializer.validated_data.get(
+                    'mra_tax_rate', mapping.mra_tax_rate
+                ),
+                'mra_unit_measure': serializer.validated_data.get(
+                    'mra_unit_measure', mapping.mra_unit_measure
+                ),
+                'tax_calculation_method': serializer.validated_data.get(
+                    'tax_calculation_method', mapping.tax_calculation_method
+                ),
+                'mra_levies': mapping.mra_levies or [],
+            },
+        )
+
+        compliance_fields = (
+            'mra_product_code', 'mra_product_name', 'mra_tax_type',
+            'mra_tax_rate', 'mra_unit_measure', 'tax_calculation_method', 'mra_levies',
+        )
+        changed = any(
+            getattr(mapping, field) != mapping_data[field]
+            for field in compliance_fields
+        )
+        for field in compliance_fields:
+            setattr(mapping, field, mapping_data[field])
+
+        if changed:
+            mapping.is_approved = False
+            mapping.approved_at = None
+            mapping.mra_synced = False
+            mapping.last_synced_at = None
+
+        mapping.save()
+        return Response(MRAProductMappingSerializer(mapping).data, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve MRA product mapping"""
@@ -469,12 +524,19 @@ class MRAProductMappingViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         mapping.is_approved = serializer.validated_data['is_approved']
-        mapping.mra_synced = serializer.validated_data.get('mra_synced', False)
+        # Approval is a local review step. Only the sync action may mark a
+        # mapping as sent to MRA, so clients cannot spoof a synced status.
+        mapping.mra_synced = False
+        mapping.last_synced_at = None
         
         if mapping.is_approved:
             mapping.approved_at = timezone.now()
+        else:
+            mapping.approved_at = None
         
-        mapping.save()
+        mapping.save(update_fields=[
+            'is_approved', 'approved_at', 'mra_synced', 'last_synced_at', 'updated_at'
+        ])
         
         # Log to audit
         AuditLog.objects.create(
@@ -505,6 +567,16 @@ class MRAProductMappingViewSet(viewsets.ModelViewSet):
         without sending live data to MRA.
         """
         mapping = self.get_object()
+
+        from mra_eis.services import is_business_eis_enabled
+        if not is_business_eis_enabled(mapping.inventory_item.business):
+            return Response(
+                {
+                    'error': 'MRA EIS is not enabled for this business. Enable it in Settings before syncing mappings.',
+                    'code': 'EIS_DISABLED',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if not mapping.is_approved:
             return Response(
@@ -640,7 +712,11 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             or self.request.data.get('branch')
         )
         
-        business = get_object_or_404(Business, id=business_id)
+        business = get_object_or_404(
+            Business,
+            id=business_id,
+            id__in=_get_accessible_business_ids(self.request.user),
+        )
         branch = _resolve_branch_for_business_or_404(business, branch_reference)
         
         item = serializer.save(business=business, branch=branch)
@@ -793,7 +869,9 @@ class InventorySnapshotViewSet(viewsets.ReadOnlyModelViewSet):
         invoice_number = self.request.query_params.get('invoice_number')
         
         queryset = InventorySnapshot.objects.filter(
-            inventory_item__business__owner=user
+            inventory_item__business_id__in=_get_accessible_business_ids(
+                user,
+            )
         ).select_related('inventory_item', 'branch')
         
         if business_id:
@@ -844,25 +922,25 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Filter purchase orders by business"""
+        """Filter purchase orders to businesses the current user can access."""
         user = self.request.user
         business_id = self.request.query_params.get('business_id')
         branch_id = self.request.query_params.get('branch_id')
         supplier_id = self.request.query_params.get('supplier_id')
-        
+
         queryset = PurchaseOrder.objects.filter(
-            business__owner=user
+            business_id__in=_get_accessible_business_ids(user)
         ).select_related('business', 'branch', 'supplier')
-        
+
         if business_id:
             queryset = queryset.filter(business_id=business_id)
-        
+
         if branch_id:
             queryset = _apply_branch_filter(queryset, branch_id)
-        
+
         if supplier_id:
             queryset = queryset.filter(supplier_id=supplier_id)
-        
+
         return queryset
 
     def get_serializer_class(self):
@@ -912,7 +990,11 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             or self.request.data.get('branch')
         )
         
-        business = get_object_or_404(Business, id=business_id)
+        business = get_object_or_404(
+            Business,
+            id=business_id,
+            id__in=_get_accessible_business_ids(self.request.user),
+        )
         branch = _resolve_branch_for_business_or_404(business, branch_reference)
         
         po = serializer.save(business=business, branch=branch)
@@ -1007,7 +1089,9 @@ class WasteRecordViewSet(viewsets.ModelViewSet):
         branch_id = self.request.query_params.get('branch_id')
         
         queryset = WasteRecord.objects.filter(
-            business__owner=user
+            business_id__in=_get_accessible_business_ids(
+                user,
+            )
         ).select_related('business', 'branch', 'inventory_item')
         
         if business_id:
@@ -1030,9 +1114,14 @@ class WasteRecordViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         try:
-            inventory_item = InventoryItem.objects.get(
-                id=serializer.validated_data['inventory_item_id']
-            )
+            inventory_item = InventoryItem.objects.filter(
+                id=serializer.validated_data['inventory_item_id'],
+                business_id__in=_get_accessible_business_ids(
+                    request.user,
+                ),
+            ).first()
+            if not inventory_item:
+                raise ValidationError({'inventory_item_id': 'Inventory item is not available for this business.'})
             
             waste = InventoryService.record_waste(
                 inventory_item=inventory_item,
@@ -1104,7 +1193,9 @@ class StockTransferViewSet(viewsets.ModelViewSet):
         business_id = self.request.query_params.get('business_id')
         
         queryset = StockTransfer.objects.filter(
-            business__owner=user
+            business_id__in=_get_accessible_business_ids(
+                user,
+            )
         ).select_related('business', 'from_branch', 'to_branch', 'inventory_item')
         
         if business_id:
@@ -1124,11 +1215,29 @@ class StockTransferViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         try:
-            from_branch = Branch.objects.get(id=serializer.validated_data['from_branch_id'])
-            to_branch = Branch.objects.get(id=serializer.validated_data['to_branch_id'])
-            inventory_item = InventoryItem.objects.get(
-                id=serializer.validated_data['inventory_item_id']
+            accessible_business_ids = _get_accessible_business_ids(
+                request.user,
             )
+            from_branch = Branch.objects.filter(
+                id=serializer.validated_data['from_branch_id'],
+                business_id__in=accessible_business_ids,
+            ).select_related('business').first()
+            if not from_branch:
+                raise ValidationError({'from_branch_id': 'Source branch is not available for this business.'})
+
+            to_branch = Branch.objects.filter(
+                id=serializer.validated_data['to_branch_id'],
+                business=from_branch.business,
+            ).first()
+            if not to_branch:
+                raise ValidationError({'to_branch_id': 'Destination branch must belong to the same business.'})
+
+            inventory_item = InventoryItem.objects.filter(
+                id=serializer.validated_data['inventory_item_id'],
+                business=from_branch.business,
+            ).first()
+            if not inventory_item:
+                raise ValidationError({'inventory_item_id': 'Inventory item must belong to the same business.'})
             
             transfer_reference = f"TRF-{uuid.uuid4().hex[:8].upper()}"
             
@@ -1199,7 +1308,9 @@ class StockAuditViewSet(viewsets.ModelViewSet):
         branch_id = self.request.query_params.get('branch_id')
         
         queryset = StockAudit.objects.filter(
-            branch__business__owner=user
+            branch__business_id__in=_get_accessible_business_ids(
+                user,
+            )
         ).select_related('branch')
         
         if business_id:
@@ -1242,7 +1353,14 @@ class StockAuditViewSet(viewsets.ModelViewSet):
             branch_id = serializer.validated_data['branch_id']
             print(f"[StockAudit.create] Branch ID: {branch_id}")
             
-            branch = Branch.objects.get(id=branch_id)
+            branch = Branch.objects.filter(
+                id=branch_id,
+                business_id__in=_get_accessible_business_ids(
+                    request.user,
+                ),
+            ).first()
+            if not branch:
+                raise Branch.DoesNotExist
             print(f"[StockAudit.create] Branch found: {branch}")
             
             audit = StockAudit.objects.create(
@@ -1402,7 +1520,9 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         mra_related = self.request.query_params.get('mra_related')
         
         queryset = AuditLog.objects.filter(
-            business__owner=user
+            business_id__in=_get_accessible_business_ids(
+                user,
+            )
         ).select_related('user')
         
         if business_id:

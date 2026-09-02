@@ -91,6 +91,8 @@ interface MRAProductCode {
   category: string;
   default_tax_type: string;
   default_tax_rate: number;
+  unit_measure?: string;
+  tax_calculation_method?: string;
 }
 
 interface ProductMapping {
@@ -436,6 +438,15 @@ export function ProductMappingForm({
 
     const selectedMraCode = selectedMraProduct?.code?.trim() || '';
 
+    if (catalogSource === 'mra_configuration' && !selectedMraCode) {
+      toast({
+        variant: 'destructive',
+        title: 'Select an MRA product',
+        description: 'Choose the matching product from the synced MRA catalog before adding this mapping.',
+      });
+      return;
+    }
+
     if (selectedMraCode && selectedProducts.length > 1) {
       toast({
         variant: 'destructive',
@@ -665,10 +676,12 @@ export function ProductMappingForm({
 
               {/* Select MRA Code */}
               <div className="space-y-2">
-                <FormLabel>Select MRA Code (Optional)</FormLabel>
+                <FormLabel>
+                  Select MRA Product{catalogSource === 'mra_configuration' ? '' : ' (Optional)'}
+                </FormLabel>
                 {catalogSource === 'mra_configuration' && (
                   <p className="text-xs text-green-700">
-                    Using synced MRA catalog{catalogVersion ? ` (v${catalogVersion})` : ''}.
+                    Select the product assigned in the MRA portal{catalogVersion ? ` (v${catalogVersion})` : ''}.
                   </p>
                 )}
                 {catalogSource === 'fallback_catalog' && (

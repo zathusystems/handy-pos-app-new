@@ -5,7 +5,7 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 from .models import Terminal, MRAInvoice, OfflineInvoiceQueue, TerminalAuditLog
-from .services import RetryService
+from .services import RetryService, is_business_eis_enabled
 
 
 @receiver(post_save, sender=Terminal)
@@ -32,7 +32,7 @@ def on_invoice_status_changed(sender, instance, created, **kwargs):
     """Handle invoice status changes"""
     if not created and instance.status == 'offline_queued':
         # Auto-sync if terminal is online
-        if instance.terminal.is_online:
+        if instance.terminal.is_online and is_business_eis_enabled(instance.terminal.business):
             try:
                 from .services import InvoiceService
                 InvoiceService.sync_offline_invoices(instance.terminal)

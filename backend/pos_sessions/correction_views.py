@@ -15,6 +15,7 @@ from .correction_serializers import (
     CreateDebitNoteSerializer,
     CreateVoidTransactionSerializer,
 )
+from business.access import get_accessible_business_ids
 
 
 class CreditNoteViewSet(viewsets.ModelViewSet):
@@ -28,7 +29,9 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
         user = self.request.user
         branch_id = self.request.query_params.get('branch_id')
         
-        queryset = CreditNote.objects.all()
+        queryset = CreditNote.objects.filter(
+            business_id__in=get_accessible_business_ids(user)
+        )
         
         if branch_id:
             queryset = queryset.filter(branch_id=branch_id)
@@ -43,7 +46,12 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
         
         try:
             with transaction.atomic():
-                order = Order.objects.get(id=serializer.validated_data['original_order_id'])
+                order = Order.objects.filter(
+                    id=serializer.validated_data['original_order_id'],
+                    business_id__in=get_accessible_business_ids(request.user),
+                ).first()
+                if not order:
+                    raise Order.DoesNotExist
                 
                 # Generate credit note number
                 credit_note_number = f"CN-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -91,7 +99,7 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        credit_notes = CreditNote.objects.filter(original_order_id=order_id)
+        credit_notes = self.get_queryset().filter(original_order_id=order_id)
         serializer = CreditNoteSerializer(credit_notes, many=True)
         
         return Response(serializer.data)
@@ -107,7 +115,9 @@ class DebitNoteViewSet(viewsets.ModelViewSet):
         """Filter by branch"""
         branch_id = self.request.query_params.get('branch_id')
         
-        queryset = DebitNote.objects.all()
+        queryset = DebitNote.objects.filter(
+            business_id__in=get_accessible_business_ids(self.request.user)
+        )
         
         if branch_id:
             queryset = queryset.filter(branch_id=branch_id)
@@ -122,7 +132,12 @@ class DebitNoteViewSet(viewsets.ModelViewSet):
         
         try:
             with transaction.atomic():
-                order = Order.objects.get(id=serializer.validated_data['original_order_id'])
+                order = Order.objects.filter(
+                    id=serializer.validated_data['original_order_id'],
+                    business_id__in=get_accessible_business_ids(request.user),
+                ).first()
+                if not order:
+                    raise Order.DoesNotExist
                 
                 # Generate debit note number
                 debit_note_number = f"DN-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -169,7 +184,7 @@ class DebitNoteViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        debit_notes = DebitNote.objects.filter(original_order_id=order_id)
+        debit_notes = self.get_queryset().filter(original_order_id=order_id)
         serializer = DebitNoteSerializer(debit_notes, many=True)
         
         return Response(serializer.data)
@@ -208,7 +223,9 @@ class VoidTransactionViewSet(viewsets.ModelViewSet):
         """Filter by branch"""
         branch_id = self.request.query_params.get('branch_id')
         
-        queryset = VoidTransaction.objects.all()
+        queryset = VoidTransaction.objects.filter(
+            business_id__in=get_accessible_business_ids(self.request.user)
+        )
         
         if branch_id:
             queryset = queryset.filter(branch_id=branch_id)
@@ -238,7 +255,8 @@ class VoidTransactionViewSet(viewsets.ModelViewSet):
 
         try:
             order = Order.objects.select_related('business').get(
-                id=serializer.validated_data['original_order_id']
+                id=serializer.validated_data['original_order_id'],
+                business_id__in=get_accessible_business_ids(request.user),
             )
         except Order.DoesNotExist:
             return Response(
