@@ -291,6 +291,7 @@ export function PrinterConfigScreen() {
       }
 
       setPrinters(updatedPrinters);
+      setSettings(forcePrintFlagsOn(await printerService.getPrinterSettings(branchId)));
 
       toast({
         title: 'Success',
@@ -330,6 +331,34 @@ export function PrinterConfigScreen() {
     }
   };
 
+  const handlePaperWidthChange = async (printerId: string, paperWidth: '80mm' | '58mm') => {
+    try {
+      const printer = printers.find((entry) => entry.id === printerId);
+      if (!printer || printer.paperWidth === paperWidth) return;
+
+      const updatedPrinter = { ...printer, paperWidth };
+      await printerService.savePrinterConfig(updatedPrinter);
+      setPrinters((current) => current.map((entry) => (
+        entry.id === printerId ? updatedPrinter : entry
+      )));
+
+      const savedSettings = forcePrintFlagsOn(await printerService.getPrinterSettings(branchId));
+      setSettings(savedSettings);
+
+      toast({
+        title: 'Printer updated',
+        description: `${printer.name} is set to ${paperWidth} paper.`,
+      });
+    } catch (error) {
+      console.error('Error updating printer paper width:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Failed to update the printer paper width',
+      });
+    }
+  };
+
   const handleSaveSettings = async () => {
     if (!settings) return;
 
@@ -337,6 +366,7 @@ export function PrinterConfigScreen() {
       const normalizedSettings = forcePrintFlagsOn(settings);
       setSettings(normalizedSettings);
       await printerService.savePrinterSettings(normalizedSettings);
+      setSettings(forcePrintFlagsOn(await printerService.getPrinterSettings(branchId)));
 
       toast({
         title: 'Success',
@@ -401,6 +431,10 @@ export function PrinterConfigScreen() {
     }
   };
 
+  const defaultPrinterUsesCompactPaper = printers.some(
+    (printer) => printer.isDefault && printer.isEnabled && printer.paperWidth === '58mm'
+  );
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -431,7 +465,7 @@ export function PrinterConfigScreen() {
                   Add Printer
                 </Button>
               </DialogTrigger>
-              <DialogContent className="tauri-android-safe-bottom max-h-[calc(100dvh-1rem)] w-[calc(100vw-0.75rem)] max-w-md overflow-y-auto p-4 sm:w-[calc(100vw-2rem)] sm:p-6">
+              <DialogContent className="tauri-android-safe-bottom max-h-[calc(100vh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100vw-0.75rem)] max-w-md overflow-y-auto p-4 sm:w-[calc(100vw-2rem)] sm:p-6">
                 <DialogHeader>
                   <DialogTitle>Add Printer</DialogTitle>
                   <DialogDescription>
@@ -701,9 +735,28 @@ export function PrinterConfigScreen() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {printer.type.charAt(0).toUpperCase() + printer.type.slice(1)} • {printer.paperWidth}
-                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <p className="text-sm text-muted-foreground">
+                        {printer.type.charAt(0).toUpperCase() + printer.type.slice(1)}
+                      </p>
+                      <Label htmlFor={`printer-paper-width-${printer.id}`} className="text-xs text-muted-foreground">
+                        Roll size
+                      </Label>
+                      <Select
+                        value={printer.paperWidth}
+                        onValueChange={(value) =>
+                          handlePaperWidthChange(printer.id, value === '58mm' ? '58mm' : '80mm')
+                        }
+                      >
+                        <SelectTrigger id={`printer-paper-width-${printer.id}`} className="h-8 w-[108px] text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="80mm">80 mm</SelectItem>
+                          <SelectItem value="58mm">58 mm</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 sm:flex sm:justify-end">
                     <Switch
@@ -766,11 +819,15 @@ export function PrinterConfigScreen() {
           <CardContent className="space-y-5 px-3 sm:space-y-6 sm:px-6">
             <div className="space-y-4">
               <div className="border-t pt-4">
-                <Label htmlFor="receipt-format">Receipt Format</Label>
+                <Label htmlFor="receipt-format">Receipt Layout</Label>
                 <Select
                   value={settings.receiptPaperWidth}
                   onValueChange={(value) => {
-                    const nextPaperWidth = value === '58mm' ? '58mm' : '80mm';
+                    const nextPaperWidth = defaultPrinterUsesCompactPaper
+                      ? '58mm'
+                      : value === '58mm'
+                        ? '58mm'
+                        : '80mm';
                     setSettings({
                       ...settings,
                       receiptPaperWidth: nextPaperWidth,
@@ -801,12 +858,12 @@ export function PrinterConfigScreen() {
                     <SelectValue placeholder="Select receipt width" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="80mm">80mm (Standard)</SelectItem>
+                    <SelectItem value="80mm" disabled={defaultPrinterUsesCompactPaper}>80mm (Standard)</SelectItem>
                     <SelectItem value="58mm">58mm (Compact)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Controls receipt layout width. 58mm works on 80mm printers with side margins.
+                  Set the printer roll size above first. A 58mm printer always uses the compact layout; an 80mm printer can use either layout.
                 </p>
               </div>
 
@@ -1009,14 +1066,14 @@ export function PrinterConfigScreen() {
 	                </div>
 
 	                <div className="mt-5 border-t pt-4">
-	                  <Label>Legal Receipt Markers</Label>
+	                  <Label>Receipt Start and End Markers</Label>
 	                  <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 	                    <div className="space-y-2">
 	                      <NumberAdjustment
 	                        id="receipt-marker-font-size"
 	                        label="Font Size"
 	                        min={8}
-	                        max={18}
+	                        max={getDefaultReceiptFontSize(settings.receiptPaperWidth)}
 	                        step={1}
 	                        value={settings.receiptLegalMarkerFontSize}
 	                        onValueChange={(value) =>
@@ -1037,7 +1094,7 @@ export function PrinterConfigScreen() {
 	                        id="receipt-marker-scale"
 	                        label="Width Stretch"
 	                        min={0.75}
-	                        max={1.8}
+	                        max={1}
 	                        step={0.01}
 	                        value={settings.receiptLegalMarkerScaleX}
 	                        onValueChange={(value) =>

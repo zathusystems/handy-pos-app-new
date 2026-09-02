@@ -676,13 +676,16 @@ export const Receipt2 = ({
     receiptBusinessNameScaleX,
     fallbackBusinessNameScale
   );
-  const legalMarkerFontSize = normalizeReceiptLegalMarkerFontSize(
-    receiptLegalMarkerFontSize,
-    resolvedPaperWidth
+  const legalMarkerFontSize = Math.min(
+    normalizeReceiptLegalMarkerFontSize(receiptLegalMarkerFontSize, resolvedPaperWidth),
+    Number.parseFloat(fontSize)
   );
   const headerDetailScale = normalizeReceiptTextScaleX(receiptHeaderDetailScaleX, 1);
   const legalMarkerWeight = normalizeReceiptFontWeight(receiptLegalMarkerFontWeight);
-  const legalMarkerScale = normalizeReceiptTextScaleX(receiptLegalMarkerScaleX, 1);
+  const legalMarkerScale = Math.min(
+    normalizeReceiptTextScaleX(receiptLegalMarkerScaleX, 1),
+    1
+  );
   const businessNameMaxWidth = `${Math.floor(100 / businessNameScale)}%`;
   const headerDetailMaxWidth = `${Math.floor(100 / headerDetailScale)}%`;
   const legalMarkerMaxWidth = `${Math.floor(100 / legalMarkerScale)}%`;

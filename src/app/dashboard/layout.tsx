@@ -2240,7 +2240,7 @@ export default function DashboardLayout({
 
   if (loading || !user) {
     return (
-        <div className="tauri-android-safe-bottom flex h-[100dvh] items-center justify-center">
+        <div className="tauri-android-safe-bottom flex h-screen h-[100dvh] items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
     );
@@ -2248,7 +2248,7 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <div className="tauri-android-safe-bottom box-border flex h-[100dvh] w-full">
+      <div className="tauri-android-safe-bottom box-border flex h-screen h-[100dvh] w-full">
         <Sidebar className="hidden lg:flex lg:flex-col">
            <AppSidebar
              user={user}
@@ -2258,13 +2258,13 @@ export default function DashboardLayout({
 	             customSalesSection={customSalesSection}
 	           />
         </Sidebar>
-        <div className="flex-1 flex flex-col overflow-y-auto">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <Header
             onPosClick={() => openPosModalForOrder()}
             onProcessSaleOrder={(orderId) => openPosModalForOrder(orderId)}
             multiBranchEnabled={multiBranchEnabled}
           />
-          <main className="min-h-0 flex-1 w-full bg-background/95">
+          <main className="min-h-0 w-full flex-1 bg-background/95">
             <div className="tauri-android-content-safe-bottom mx-auto flex min-h-full w-full max-w-[1540px] flex-col px-4 py-4 sm:px-6 lg:px-8 xl:py-6 2xl:px-10">
               <DashboardSubscriptionGuard>
                 {children}

@@ -347,7 +347,7 @@ export default function SessionHistoryModal({ isOpen, onOpenChange, branchId = n
 
     return (
         <Dialog open={isOpen} onOpenChange={onOpenChange}>
-            <DialogContent className="flex max-h-[95dvh] w-[calc(100vw-0.75rem)] max-w-4xl flex-col overflow-hidden p-4 sm:w-[95vw] sm:p-6">
+            <DialogContent className="flex max-h-[95vh] max-h-[95dvh] w-[calc(100vw-0.75rem)] max-w-4xl flex-col overflow-hidden p-4 sm:w-[95vw] sm:p-6">
                 <DialogHeader>
                     <DialogTitle>Session History</DialogTitle>
                 </DialogHeader>

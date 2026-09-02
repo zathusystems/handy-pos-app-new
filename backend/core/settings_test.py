@@ -19,6 +19,7 @@ os.environ.setdefault('MRA_EIS_ALLOW_LIVE_SUBMISSION', 'False')
 os.environ.setdefault('MRA_EIS_ENABLE_HTTP_CALLS', 'True')
 os.environ.setdefault('MRA_EIS_BASE_URL', 'https://dev-eis-api.mra.mw')
 os.environ.setdefault('MRA_EIS_STRICT_PRODUCT_CODES', 'True')
+os.environ.setdefault('MRA_EIS_CREDENTIAL_ENCRYPTION_KEY', 'handy-pos-test-eis-credential-key')
 
 from .settings import *  # noqa: F401,F403
 

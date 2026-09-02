@@ -11,6 +11,8 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from business.models import Business, Branch
+from .fields import EncryptedTextField
+from .security import redact_sensitive_data, redact_sensitive_text
 
 User = get_user_model()
 
@@ -75,13 +77,12 @@ class Terminal(models.Model):
         blank=True,
         help_text="Terminal position returned by MRA during terminal activation"
     )
-    mra_api_key = models.CharField(
-        max_length=500,
-        help_text="API key for MRA communication (should be encrypted)"
+    mra_api_key = EncryptedTextField(
+        help_text="API key for MRA communication (encrypted at rest)"
     )
-    mra_token = models.TextField(
+    mra_token = EncryptedTextField(
         blank=True,
-        help_text="Current authentication token from MRA"
+        help_text="Current authentication token from MRA (encrypted at rest)"
     )
     token_expires_at = models.DateTimeField(
         null=True,
@@ -330,6 +331,10 @@ class ConfigurationSyncLog(models.Model):
     def __str__(self):
         return f"Config Sync - {self.status}"
 
+    def save(self, *args, **kwargs):
+        self.error_message = redact_sensitive_text(self.error_message)
+        super().save(*args, **kwargs)
+
 
 # ============================================================================
 # 3. PRODUCT & STOCK MAPPING
@@ -534,6 +539,10 @@ class MRAInvoice(models.Model):
         signature_string = json.dumps(signature_data, sort_keys=True)
         return hashlib.sha256(signature_string.encode()).hexdigest()
 
+    def save(self, *args, **kwargs):
+        self.mra_response = redact_sensitive_data(self.mra_response)
+        super().save(*args, **kwargs)
+
 
 # ============================================================================
 # 5. OFFLINE SALES ENGINE
@@ -598,6 +607,10 @@ class OfflineInvoiceQueue(models.Model):
         """Expose MRA-required sync state naming without altering stored status values."""
         return self.SYNC_STATE_MAP.get(self.status, 'PENDING')
 
+    def save(self, *args, **kwargs):
+        self.last_sync_error = redact_sensitive_text(self.last_sync_error)
+        super().save(*args, **kwargs)
+
 
 class OfflineAuditLog(models.Model):
     """
@@ -631,6 +644,10 @@ class OfflineAuditLog(models.Model):
 
     def __str__(self):
         return f"{self.event_type} - {self.terminal.terminal_id}"
+
+    def save(self, *args, **kwargs):
+        self.details = redact_sensitive_data(self.details)
+        super().save(*args, **kwargs)
 
 
 # ============================================================================
@@ -725,6 +742,10 @@ class InvoiceAuditLog(models.Model):
     def __str__(self):
         return f"{self.action} - Invoice {self.mra_invoice.invoice_number}"
 
+    def save(self, *args, **kwargs):
+        self.details = redact_sensitive_data(self.details)
+        super().save(*args, **kwargs)
+
 
 class TerminalAuditLog(models.Model):
     """
@@ -761,6 +782,10 @@ class TerminalAuditLog(models.Model):
 
     def __str__(self):
         return f"{self.action} - {self.terminal.terminal_id}"
+
+    def save(self, *args, **kwargs):
+        self.details = redact_sensitive_data(self.details)
+        super().save(*args, **kwargs)
 
 
 # ============================================================================
@@ -818,6 +843,10 @@ class MRAAPIError(models.Model):
 
     def __str__(self):
         return f"{self.error_type} - {self.error_message[:50]}"
+
+    def save(self, *args, **kwargs):
+        self.error_message = redact_sensitive_text(self.error_message)
+        super().save(*args, **kwargs)
 
     def should_retry(self):
         """Check if error should be retried"""

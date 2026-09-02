@@ -19,6 +19,7 @@ from django.utils import timezone
 from business.models import Branch, Business, BusinessSettings
 from inventory.models import InventoryItem, MRAProductMapping as InventoryMRAProductMapping
 from mra_eis.models import MRAAPIError, MRAInvoice, SyncRetryQueue, Terminal, TerminalActivationCode
+from mra_eis.security import redact_sensitive_data
 from mra_eis.services import (
     ConfigurationService,
     InvoiceService,
@@ -1355,37 +1356,7 @@ class Command(BaseCommand):
         )
 
     def _redact_sensitive(self, value: Any):
-        if isinstance(value, dict):
-            redacted: dict[str, Any] = {}
-            sensitive_keys = {
-                'signature',
-                'offlinesignature',
-                'x-signature',
-                'x-access-key',
-                'authorization',
-                'token',
-                'accesstoken',
-                'access_token',
-                'secret',
-            }
-            for key, subvalue in value.items():
-                if str(key).strip().lower() in sensitive_keys:
-                    redacted[key] = self._truncate_value(subvalue)
-                else:
-                    redacted[key] = self._redact_sensitive(subvalue)
-            return redacted
-
-        if isinstance(value, list):
-            return [self._redact_sensitive(item) for item in value]
-
-        return value
-
-    @staticmethod
-    def _truncate_value(value: Any) -> str:
-        text = str(value or '')
-        if len(text) <= 12:
-            return '***'
-        return f"{text[:4]}...{text[-4:]}"
+        return redact_sensitive_data(value)
 
     @staticmethod
     def _json_default(value: Any):

@@ -682,7 +682,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     return (
       <>
         <Dialog open={Boolean(order)} onOpenChange={(open) => !open && setSelectedOrder(null)}>
-          <DialogContent className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4">
+          <DialogContent className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-screen h-[100dvh] max-h-screen max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4">
             <DialogHeader className="shrink-0 border-b bg-muted/30 px-4 pb-3 pt-5 text-left sm:px-6 sm:pt-6">
               <div className="flex min-w-0 flex-wrap items-center gap-2 pr-8">
                 <DialogTitle className="min-w-0 break-words text-xl sm:text-2xl">Order {order.orderNumber}</DialogTitle>
@@ -958,7 +958,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   return (
     <>
       <Dialog open={isOpen} onOpenChange={onOpenChange}>
-        <DialogContent className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-[90vh] sm:max-h-[90vh] sm:max-w-5xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4">
+        <DialogContent className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-screen h-[100dvh] max-h-screen max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-[90vh] sm:max-h-[90vh] sm:max-w-5xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4">
           <DialogHeader className="shrink-0 text-left">
             <div className="space-y-3 border-b bg-muted/30 px-4 pb-3 pt-5 sm:space-y-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

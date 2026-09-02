@@ -222,6 +222,12 @@ export function BillReceipt({
         .bill-center {
           text-align: center;
         }
+        .bill-marker {
+          font-size: ${fontSize}px;
+          font-weight: ${fontWeight};
+          line-height: 1.05;
+          white-space: nowrap;
+        }
         .bill-business {
           margin: 2px 0 3px;
           text-align: center;
@@ -346,7 +352,7 @@ export function BillReceipt({
       `}</style>
 
       <div className="bill-sheet">
-        <div className="bill-center">*** START OF BILL ***</div>
+        <div className="bill-center bill-marker">*** START OF BILL ***</div>
         <div className="bill-rule">{rule}</div>
         <div className="bill-business">
           <span className="bill-business-text">{businessName}</span>
@@ -459,7 +465,7 @@ export function BillReceipt({
         <div className="bill-footer">
           Please present this bill to the cashier for payment.
         </div>
-        <div className="bill-center">*** END OF BILL ***</div>
+        <div className="bill-center bill-marker">*** END OF BILL ***</div>
         <div className="bill-bottom-space" />
       </div>
     </div>

@@ -286,7 +286,7 @@ const setupChecklist = [
 
 export default function DocumentationPage() {
   return (
-    <main className="tauri-android-content-safe-bottom h-[100dvh] overflow-y-auto bg-background text-foreground">
+    <main className="tauri-android-content-safe-bottom h-screen h-[100dvh] overflow-y-auto bg-background text-foreground">
       <header className="border-b bg-background/95">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

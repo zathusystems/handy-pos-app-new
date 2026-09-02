@@ -91,6 +91,7 @@ export class UnifiedPrintingService {
   ): Promise<{ success: boolean; message: string }> {
     try {
       console.log('[UnifiedPrinting] Using ESC/POS for Bluetooth printer:', printer.name);
+      escPosService.setPaperWidth(printer.paperWidth === '58mm' ? 58 : 80);
 
       // Check if Web Bluetooth is supported
       if (!escPosService.supportsWebBluetooth()) {
@@ -218,13 +219,15 @@ export class UnifiedPrintingService {
    * Test print to verify printer works
    */
   async testPrint(printer: PrinterConfig): Promise<{ success: boolean; message: string }> {
+    const paperWidth = printer.paperWidth === '58mm' ? '58mm' : '80mm';
+    const horizontalPadding = paperWidth === '58mm' ? '3mm' : '8mm';
     const testReceipt = `
-      <div style="font-family: monospace; width: 80mm; padding: 10mm;">
-        <div style="text-align: center; margin-bottom: 10mm;">
+      <div style="box-sizing: border-box; font-family: monospace; width: ${paperWidth}; padding: 6mm ${horizontalPadding} 12mm;">
+        <div style="text-align: center; margin-bottom: 6mm;">
           <h2 style="margin: 0;">TEST RECEIPT</h2>
           <p style="margin: 0; font-size: 0.8em;">Handy POS System</p>
         </div>
-        <div style="border-top: 1px dashed; border-bottom: 1px dashed; padding: 5mm 0; margin: 5mm 0;">
+        <div style="border-top: 1px dashed; border-bottom: 1px dashed; padding: 3mm 0; margin: 3mm 0;">
           <div style="display: flex; justify-content: space-between; font-size: 0.9em;">
             <span>Item 1</span>
             <span>$10.00</span>
@@ -234,7 +237,7 @@ export class UnifiedPrintingService {
             <span>$15.00</span>
           </div>
         </div>
-        <div style="font-size: 0.9em; margin: 5mm 0;">
+        <div style="font-size: 0.9em; margin: 3mm 0;">
           <div style="display: flex; justify-content: space-between;">
             <span>Subtotal:</span>
             <span>$25.00</span>
@@ -243,12 +246,12 @@ export class UnifiedPrintingService {
             <span>Tax (16%):</span>
             <span>$4.00</span>
           </div>
-          <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.1em; margin-top: 5mm;">
+          <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.1em; margin-top: 3mm;">
             <span>TOTAL:</span>
             <span>$29.00</span>
           </div>
         </div>
-        <div style="text-align: center; margin-top: 10mm; font-size: 0.8em;">
+        <div style="text-align: center; margin-top: 6mm; font-size: 0.8em;">
           <p>Thank you for your business!</p>
           <p>Powered by Handy POS</p>
         </div>

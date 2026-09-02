@@ -2,6 +2,7 @@
 MRA EIS Integration Tests
 """
 from django.test import TestCase, TransactionTestCase, override_settings
+from django.db import connection
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from datetime import timedelta
@@ -24,6 +25,113 @@ from mra_eis.services import (
 )
 
 User = get_user_model()
+
+
+class TerminalCredentialSecurityTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='eis-credential-security@example.com',
+            password='test123',
+        )
+        self.business = Business.objects.create(owner=self.user, name='Credential Security Business')
+        self.branch = Branch.objects.create(
+            business=self.business,
+            name='Main',
+            address='123 Main St',
+            city='Lilongwe',
+            country='Malawi',
+        )
+
+    def test_terminal_credentials_are_encrypted_at_rest(self):
+        terminal = Terminal.objects.create(
+            business=self.business,
+            branch=self.branch,
+            terminal_id='TERM-CREDENTIAL-001',
+            device_serial='DEVICE-CREDENTIAL-001',
+            pos_name='Handy POS',
+            pos_version='1.0.0',
+            os_type='Web',
+            mra_terminal_id='MRA-CREDENTIAL-001',
+            mra_api_key='terminal-api-secret',
+            mra_token='terminal-jwt-token',
+        )
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT mra_api_key, mra_token FROM mra_eis_terminal WHERE terminal_id = %s',
+                [terminal.terminal_id],
+            )
+            stored_api_key, stored_token = cursor.fetchone()
+
+        self.assertNotIn('terminal-api-secret', stored_api_key)
+        self.assertNotIn('terminal-jwt-token', stored_token)
+        self.assertTrue(stored_api_key.startswith('mra-eis:v1:'))
+        self.assertTrue(stored_token.startswith('mra-eis:v1:'))
+
+        terminal.refresh_from_db()
+        self.assertEqual(terminal.mra_api_key, 'terminal-api-secret')
+        self.assertEqual(terminal.mra_token, 'terminal-jwt-token')
+
+    def test_audits_and_api_errors_redact_credentials(self):
+        terminal = Terminal.objects.create(
+            business=self.business,
+            branch=self.branch,
+            terminal_id='TERM-CREDENTIAL-002',
+            device_serial='DEVICE-CREDENTIAL-002',
+            pos_name='Handy POS',
+            pos_version='1.0.0',
+            os_type='Web',
+            mra_terminal_id='MRA-CREDENTIAL-002',
+            mra_api_key='terminal-api-secret',
+        )
+        audit = TerminalAuditLog.objects.create(
+            terminal=terminal,
+            action='activated',
+            details={
+                'response': {'jwtToken': 'jwt-secret', 'secretKey': 'api-secret'},
+                'request_payload': {'tacCode': 'TAC-SECRET'},
+            },
+        )
+        error = MRAAPIError.objects.create(
+            terminal=terminal,
+            error_type='invalid_request',
+            error_message='authorization=Bearer super-secret token=jwt-secret',
+        )
+
+        self.assertEqual(audit.details['response']['jwtToken'], '[redacted]')
+        self.assertEqual(audit.details['response']['secretKey'], '[redacted]')
+        self.assertEqual(audit.details['request_payload']['tacCode'], '[redacted]')
+        self.assertNotIn('super-secret', error.error_message)
+        self.assertNotIn('jwt-secret', error.error_message)
+
+    def test_fiscal_response_snapshots_redact_credentials(self):
+        terminal = Terminal.objects.create(
+            business=self.business,
+            branch=self.branch,
+            terminal_id='TERM-CREDENTIAL-003',
+            device_serial='DEVICE-CREDENTIAL-003',
+            pos_name='Handy POS',
+            pos_version='1.0.0',
+            os_type='Web',
+            mra_terminal_id='MRA-CREDENTIAL-003',
+            mra_api_key='terminal-api-secret',
+        )
+        invoice = MRAInvoice.objects.create(
+            business=self.business,
+            branch=self.branch,
+            terminal=terminal,
+            invoice_number=1,
+            seller_tin='1234567890',
+            seller_name=self.business.name,
+            items=[],
+            net_amount=Decimal('0.00'),
+            tax_amount=Decimal('0.00'),
+            gross_amount=Decimal('0.00'),
+            invoice_date=timezone.now(),
+            mra_response={'response': {'accessToken': 'response-token'}},
+        )
+
+        self.assertEqual(invoice.mra_response['response']['accessToken'], '[redacted]')
 
 
 class EISOptInSafetyTests(TransactionTestCase):

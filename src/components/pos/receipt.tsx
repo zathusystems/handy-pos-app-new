@@ -452,7 +452,7 @@ export const Receipt = ({
         }
       `}</style>
 
-      <div className="text-center mb-1 font-semibold">*** START OF RECEIPT ***</div>
+      <div className={`${bodyTextClass} text-center mb-1 font-semibold`}>*** START OF RECEIPT ***</div>
       {renderDotRuleLine()}
 
       {/* Receipt copy indicator (hidden for first/original print) */}
@@ -621,7 +621,7 @@ export const Receipt = ({
 
       <div className={`${sectionSpacingClass} ${bodyTextClass}`}>
         {renderDotRuleLine()}
-        <div className="text-center font-semibold">*** END OF RECEIPT ***</div>
+        <div className={`${bodyTextClass} text-center font-semibold`}>*** END OF RECEIPT ***</div>
       </div>
       <div className={isCompactPaper ? 'h-12' : 'h-16'} />
 

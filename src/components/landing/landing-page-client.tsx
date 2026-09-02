@@ -100,7 +100,7 @@ export function LandingPageClient() {
 
   if (isOpeningApp) {
     return (
-      <main className="tauri-android-content-safe-bottom flex h-[100dvh] items-center justify-center bg-background px-4">
+      <main className="tauri-android-content-safe-bottom flex h-screen h-[100dvh] items-center justify-center bg-background px-4">
         <div className="text-center">
           <HandyPosLogo className="mx-auto h-16 w-16" />
           <h1 className="mt-4 text-xl font-semibold">Opening Handy POS</h1>
@@ -111,7 +111,7 @@ export function LandingPageClient() {
   }
 
   return (
-    <main className="tauri-android-content-safe-bottom h-[100dvh] overflow-y-auto overscroll-contain bg-[#f7f8f5] text-[#171815]">
+    <main className="tauri-android-content-safe-bottom h-screen h-[100dvh] overflow-y-auto overscroll-contain bg-[#f7f8f5] text-[#171815]">
       <header className="sticky top-0 z-20 border-b border-black/10 bg-[#f7f8f5]/92 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
           <Link href="/" className="flex min-w-0 items-center gap-3">

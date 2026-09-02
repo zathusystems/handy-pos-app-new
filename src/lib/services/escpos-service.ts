@@ -41,6 +41,15 @@ class ESCPOSService {
   private readonly CR = '\x0D';
   private readonly NUL = '\x00';
 
+  setPaperWidth(paperWidth: 80 | 58): void {
+    const isCompact = paperWidth === 58;
+    this.config = {
+      ...this.config,
+      paperWidth: isCompact ? 58 : 80,
+      charPerLine: isCompact ? 32 : 42,
+    };
+  }
+
   /**
    * Check if Web Bluetooth API is supported
    */

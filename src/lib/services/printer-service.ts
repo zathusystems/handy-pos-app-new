@@ -93,7 +93,9 @@ export const normalizeReceiptLegalMarkerFontSize = (
 ): number => {
   const parsed = Number(value);
   const fallback = getDefaultReceiptLegalMarkerFontSize(paperWidth);
-  return Number.isFinite(parsed) ? Math.round(clampNumber(parsed, 8, 18)) : fallback;
+  return Number.isFinite(parsed)
+    ? Math.round(clampNumber(parsed, 8, getDefaultReceiptFontSize(paperWidth)))
+    : fallback;
 };
 
 export const normalizeReceiptTextScaleX = (value: unknown, fallback: number = 1): number => {
@@ -213,6 +215,31 @@ class PrinterService {
     return value === '58mm' ? '58mm' : '80mm';
   }
 
+  private getDefaultPrinterFromCache(branchId: string): PrinterConfig | null {
+    const normalizedBranchId = this.normalizeBranchId(branchId);
+    return Array.from(this.printerConfigs.values()).find(
+      (printer) =>
+        this.normalizeBranchId(printer.branchId) === normalizedBranchId &&
+        printer.isDefault &&
+        printer.isEnabled
+    ) || null;
+  }
+
+  private getEffectiveReceiptPaperWidth(
+    branchId: string,
+    requestedWidth: unknown
+  ): '80mm' | '58mm' {
+    const defaultPrinter = this.getDefaultPrinterFromCache(branchId);
+
+    // A receipt cannot be wider than the configured physical roll.
+    // An 80mm printer can still use the compact 58mm receipt layout.
+    if (defaultPrinter?.paperWidth === '58mm') {
+      return '58mm';
+    }
+
+    return this.normalizePaperWidth(requestedWidth);
+  }
+
   private notifyPrinterUpdate(branchId: string, type: 'config' | 'settings'): void {
     if (typeof window === 'undefined') {
       return;
@@ -228,7 +255,7 @@ class PrinterService {
   }
 
   private normalizePrinterSettings(branchId: string, raw?: Partial<PrinterSettings> | null): PrinterSettings {
-    const receiptPaperWidth = this.normalizePaperWidth(raw?.receiptPaperWidth);
+    const receiptPaperWidth = this.getEffectiveReceiptPaperWidth(branchId, raw?.receiptPaperWidth);
 
     return {
       branchId,
@@ -374,6 +401,25 @@ class PrinterService {
         p => this.normalizeBranchId(p.branchId) === normalizedBranchId
       );
       localStorage.setItem(this.getConfigsStorageKey(normalizedBranchId), JSON.stringify(configs));
+
+      // Keep an existing receipt layout within the physical width of its new default printer.
+      if (normalizedConfig.isDefault && normalizedConfig.paperWidth === '58mm') {
+        const currentSettings = this.printerSettings.get(normalizedBranchId);
+        if (currentSettings?.receiptPaperWidth !== '58mm') {
+          const compactSettings = this.normalizePrinterSettings(normalizedBranchId, {
+            ...currentSettings,
+            receiptPaperWidth: '58mm',
+          });
+          compactSettings.updatedAt = new Date().toISOString();
+          this.printerSettings.set(normalizedBranchId, compactSettings);
+          localStorage.setItem(
+            this.getSettingsStorageKey(normalizedBranchId),
+            JSON.stringify(compactSettings)
+          );
+          this.notifyPrinterUpdate(String(config.branchId || normalizedBranchId), 'settings');
+        }
+      }
+
       this.notifyPrinterUpdate(String(config.branchId || normalizedBranchId), 'config');
       
       console.log('[Printer] Printer config saved successfully');
@@ -420,12 +466,7 @@ class PrinterService {
       return normalized;
     }
 
-    const defaultPrinter = Array.from(this.printerConfigs.values()).find(
-      (printer) =>
-        this.normalizeBranchId(printer.branchId) === normalizedBranchId &&
-        printer.isDefault &&
-        printer.isEnabled
-    );
+    const defaultPrinter = this.getDefaultPrinterFromCache(normalizedBranchId);
 
     // Return default settings matched to the default printer roll size.
     return this.normalizePrinterSettings(normalizedBranchId, {
@@ -441,6 +482,7 @@ class PrinterService {
       const normalizedBranchId = this.normalizeBranchId(settings.branchId);
       console.log('[Printer] Saving printer settings for branch:', normalizedBranchId);
 
+      await this.initialize(normalizedBranchId);
       const normalizedSettings = this.normalizePrinterSettings(normalizedBranchId, settings);
       normalizedSettings.updatedAt = new Date().toISOString();
       this.printerSettings.set(normalizedBranchId, normalizedSettings);
@@ -462,10 +504,12 @@ class PrinterService {
    */
   async printReceiptSilent(
     receiptHtml: string,
-    copies: number = 1
+    copies: number = 1,
+    paperWidth: '80mm' | '58mm' = '80mm'
   ): Promise<boolean> {
     try {
-      console.log('[Printer] Silent printing receipt', { copies });
+      const resolvedPaperWidth = this.normalizePaperWidth(paperWidth);
+      console.log('[Printer] Silent printing receipt', { copies, paperWidth: resolvedPaperWidth });
 
       // Validate receipt content
       if (!receiptHtml || receiptHtml.trim().length === 0) {
@@ -491,7 +535,7 @@ class PrinterService {
         iframe.style.visibility = 'hidden';
         iframe.style.position = 'absolute';
         iframe.style.left = '-9999px';
-        iframe.style.width = '80mm';
+        iframe.style.width = resolvedPaperWidth;
         iframe.style.height = 'auto';
         document.body.appendChild(iframe);
 
@@ -514,7 +558,7 @@ class PrinterService {
                   box-sizing: border-box;
                 }
                 html, body {
-                  width: 80mm;
+                  width: ${resolvedPaperWidth};
                   margin: 0;
                   padding: 0;
                 }
@@ -522,7 +566,7 @@ class PrinterService {
                   font-family: 'Courier New', monospace;
                   font-size: 12px;
                   line-height: 1.4;
-                  width: 80mm;
+                  width: ${resolvedPaperWidth};
                   margin: 0;
                   padding: 0;
                 }
@@ -533,13 +577,13 @@ class PrinterService {
                     border: none !important;
                   }
                   html, body {
-                    width: 80mm !important;
+                    width: ${resolvedPaperWidth} !important;
                     height: auto !important;
                     margin: 0 !important;
                     padding: 0 !important;
                   }
                   @page {
-                    size: 80mm auto;
+                    size: ${resolvedPaperWidth} auto;
                     margin: 0;
                     padding: 0;
                   }
@@ -560,7 +604,7 @@ class PrinterService {
         // Print this copy silently
         if (iframe.contentWindow) {
           // Use silent print with automatic printer selection
-          await this.silentPrintIframe(iframe, copyNum, copies);
+          await this.silentPrintIframe(iframe, copyNum, copies, resolvedPaperWidth);
           
           // Wait between copies
           if (copyNum < copies) {
@@ -592,7 +636,8 @@ class PrinterService {
   private async silentPrintIframe(
     iframe: HTMLIFrameElement,
     copyNum: number,
-    totalCopies: number
+    totalCopies: number,
+    paperWidth: '80mm' | '58mm'
   ): Promise<void> {
     return new Promise((resolve) => {
       if (!iframe.contentWindow) {
@@ -620,7 +665,7 @@ class PrinterService {
           }
           @page {
             margin: 0;
-            size: 80mm auto;
+            size: ${paperWidth} auto;
           }
         `;
         printWindow.document.head.appendChild(style);
@@ -817,10 +862,14 @@ class PrinterService {
   /**
    * Print receipt directly (without dialog)
    */
-  async printReceiptDirect(receiptHtml: string, copies: number = 1): Promise<boolean> {
+  async printReceiptDirect(
+    receiptHtml: string,
+    copies: number = 1,
+    paperWidth: '80mm' | '58mm' = '80mm'
+  ): Promise<boolean> {
     try {
-      console.log('[Printer] Direct printing receipt', { copies });
-      return await this.printReceiptSilent(receiptHtml, copies);
+      console.log('[Printer] Direct printing receipt', { copies, paperWidth });
+      return await this.printReceiptSilent(receiptHtml, copies, paperWidth);
     } catch (error) {
       console.error('[Printer] Error in direct print:', error);
       return false;

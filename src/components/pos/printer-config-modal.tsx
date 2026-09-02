@@ -19,7 +19,7 @@ interface PrinterConfigModalProps {
 export function PrinterConfigModal({ isOpen, onOpenChange }: PrinterConfigModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="tauri-android-safe-bottom flex h-[calc(100dvh-1rem)] w-[calc(100vw-0.75rem)] max-w-5xl flex-col overflow-hidden p-0 sm:h-auto sm:max-h-[90dvh] sm:w-[calc(100vw-2rem)]">
+      <DialogContent className="tauri-android-safe-bottom flex h-[calc(100vh-1rem)] h-[calc(100dvh-1rem)] w-[calc(100vw-0.75rem)] max-w-5xl flex-col overflow-hidden p-0 sm:h-auto sm:max-h-[90vh] sm:max-h-[90dvh] sm:w-[calc(100vw-2rem)]">
         <DialogHeader className="shrink-0 border-b px-4 py-3 pr-10 sm:px-6 sm:py-4">
           <DialogTitle className="flex items-center gap-2">
             <Printer className="h-5 w-5" />

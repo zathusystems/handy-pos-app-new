@@ -72,12 +72,16 @@ ALLOW_INSECURE_LOCAL = os.getenv('ALLOW_INSECURE_LOCAL', 'False').lower() == 'tr
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-ahtru+th!b@60+qr3dv-e5tp-f+)w_^&46s14$7ke6i0#d$kj4')
+SECRET_KEY = os.getenv('SECRET_KEY', '').strip()
+if not SECRET_KEY:
+    if IS_PRODUCTION:
+        raise ImproperlyConfigured('SECRET_KEY must be configured in production.')
+    SECRET_KEY = 'django-insecure-ahtru+th!b@60+qr3dv-e5tp-f+)w_^&46s14$7ke6i0#d$kj4'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-#DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
-
-DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
+DEBUG = os.getenv('DEBUG', 'False' if IS_PRODUCTION else 'True').lower() == 'true'
+if IS_PRODUCTION and DEBUG:
+    raise ImproperlyConfigured('DEBUG must be False in production.')
 USE_POSTGRES = os.getenv('USE_POSTGRES', 'False').lower() == 'true'
 
 
@@ -566,6 +570,7 @@ MRA_EIS_VERIFY_SSL = os.getenv('MRA_EIS_VERIFY_SSL', 'True').lower() == 'true'
 # Access credentials used by MRA gateway (if enabled)
 MRA_EIS_ACCESS_KEY = os.getenv('MRA_EIS_ACCESS_KEY', '')
 MRA_EIS_SECRET_KEY = os.getenv('MRA_EIS_SECRET_KEY', '')
+MRA_EIS_CREDENTIAL_ENCRYPTION_KEY = os.getenv('MRA_EIS_CREDENTIAL_ENCRYPTION_KEY', '').strip()
 MRA_EIS_PRODUCT_ID = os.getenv('MRA_EIS_PRODUCT_ID', 'HandyPOS').strip() or 'HandyPOS'
 
 # Safety switches:
@@ -674,6 +679,14 @@ if MRA_EIS_IS_LIVE:
     if not MRA_EIS_ACCESS_KEY or not MRA_EIS_SECRET_KEY:
         raise ImproperlyConfigured(
             'MRA_EIS_ACCESS_KEY and MRA_EIS_SECRET_KEY are required when MRA_EIS_MODE=LIVE.'
+        )
+    if not MRA_EIS_CREDENTIAL_ENCRYPTION_KEY:
+        raise ImproperlyConfigured(
+            'MRA_EIS_CREDENTIAL_ENCRYPTION_KEY is required when MRA_EIS_MODE=LIVE.'
+        )
+    if MRA_EIS_LOG_MESSAGE_HASH_INPUT:
+        raise ImproperlyConfigured(
+            'MRA_EIS_LOG_MESSAGE_HASH_INPUT must be False when MRA_EIS_MODE=LIVE.'
         )
 
 # Official endpoint map (overrideable via env)

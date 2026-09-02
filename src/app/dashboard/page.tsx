@@ -1245,7 +1245,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="tauri-android-safe-bottom flex h-[100dvh] items-center justify-center">
+      <div className="tauri-android-safe-bottom flex h-screen h-[100dvh] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );

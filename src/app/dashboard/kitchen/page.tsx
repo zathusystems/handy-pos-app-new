@@ -828,7 +828,7 @@ function OrderDetailsDialog({
 
   return (
     <Dialog open={Boolean(order)} onOpenChange={onOpenChange}>
-      <DialogContent className="tauri-android-safe-bottom flex h-[calc(100dvh-1rem)] w-[calc(100vw-0.75rem)] max-w-2xl flex-col overflow-hidden p-0 sm:h-auto sm:max-h-[85dvh] sm:w-[calc(100vw-2rem)]">
+      <DialogContent className="tauri-android-safe-bottom flex h-[calc(100vh-1rem)] h-[calc(100dvh-1rem)] w-[calc(100vw-0.75rem)] max-w-2xl flex-col overflow-hidden p-0 sm:h-auto sm:max-h-[85vh] sm:max-h-[85dvh] sm:w-[calc(100vw-2rem)]">
         <DialogHeader className="shrink-0 border-b px-4 py-3 pr-10 sm:px-6 sm:py-4">
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle>Order {order.order_number}</DialogTitle>

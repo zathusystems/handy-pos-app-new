@@ -2516,7 +2516,7 @@ const PaymentDialog = ({
                     />
                 </div>
                 <Dialog open={isReceiptPreviewOpen} onOpenChange={setIsReceiptPreviewOpen}>
-                    <DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] max-w-md gap-0 overflow-hidden p-0">
+                    <DialogContent className="max-h-[92vh] max-h-[92dvh] w-[calc(100vw-1rem)] max-w-md gap-0 overflow-hidden p-0">
                         <DialogHeader className="border-b px-4 py-3 pr-10">
                             <DialogTitle>Receipt</DialogTitle>
                         </DialogHeader>

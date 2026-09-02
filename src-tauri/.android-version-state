@@ -1,4 +1,4 @@
 # Handy POS Android build version state.
 # Commit this file so versionCode increments continue across machines.
-versionName=1.0.0+1000024
-versionCode=1000024
+versionName=1.0.0+1000028
+versionCode=1000028

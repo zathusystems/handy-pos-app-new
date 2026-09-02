@@ -58,7 +58,7 @@ export default function MenuLayout({
   }, []);
 
   return (
-    <main className="tauri-android-content-safe-bottom flex min-h-[100dvh] w-full flex-col items-center bg-gradient-to-b from-background to-muted/40 p-4 sm:p-8">
+    <main className="tauri-android-content-safe-bottom flex min-h-screen min-h-[100dvh] w-full flex-col items-center bg-gradient-to-b from-background to-muted/40 p-4 sm:p-8">
       {/* Header with Business Info */}
       <div className="mb-8 w-full max-w-4xl">
         <div className="mb-6 flex w-full items-start gap-4 rounded-lg border border-border bg-card p-6 shadow-sm">

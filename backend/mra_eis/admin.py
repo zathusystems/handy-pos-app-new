@@ -22,7 +22,7 @@ class TerminalAdmin(admin.ModelAdmin):
     search_fields = ['terminal_id', 'mra_terminal_id', 'device_serial']
     readonly_fields = [
         'id', 'terminal_id', 'online_invoice_counter', 'offline_invoice_counter',
-        'created_at', 'updated_at'
+        'credential_status', 'created_at', 'updated_at'
     ]
     fieldsets = (
         ('Identification', {
@@ -34,8 +34,8 @@ class TerminalAdmin(admin.ModelAdmin):
         ('POS Information', {
             'fields': ('pos_name', 'pos_version', 'os_type')
         }),
-        ('MRA Credentials', {
-            'fields': ('mra_terminal_id', 'mra_api_key', 'mra_token', 'token_expires_at'),
+        ('MRA Connection', {
+            'fields': ('mra_terminal_id', 'credential_status', 'token_expires_at'),
             'classes': ('collapse',)
         }),
         ('Status', {
@@ -72,6 +72,10 @@ class TerminalAdmin(admin.ModelAdmin):
             color, text
         )
     is_online_badge.short_description = 'Connectivity'
+
+    def credential_status(self, obj):
+        return 'Stored securely' if obj.mra_api_key or obj.mra_token else 'Not available'
+    credential_status.short_description = 'Credentials'
 
 
 @admin.register(TerminalActivationCode)
