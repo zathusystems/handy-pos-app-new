@@ -42,7 +42,6 @@ struct ReceiptTextStyle {
 struct ReceiptPrintStyles {
     business_name: ReceiptTextStyle,
     header_detail: ReceiptTextStyle,
-    legal_marker: ReceiptTextStyle,
 }
 
 impl ReceiptPrintStyles {
@@ -52,12 +51,6 @@ impl ReceiptPrintStyles {
             extract_data_attr_number(html, "data-receipt-business-name-scale-x"),
             18.0,
             1.28,
-        );
-        let legal_size = escpos_size_mode(
-            extract_data_attr_number(html, "data-receipt-legal-marker-font-size"),
-            extract_data_attr_number(html, "data-receipt-legal-marker-scale-x"),
-            13.0,
-            1.0,
         );
         let header_detail_size = escpos_size_mode(
             None,
@@ -77,13 +70,6 @@ impl ReceiptPrintStyles {
             header_detail: ReceiptTextStyle {
                 size_mode: header_detail_size,
                 bold: false,
-            },
-            legal_marker: ReceiptTextStyle {
-                size_mode: legal_size,
-                bold: receipt_weight_is_bold(
-                    extract_data_attr_number(html, "data-receipt-legal-marker-font-weight"),
-                    false,
-                ),
             },
         }
     }
@@ -156,25 +142,21 @@ pub fn html_to_escpos(html: &str, line_width: usize, horizontal_offset: usize) -
     let mut emphasized_company_name = false;
     let mut allow_company_name_detection = true;
     let mut in_header_details = false;
-    let mut end_legal_receipt_marker: Option<String> = None;
+    let mut end_receipt_marker: Option<String> = None;
 
     for line in printable_text.lines() {
         let trimmed = line.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        if is_start_legal_receipt_marker(trimmed) {
-            append_styled_centered_text_line(
-                &mut data,
-                trimmed,
-                line_width,
-                horizontal_offset,
-                print_styles.legal_marker,
-            );
+        if is_start_receipt_marker(trimmed) {
+            // Start and end markers are document boundaries, not business headings.
+            // Keep them centered at the normal text size on every printer type.
+            append_centered_text_line(&mut data, trimmed, line_width, horizontal_offset);
             continue;
         }
 
-        if is_end_legal_receipt_marker(trimmed) {
-            end_legal_receipt_marker = Some(trimmed.to_string());
+        if is_end_receipt_marker(trimmed) {
+            end_receipt_marker = Some(trimmed.to_string());
             continue;
         }
 
@@ -246,14 +228,8 @@ pub fn html_to_escpos(html: &str, line_width: usize, horizontal_offset: usize) -
         has_qr = true;
     }
 
-    if let Some(marker) = end_legal_receipt_marker {
-        append_styled_centered_text_line(
-            &mut data,
-            &marker,
-            line_width,
-            horizontal_offset,
-            print_styles.legal_marker,
-        );
+    if let Some(marker) = end_receipt_marker {
+        append_centered_text_line(&mut data, &marker, line_width, horizontal_offset);
     }
 
     append_feed_and_cut(&mut data, has_qr);
@@ -301,20 +277,26 @@ fn is_copy_marker_line(line: &str) -> bool {
         || normalized.starts_with("original #")
 }
 
-fn normalize_legal_marker(line: &str) -> String {
+fn normalize_receipt_marker(line: &str) -> String {
     line.trim().trim_matches('*').trim().to_ascii_lowercase()
 }
 
-fn is_start_legal_receipt_marker(line: &str) -> bool {
-    normalize_legal_marker(line) == "start of legal receipt"
+fn is_start_receipt_marker(line: &str) -> bool {
+    matches!(
+        normalize_receipt_marker(line).as_str(),
+        "start of receipt" | "start of legal receipt" | "start of bill"
+    )
 }
 
-fn is_end_legal_receipt_marker(line: &str) -> bool {
-    normalize_legal_marker(line) == "end of legal receipt"
+fn is_end_receipt_marker(line: &str) -> bool {
+    matches!(
+        normalize_receipt_marker(line).as_str(),
+        "end of receipt" | "end of legal receipt" | "end of bill"
+    )
 }
 
-fn is_legal_receipt_marker(line: &str) -> bool {
-    is_start_legal_receipt_marker(line) || is_end_legal_receipt_marker(line)
+fn is_receipt_marker(line: &str) -> bool {
+    is_start_receipt_marker(line) || is_end_receipt_marker(line)
 }
 
 fn is_vat_registration_marker(line: &str) -> bool {
@@ -336,7 +318,7 @@ fn is_company_name_candidate(line: &str) -> bool {
         && !is_divider_line(trimmed)
         && !is_receipt_section_title(trimmed)
         && !is_copy_marker_line(trimmed)
-        && !is_legal_receipt_marker(trimmed)
+        && !is_receipt_marker(trimmed)
         && !trimmed.contains(':')
 }
 
@@ -1222,6 +1204,19 @@ mod tests {
         assert_eq!(lines.get(0).map(|line| line.trim()), Some("HEADER"));
         assert_eq!(lines.get(1), Some(&""));
         assert_eq!(lines.get(2).map(|line| line.trim()), Some("NEXT"));
+    }
+
+    #[test]
+    fn normal_receipt_and_bill_markers_are_not_business_names() {
+        for marker in [
+            "*** START OF RECEIPT ***",
+            "*** END OF RECEIPT ***",
+            "*** START OF BILL ***",
+            "*** END OF BILL ***",
+        ] {
+            assert!(is_receipt_marker(marker));
+            assert!(!is_company_name_candidate(marker));
+        }
     }
 
     #[test]
