@@ -5,7 +5,8 @@ from .models import Subscription
 
 FEATURE_LABELS = {
     'expense_management': 'Expense Management',
-    'staff_management': 'Staff Management',
+    'invoicing': 'Invoices & Quotations',
+    'staff_management': 'Multi-User Access',
     'tax_management': 'Tax Management',
 }
 

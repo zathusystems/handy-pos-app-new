@@ -29,12 +29,12 @@ const FEATURE_INFO: Record<string, SubscriptionFeatureInfo> = {
     description: 'Track business expenses, organize spending categories, and review expense history by branch.',
   },
   invoicing: {
-    name: 'Invoicing',
-    description: 'Create invoices, track payment status, and manage customer billing from the dashboard.',
+    name: 'Invoices & Quotations',
+    description: 'Create quotations and invoices, then track customer billing and payment status.',
   },
   staff_management: {
-    name: 'Staff Management',
-    description: 'Add staff members, assign roles, and control which branches and responsibilities each team member can access.',
+    name: 'Multi-User Access',
+    description: 'Allow your staff to run business operations with roles and access controls.',
   },
   tax_management: {
     name: 'Tax Management',

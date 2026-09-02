@@ -146,7 +146,7 @@ class Subscription(models.Model):
     def maybe_auto_resume(self):
         """
         Resume a paused subscription when the available balance can cover
-        the next daily charge.
+        the next daily charge. Paused time is not billed retroactively.
         """
         if self.status != SubscriptionStatus.PAUSED:
             return False
@@ -156,6 +156,7 @@ class Subscription(models.Model):
             return False
 
         self.status = SubscriptionStatus.ACTIVE
+        self.last_charge_date = timezone.now()
         return True
 
     def get_currency_code(self):
@@ -287,9 +288,11 @@ class Subscription(models.Model):
                     f"Current: {subscription.account_balance}, Required: {daily_charge}"
                 )
                 subscription.status = SubscriptionStatus.PAUSED
-                subscription.save(update_fields=['status', 'updated_at'])
+                subscription.last_charge_date = timezone.now()
+                subscription.save(update_fields=['status', 'last_charge_date', 'updated_at'])
                 self.status = subscription.status
                 self.account_balance = subscription.account_balance
+                self.last_charge_date = subscription.last_charge_date
                 logger.warning(f"[SUBSCRIPTION] {subscription.business.name}: Subscription paused due to insufficient balance")
                 return False, (
                     f"Insufficient balance. Subscription paused. "
@@ -375,8 +378,27 @@ class Subscription(models.Model):
             charged_amount = 0
             for _ in range(pending_days):
                 if subscription.account_balance < daily_charge:
+                    pause_time = timezone.now()
                     subscription.status = SubscriptionStatus.PAUSED
-                    subscription.save(update_fields=['status', 'updated_at'])
+                    # Once access is paused, do not retry the same historical
+                    # days after a later top-up.
+                    subscription.last_charge_date = pause_time
+                    subscription.save(
+                        update_fields=[
+                            'status',
+                            'account_balance',
+                            'total_spent',
+                            'last_charge_date',
+                            'updated_at',
+                        ]
+                    )
+                    if charged_days > 0:
+                        UsageCharge.objects.create(
+                            subscription=subscription,
+                            charge_type='base_daily',
+                            description=f'Catch-up daily subscription charge for {charged_days} day(s)',
+                            amount=charged_amount,
+                        )
                     self.status = subscription.status
                     self.account_balance = subscription.account_balance
                     self.total_spent = subscription.total_spent
@@ -651,7 +673,7 @@ class FeaturePricing(models.Model):
     FEATURE_CHOICES = [
         ('pos', 'POS System'),
         ('inventory', 'Inventory Management'),
-        ('invoicing', 'Invoicing'),
+        ('invoicing', 'Invoices & Quotations'),
         ('online_menu', 'Online Menu'),
         ('online_ordering', 'Online Ordering'),
         ('kitchen', 'Kitchen Display System'),
@@ -664,7 +686,7 @@ class FeaturePricing(models.Model):
         ('reports', 'Reports'),
         ('analytics', 'Analytics'),
         ('take_orders', 'Take Orders'),
-        ('staff_management', 'Staff Management'),
+        ('staff_management', 'Multi-User Access'),
         ('waste_management', 'Waste Management'),
         ('stock_transfers', 'Stock Transfers'),
         ('stock_audits', 'Stock Audits'),
@@ -858,7 +880,7 @@ class Deposit(models.Model):
             subscription.last_payment_date = completed_at
             subscription_update_fields = ['account_balance', 'last_payment_date', 'updated_at']
             if subscription.maybe_auto_resume():
-                subscription_update_fields.append('status')
+                subscription_update_fields.extend(['status', 'last_charge_date'])
             subscription.save(update_fields=subscription_update_fields)
 
             deposit.status = DepositStatus.COMPLETED

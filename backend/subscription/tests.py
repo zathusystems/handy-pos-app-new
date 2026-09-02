@@ -110,7 +110,8 @@ class SubscriptionModelTests(TestCase):
     def test_complete_deposit_auto_resumes_paused_subscription_when_credit_is_sufficient(self):
         self.subscription.status = 'paused'
         self.subscription.account_balance = Decimal('0.00')
-        self.subscription.save(update_fields=['status', 'account_balance', 'updated_at'])
+        self.subscription.last_charge_date = timezone.now() - timedelta(days=10)
+        self.subscription.save(update_fields=['status', 'account_balance', 'last_charge_date', 'updated_at'])
 
         deposit = Deposit.objects.create(
             subscription=self.subscription,
@@ -128,6 +129,20 @@ class SubscriptionModelTests(TestCase):
         self.assertEqual(deposit.status, DepositStatus.COMPLETED)
         self.assertEqual(self.subscription.status, 'active')
         self.assertEqual(self.subscription.account_balance, Decimal('10.00'))
+        self.assertEqual(self.subscription.get_pending_daily_charge_days(), 0)
+
+    def test_pausing_for_insufficient_credit_resets_the_billing_clock(self):
+        self.subscription.account_balance = Decimal('0.00')
+        self.subscription.last_charge_date = timezone.now() - timedelta(days=3)
+        self.subscription.save(update_fields=['account_balance', 'last_charge_date', 'updated_at'])
+
+        success, message = self.subscription.apply_daily_charges()
+        self.subscription.refresh_from_db()
+
+        self.assertFalse(success)
+        self.assertIn('paused', message.lower())
+        self.assertEqual(self.subscription.status, 'paused')
+        self.assertEqual(self.subscription.get_pending_daily_charge_days(), 0)
 
     def test_complete_deposit_keeps_subscription_paused_when_credit_is_insufficient(self):
         config = SystemConfig.get_config()
@@ -597,6 +612,27 @@ class SubscriptionApiTests(APITestCase):
         self.assertEqual(deposit_response.status_code, 201, deposit_response.data)
         deposit = Deposit.objects.get(id=deposit_response.data['id'])
         self.assertEqual(deposit.subscription_id, sub_two.id)
+
+    def test_resume_starts_a_new_billing_cycle_after_a_pause(self):
+        subscription = Subscription.objects.create(
+            business=self.business,
+            status='paused',
+            account_balance=Decimal('50.00'),
+        )
+        Subscription.objects.filter(pk=subscription.pk).update(
+            last_charge_date=timezone.now() - timedelta(days=8),
+        )
+
+        response = self.client.post(
+            '/api/subscription/subscriptions/resume/',
+            {'business': self.business.id},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.status, 'active')
+        self.assertEqual(subscription.get_pending_daily_charge_days(), 0)
 
     def test_current_endpoint_applies_pending_daily_charges(self):
         subscription = Subscription.objects.create(

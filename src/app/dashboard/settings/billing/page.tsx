@@ -21,6 +21,7 @@ import { authFetch } from '@/lib/auth-fetch';
 import { buildSubscriptionBillingUrl } from '@/lib/frontend-flags';
 import { persistSubscriptionToCache } from '@/lib/subscription-cache';
 import { withBusinessPayload, withBusinessQuery } from '@/lib/subscription-api';
+import { getSubscriptionFeatureInfo } from '@/lib/subscription-access';
 import { useAuth } from '@/hooks/use-auth';
 import { useCurrency } from '@/hooks/use-currency';
 import { Button } from '@/components/ui/button';
@@ -169,6 +170,19 @@ interface Feature {
   is_active?: boolean;
   is_premium?: boolean;
 }
+
+const FEATURE_COPY_OVERRIDES = new Set(['invoicing', 'staff_management']);
+
+const getFeaturePresentation = (feature: Feature) => {
+  if (FEATURE_COPY_OVERRIDES.has(feature.feature)) {
+    return getSubscriptionFeatureInfo(feature.feature);
+  }
+
+  return {
+    name: feature.feature_display,
+    description: feature.description,
+  };
+};
 
 interface SubscriptionFeature {
   id: number;
@@ -1480,7 +1494,7 @@ export default function BillingPage() {
 
       toast({
         title: 'Subscription Paused',
-        description: 'Your subscription has been paused. You can resume it anytime.',
+        description: 'Your subscription has been paused. Add enough credit for one daily charge before resuming.',
       });
 
       setShowPauseDialog(false);
@@ -1570,7 +1584,10 @@ export default function BillingPage() {
   const formatPaymentMethodLabel = (method: string) => method.replace(/_/g, ' ');
 
   const sortedAvailableFeatures = useMemo(
-    () => [...features].sort((left, right) => left.feature_display.localeCompare(right.feature_display)),
+    () =>
+      [...features].sort((left, right) =>
+        getFeaturePresentation(left).name.localeCompare(getFeaturePresentation(right).name)
+      ),
     [features]
   );
 
@@ -1598,7 +1615,9 @@ export default function BillingPage() {
             isIncludedFeature: boolean;
           } => Boolean(detail)
         )
-        .sort((left, right) => left.feature.feature_display.localeCompare(right.feature.feature_display)),
+        .sort((left, right) =>
+          getFeaturePresentation(left.feature).name.localeCompare(getFeaturePresentation(right.feature).name)
+        ),
     [features, subscriptionFeatures]
   );
 
@@ -2154,7 +2173,7 @@ export default function BillingPage() {
                     <DialogHeader>
                       <DialogTitle>Pause Subscription</DialogTitle>
                       <DialogDescription>
-                        Pausing your subscription will stop all charges. You can resume anytime.
+                        Pausing stops future charges. Resume once your balance covers one daily charge.
                       </DialogDescription>
                     </DialogHeader>
                     <Alert>
@@ -2460,6 +2479,7 @@ export default function BillingPage() {
                       ) : (
                         <div className="space-y-3">
                           {sortedAvailableFeatures.map((feature) => {
+                            const presentation = getFeaturePresentation(feature);
                             const isEnabled = subscriptionFeatures.some(
                               (subscriptionFeature) =>
                                 subscriptionFeature.feature_id === feature.id && subscriptionFeature.enabled
@@ -2478,7 +2498,7 @@ export default function BillingPage() {
                               >
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2">
-                                    <p className="text-sm font-semibold">{feature.feature_display}</p>
+                                    <p className="text-sm font-semibold">{presentation.name}</p>
                                     {feature.is_premium && <Badge variant="secondary">Premium</Badge>}
                                     {isIncludedFeature && (
                                       <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
@@ -2486,9 +2506,9 @@ export default function BillingPage() {
                                       </Badge>
                                     )}
                                   </div>
-                                  {feature.description && (
+                                  {presentation.description && (
                                     <p className="mt-1 text-xs text-muted-foreground">
-                                      {feature.description}
+                                      {presentation.description}
                                     </p>
                                   )}
                                   <p
@@ -2548,57 +2568,61 @@ export default function BillingPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {enabledFeatureDetails.map(({ feature, subscriptionFeature, isIncludedFeature }) => (
-                      <div
-                        key={subscriptionFeature.id}
-                        className={cn(
-                          'flex flex-col gap-3 rounded-xl border p-4 transition-colors sm:flex-row sm:items-start sm:justify-between',
-                          isIncludedFeature
-                            ? 'border-emerald-500/20 bg-emerald-500/10'
-                            : 'border-primary/20 bg-primary/5'
-                        )}
-                      >
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-base font-semibold">{feature.feature_display}</p>
-                            {feature.is_premium && <Badge variant="secondary">Premium</Badge>}
-                          </div>
-                          {feature.description && (
-                            <p className="text-sm text-muted-foreground">{feature.description}</p>
+                    {enabledFeatureDetails.map(({ feature, subscriptionFeature, isIncludedFeature }) => {
+                      const presentation = getFeaturePresentation(feature);
+
+                      return (
+                        <div
+                          key={subscriptionFeature.id}
+                          className={cn(
+                            'flex flex-col gap-3 rounded-xl border p-4 transition-colors sm:flex-row sm:items-start sm:justify-between',
+                            isIncludedFeature
+                              ? 'border-emerald-500/20 bg-emerald-500/10'
+                              : 'border-primary/20 bg-primary/5'
                           )}
-                        </div>
-                        <div className="flex min-w-fit flex-col items-start gap-1 sm:items-end">
-                          <Badge
-                            className={cn(
-                              isIncludedFeature
-                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                : 'border-primary/20 bg-primary/10 text-primary'
+                        >
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold">{presentation.name}</p>
+                              {feature.is_premium && <Badge variant="secondary">Premium</Badge>}
+                            </div>
+                            {presentation.description && (
+                              <p className="text-sm text-muted-foreground">{presentation.description}</p>
                             )}
-                          >
-                            {isIncludedFeature ? 'Included' : 'Enabled'}
-                          </Badge>
-                          <span
-                            className={cn(
-                              'text-sm font-medium',
-                              isIncludedFeature
-                                ? 'text-emerald-700 dark:text-emerald-300'
-                                : 'text-foreground'
-                            )}
-                          >
-                            {isIncludedFeature
-                              ? `Included (${formatMoney(
-                                  feature.price_per_day || feature.default_price_per_day || 0
-                                )} / day)`
-                              : `${formatMoney(
-                                  feature.price_per_day || feature.default_price_per_day || 0
-                                )} / day`}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Enabled {format(parseISO(subscriptionFeature.enabled_date), 'MMM d, yyyy')}
-                          </span>
+                          </div>
+                          <div className="flex min-w-fit flex-col items-start gap-1 sm:items-end">
+                            <Badge
+                              className={cn(
+                                isIncludedFeature
+                                  ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                  : 'border-primary/20 bg-primary/10 text-primary'
+                              )}
+                            >
+                              {isIncludedFeature ? 'Included' : 'Enabled'}
+                            </Badge>
+                            <span
+                              className={cn(
+                                'text-sm font-medium',
+                                isIncludedFeature
+                                  ? 'text-emerald-700 dark:text-emerald-300'
+                                  : 'text-foreground'
+                              )}
+                            >
+                              {isIncludedFeature
+                                ? `Included (${formatMoney(
+                                    feature.price_per_day || feature.default_price_per_day || 0
+                                  )} / day)`
+                                : `${formatMoney(
+                                    feature.price_per_day || feature.default_price_per_day || 0
+                                  )} / day`}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              Enabled {format(parseISO(subscriptionFeature.enabled_date), 'MMM d, yyyy')}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 {enabledFeatureDetails.length > 0 && (

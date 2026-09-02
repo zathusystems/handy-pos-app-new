@@ -1117,7 +1117,7 @@ export default function InvoicingPage() {
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
               <div className="flex-1">
-                <h3 className="font-semibold text-amber-900 mb-1">Invoicing Feature Unavailable</h3>
+                <h3 className="mb-1 font-semibold text-amber-900">Invoices & Quotations Unavailable</h3>
                 <p className="text-sm text-amber-800 mb-2">{accessCheck.reason}</p>
                 {accessCheck.requiresUpgrade && (
                   <p className="text-sm text-amber-700">

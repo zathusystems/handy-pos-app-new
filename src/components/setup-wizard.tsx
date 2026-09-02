@@ -225,8 +225,8 @@ const INCLUDED_GENERAL_FEATURES: TrialFeaturePresentation[] = [
 
 const OPTIONAL_ADDON_PRESENTATION: Record<string, TrialFeaturePresentation> = {
   staff_management: {
-    title: 'Staff Management',
-    description: 'Control staff permissions and track cashier activity.',
+    title: 'Multi-User Access',
+    description: 'Allow your staff to run business operations with roles and access controls.',
     icon: Users,
   },
   multi_branch: {

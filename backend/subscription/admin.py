@@ -342,9 +342,42 @@ class SubscriptionAdmin(admin.ModelAdmin):
     pause_subscriptions.short_description = 'Pause selected subscriptions'
     
     def resume_subscriptions(self, request, queryset):
-        count = queryset.filter(status='paused').update(status='active')
-        self.message_user(request, f'✓ {count} subscriptions resumed')
+        resumed = 0
+        insufficient_balance = 0
+        for subscription in queryset.filter(status='paused'):
+            if subscription.maybe_auto_resume():
+                subscription.save(update_fields=['status', 'last_charge_date', 'updated_at'])
+                resumed += 1
+            else:
+                insufficient_balance += 1
+
+        message = f'✓ {resumed} subscriptions resumed'
+        if insufficient_balance:
+            message += f'; {insufficient_balance} need enough credit for one daily charge'
+        self.message_user(request, message)
     resume_subscriptions.short_description = 'Resume selected subscriptions'
+
+    def save_model(self, request, obj, form, change):
+        previous_status = None
+        if change and obj.pk:
+            previous_status = Subscription.objects.filter(pk=obj.pk).values_list('status', flat=True).first()
+
+        if previous_status == 'paused' and obj.status == 'active':
+            obj.status = previous_status
+            if obj.maybe_auto_resume():
+                self.message_user(
+                    request,
+                    'Subscription resumed. Billing restarts from today.',
+                    level=messages.SUCCESS,
+                )
+            else:
+                self.message_user(
+                    request,
+                    'Subscription remains paused because its balance does not cover one daily charge.',
+                    level=messages.WARNING,
+                )
+
+        super().save_model(request, obj, form, change)
 
     def reset_low_balance_notifications(self, request, queryset):
         count = queryset.update(low_balance_notified=False, low_balance_notified_date=None)

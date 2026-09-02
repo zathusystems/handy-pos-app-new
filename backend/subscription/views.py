@@ -7,7 +7,15 @@ from django.db.utils import OperationalError
 from django.db.models import Q
 from django.utils import timezone
 from datetime import timedelta
-from .models import Subscription, Invoice, Deposit, DepositStatus, SubscriptionFeature, FeaturePricing
+from .models import (
+    Subscription,
+    SubscriptionStatus,
+    Invoice,
+    Deposit,
+    DepositStatus,
+    SubscriptionFeature,
+    FeaturePricing,
+)
 from system_config.models import SystemConfig
 from business.models import Business
 from business.access import get_accessible_business
@@ -367,7 +375,7 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def resume(self, request):
-        """Resume subscription"""
+        """Resume a paused subscription when its balance covers the next daily charge."""
         subscription = self._resolve_subscription(
             request,
             allow_staff_access=True,
@@ -379,8 +387,17 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        subscription.status = 'active'
-        subscription.save(update_fields=['status', 'updated_at'])
+        if subscription.status == SubscriptionStatus.PAUSED:
+            if not subscription.maybe_auto_resume():
+                return Response(
+                    {
+                        'detail': (
+                            'Add enough credits to cover the current daily subscription charge before resuming.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            subscription.save(update_fields=['status', 'last_charge_date', 'updated_at'])
         serializer = self.get_serializer(subscription)
         return Response(serializer.data)
 

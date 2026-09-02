@@ -153,7 +153,7 @@ class FeaturePricingConfig(models.Model):
     FEATURE_CHOICES = [
         ('pos', 'POS System'),
         ('inventory', 'Inventory Management'),
-        ('invoicing', 'Invoicing'),
+        ('invoicing', 'Invoices & Quotations'),
         ('online_menu', 'Online Menu'),
         ('online_ordering', 'Online Ordering'),
         ('delivery', 'Delivery Management'),
@@ -167,7 +167,7 @@ class FeaturePricingConfig(models.Model):
         ('reports', 'Reports'),
         ('analytics', 'Analytics'),
         ('take_orders', 'Take Orders'),
-        ('staff_management', 'Staff Management'),
+        ('staff_management', 'Multi-User Access'),
         ('waste_management', 'Waste Management'),
         ('stock_transfers', 'Stock Transfers'),
         ('stock_audits', 'Stock Audits'),
