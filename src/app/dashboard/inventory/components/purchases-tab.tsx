@@ -714,7 +714,8 @@ export function PurchasesTab({ purchaseHistoryData, isMobile, searchTerm, onRece
                                 {filteredPurchases.length > 0 ? paginatedPurchases.map((purchase) => {
                                     const totalQuantity = purchase.items.reduce((sum, item) => sum + item.quantityReceived, 0);
                                     const currencySymbol = getCurrencySymbol();
-                                    const isDirty = purchase.items.some(item => item._dirty);
+                                    const hasPendingSync = purchase.items.some(item => item._dirty);
+                                    const hasDeviceOnlyItems = purchase.items.some(isLocalOnlyPurchaseRecord);
                                     const resolvedVat = resolveGroupVat(purchase);
                                     const resolvedTotalWithVat = resolveGroupTotalWithVat(purchase);
                                     
@@ -729,10 +730,15 @@ export function PurchasesTab({ purchaseHistoryData, isMobile, searchTerm, onRece
                                             <TableCell className="text-right">{currencySymbol} {resolvedVat.toFixed(2)}</TableCell>
                                             <TableCell className="text-right font-semibold">{currencySymbol} {resolvedTotalWithVat.toFixed(2)}</TableCell>
                                             <TableCell className="text-center">
-                                                {isDirty ? (
+                                                {hasPendingSync ? (
                                                     <div className="flex items-center justify-center gap-1">
                                                         <CloudOff className="h-4 w-4 text-orange-500" />
                                                         <span className="text-xs text-orange-600">Pending</span>
+                                                    </div>
+                                                ) : hasDeviceOnlyItems ? (
+                                                    <div className="flex items-center justify-center gap-1">
+                                                        <CloudOff className="h-4 w-4 text-muted-foreground" />
+                                                        <span className="text-xs text-muted-foreground">Device only</span>
                                                     </div>
                                                 ) : (
                                                     <div className="flex items-center justify-center gap-1">

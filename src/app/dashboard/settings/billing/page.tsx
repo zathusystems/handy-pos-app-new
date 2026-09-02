@@ -869,14 +869,19 @@ export default function BillingPage() {
     }
 
     if (existingWindow && !existingWindow.closed) {
-      existingWindow.location.href = checkoutUrl;
+      existingWindow.opener = null;
+      existingWindow.location.replace(checkoutUrl);
       return;
     }
 
-    const openedWindow = window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
-    if (!openedWindow) {
-      window.location.assign(checkoutUrl);
+    const openedWindow = window.open('about:blank', '_blank');
+    if (openedWindow) {
+      openedWindow.opener = null;
+      openedWindow.location.replace(checkoutUrl);
+      return;
     }
+
+    window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
   }, []);
 
   useEffect(() => {
@@ -1079,7 +1084,10 @@ export default function BillingPage() {
     let checkoutWindow: Window | null = null;
     if (!isTauriApp()) {
       try {
-        checkoutWindow = window.open('', '_blank', 'noopener,noreferrer');
+        checkoutWindow = window.open('about:blank', '_blank');
+        if (checkoutWindow) {
+          checkoutWindow.opener = null;
+        }
       } catch {
         checkoutWindow = null;
       }

@@ -65,6 +65,26 @@ class PurchaseHistoryAccessTests(APITestCase):
             quantity_remaining=1,
             cost_per_unit=Decimal('100.00'),
         )
+        self.other_purchase_order = PurchaseOrder.objects.create(
+            business=self.business,
+            branch=self.branch,
+            order_number=uuid.uuid4(),
+            status='Received',
+            total_items=1,
+            total_cost=Decimal('200.00'),
+            payment_status='Paid',
+            amount_paid=Decimal('200.00'),
+            amount_due=Decimal('0.00'),
+            created_by='Another Staff Member',
+        )
+        PurchaseOrderItem.objects.create(
+            purchase_order=self.other_purchase_order,
+            inventory_item=self.inventory_item,
+            quantity_ordered=2,
+            quantity_received=2,
+            quantity_remaining=2,
+            cost_per_unit=Decimal('100.00'),
+        )
 
     def test_assigned_staff_can_view_purchase_history(self):
         self.client.force_authenticate(user=self.staff_user)
@@ -75,9 +95,15 @@ class PurchaseHistoryAccessTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         records = response.data.get('results', response.data)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(str(records[0]['id']), str(self.purchase_order.id))
-        self.assertIn('received_date', records[0])
+        self.assertEqual(len(records), 2)
+        returned_ids = {str(record['id']) for record in records}
+        self.assertEqual(
+            returned_ids,
+            {str(self.purchase_order.id), str(self.other_purchase_order.id)},
+        )
+        self.assertTrue(all(str(record['business']) == str(self.business.id) for record in records))
+        self.assertTrue(all(str(record['branch']) == str(self.branch.id) for record in records))
+        self.assertTrue(all('received_date' in record for record in records))
 
 
 class MRAProductMappingCreateTests(APITestCase):

@@ -137,6 +137,56 @@ const getBranchScopedRows = async (table: any, branchId: string): Promise<any[]>
   return table.where('branchId').anyOf(branchCandidates).toArray();
 };
 
+const extractPurchaseOrdersPage = (response: any): { purchases: any[]; next: string | null } => {
+  if (Array.isArray(response)) {
+    return { purchases: response, next: null };
+  }
+
+  if (Array.isArray(response?.results)) {
+    return {
+      purchases: response.results,
+      next: typeof response.next === 'string' && response.next.trim() ? response.next : null,
+    };
+  }
+
+  const purchases = Array.isArray(response?.data)
+    ? response.data
+    : Array.isArray(response?.data?.results)
+      ? response.data.results
+      : Array.isArray(response?.data?.purchase_orders)
+        ? response.data.purchase_orders
+        : Array.isArray(response?.purchase_orders)
+          ? response.purchase_orders
+          : Array.isArray(response?.purchaseOrders)
+            ? response.purchaseOrders
+            : [];
+
+  return {
+    purchases,
+    next: typeof response?.next === 'string' && response.next.trim() ? response.next : null,
+  };
+};
+
+const fetchAllPurchaseOrders = async (initialUrl: string): Promise<any[]> => {
+  const purchases: any[] = [];
+  const visitedUrls = new Set<string>();
+  let nextUrl: string | null = initialUrl;
+
+  while (nextUrl) {
+    if (visitedUrls.has(nextUrl)) {
+      throw new Error('Purchase history pagination loop detected.');
+    }
+
+    visitedUrls.add(nextUrl);
+    const response = await authFetch.fetch<any>(nextUrl);
+    const page = extractPurchaseOrdersPage(response);
+    purchases.push(...page.purchases);
+    nextUrl = page.next;
+  }
+
+  return purchases;
+};
+
 const toSafeNumber = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -367,25 +417,9 @@ export default function InventoryPage() {
         if (activeBusinessId) {
           purchaseQuery.set('business_id', String(activeBusinessId));
         }
-        const purchaseResponse = await authFetch.fetch<any>(
+        const purchases = await fetchAllPurchaseOrders(
           `/inventory/purchase-orders/?${purchaseQuery.toString()}`
         );
-
-        const purchases = Array.isArray(purchaseResponse)
-          ? purchaseResponse
-          : Array.isArray(purchaseResponse?.results)
-            ? purchaseResponse.results
-              : Array.isArray(purchaseResponse?.data)
-                ? purchaseResponse.data
-                : Array.isArray(purchaseResponse?.data?.results)
-                  ? purchaseResponse.data.results
-                  : Array.isArray(purchaseResponse?.data?.purchase_orders)
-                    ? purchaseResponse.data.purchase_orders
-              : Array.isArray(purchaseResponse?.purchase_orders)
-                ? purchaseResponse.purchase_orders
-                : Array.isArray(purchaseResponse?.purchaseOrders)
-                  ? purchaseResponse.purchaseOrders
-                  : [];
 
         console.log('[InventoryPage] Received', purchases.length, 'purchase records from backend');
         
@@ -403,7 +437,7 @@ export default function InventoryPage() {
         
         // ✅ Delete only records that are NOT dirty (not waiting to sync)
         // and are server-trackable IDs. Keep legacy/local-only numeric IDs.
-        const allLocalRecords = await db.purchaseHistory.where({ branchId: branchId }).toArray();
+        const allLocalRecords = await getBranchScopedRows(db.purchaseHistory, branchId);
         const isUuidLike = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
         for (const record of allLocalRecords) {
           const localId = String(record.id ?? '').trim();
@@ -824,9 +858,7 @@ export default function InventoryPage() {
   const purchaseHistoryData = useLiveQuery(
     () => {
       if (!activeBranchId) return [];
-      return db.purchaseHistory
-        .where({ branchId: activeBranchId })
-        .toArray()
+      return getBranchScopedRows(db.purchaseHistory, activeBranchId)
         .then((data) =>
           data
             .filter((record) => record._operation !== 'delete')
