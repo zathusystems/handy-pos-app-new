@@ -53,6 +53,7 @@ import { format, parseISO } from 'date-fns';
 import { TakeOrderModal } from './take-order-modal';
 import { BillReceipt } from './bill-receipt';
 import { syncService } from '@/lib/services/sync-service';
+import type { PrinterSettings } from '@/lib/services/printer-service';
 
 type ViewOrdersModalProps = {
   branchId: string;
@@ -142,6 +143,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [activeFilter, setActiveFilter] = useState<OrderFilter>('attention');
   const [billOrder, setBillOrder] = useState<TakeOrder | null>(null);
   const [billPaperWidth, setBillPaperWidth] = useState<'80mm' | '58mm'>('80mm');
+  const [billPrinterSettings, setBillPrinterSettings] = useState<Partial<PrinterSettings> | null>(null);
   const [billNumber, setBillNumber] = useState('');
   const [isPrintingBill, setIsPrintingBill] = useState(false);
   const billPrintLockRef = React.useRef(false);
@@ -408,7 +410,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     try {
       const { printerService } = await import('@/lib/services/printer-service');
       const { silentPrintService } = await import('@/lib/services/silent-print-service');
-      const defaultPrinter = await printerService.getDefaultPrinter(branchId);
+      const [printerSettings, defaultPrinter] = await Promise.all([
+        printerService.getPrinterSettings(branchId),
+        printerService.getDefaultPrinter(branchId),
+      ]);
 
       if (!defaultPrinter) {
         toast({
@@ -419,8 +424,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         return;
       }
 
-      const selectedPaperWidth = (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
+      const selectedPaperWidth: '80mm' | '58mm' =
+        printerSettings.receiptPaperWidth === '58mm' || printerSettings.receiptPaperWidth === '80mm'
+          ? printerSettings.receiptPaperWidth
+          : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
       setBillPaperWidth(selectedPaperWidth);
+      setBillPrinterSettings(printerSettings);
       setBillNumber(`Order ${order.orderNumber}`);
       setBillOrder(order);
       await new Promise((resolve) => setTimeout(resolve, 150));
@@ -1098,6 +1107,14 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             createdAt={billOrder.createdAt}
             createdByName={billOrder.createdByName}
             paperWidth={billPaperWidth}
+            receiptFontSize={billPrinterSettings?.receiptFontSize}
+            receiptFontWeight={billPrinterSettings?.receiptFontWeight}
+            receiptLineHeight={billPrinterSettings?.receiptLineHeight}
+            receiptPaddingX={billPrinterSettings?.receiptPaddingX}
+            receiptBusinessNameFontSize={billPrinterSettings?.receiptBusinessNameFontSize}
+            receiptBusinessNameFontWeight={billPrinterSettings?.receiptBusinessNameFontWeight}
+            receiptBusinessNameScaleX={billPrinterSettings?.receiptBusinessNameScaleX}
+            receiptHeaderDetailScaleX={billPrinterSettings?.receiptHeaderDetailScaleX}
           />
         </div>
       )}

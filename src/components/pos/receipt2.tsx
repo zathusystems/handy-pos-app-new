@@ -841,6 +841,10 @@ export const Receipt2 = ({
 
       <div
         className="receipt2-sheet"
+        data-receipt-font-size={Number.parseFloat(fontSize)}
+        data-receipt-font-weight={fontWeight}
+        data-receipt-line-height={lineHeight}
+        data-receipt-padding-x={horizontalPadding}
         data-receipt-business-name-font-size={businessNameFontSize}
         data-receipt-business-name-font-weight={businessNameWeight}
         data-receipt-business-name-scale-x={businessNameScale}

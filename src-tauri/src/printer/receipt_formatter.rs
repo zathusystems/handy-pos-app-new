@@ -40,12 +40,20 @@ struct ReceiptTextStyle {
 
 #[derive(Clone, Copy)]
 struct ReceiptPrintStyles {
+    body: ReceiptTextStyle,
     business_name: ReceiptTextStyle,
     header_detail: ReceiptTextStyle,
+    line_spacing: Option<u8>,
 }
 
 impl ReceiptPrintStyles {
     fn from_html(html: &str) -> Self {
+        let body_size = escpos_size_mode(
+            extract_data_attr_number(html, "data-receipt-font-size"),
+            None,
+            13.0,
+            1.0,
+        );
         let business_size = escpos_size_mode(
             extract_data_attr_number(html, "data-receipt-business-name-font-size"),
             extract_data_attr_number(html, "data-receipt-business-name-scale-x"),
@@ -60,6 +68,13 @@ impl ReceiptPrintStyles {
         );
 
         Self {
+            body: ReceiptTextStyle {
+                size_mode: body_size,
+                bold: receipt_weight_is_bold(
+                    extract_data_attr_number(html, "data-receipt-font-weight"),
+                    false,
+                ),
+            },
             business_name: ReceiptTextStyle {
                 size_mode: business_size,
                 bold: receipt_weight_is_bold(
@@ -71,6 +86,9 @@ impl ReceiptPrintStyles {
                 size_mode: header_detail_size,
                 bold: false,
             },
+            line_spacing: resolve_line_spacing(
+                extract_data_attr_number(html, "data-receipt-line-height"),
+            ),
         }
     }
 }
@@ -106,6 +124,17 @@ fn receipt_weight_is_bold(weight: Option<f64>, fallback: bool) -> bool {
     weight.map(|value| value >= 600.0).unwrap_or(fallback)
 }
 
+fn resolve_line_spacing(line_height: Option<f64>) -> Option<u8> {
+    let value = line_height?;
+    if !value.is_finite() {
+        return None;
+    }
+
+    // ESC/POS uses 1/180-inch units. This approximates the configured web
+    // line-height while staying within a reliable range for thermal printers.
+    Some((24.0 * value.clamp(1.05, 1.6)).round().clamp(24.0, 40.0) as u8)
+}
+
 fn extract_data_attr_number(html: &str, attr_name: &str) -> Option<f64> {
     extract_data_attr_value(html, attr_name)?
         .trim()
@@ -138,6 +167,9 @@ pub fn html_to_escpos(html: &str, line_width: usize, horizontal_offset: usize) -
     data.extend_from_slice(b"\x1B\x32"); // Restore default line spacing
 
     let print_styles = ReceiptPrintStyles::from_html(html);
+    if let Some(line_spacing) = print_styles.line_spacing {
+        data.extend_from_slice(&[0x1B, 0x33, line_spacing]); // ESC 3 n
+    }
     let printable_text = html_to_printable_text(html, line_width);
     let mut emphasized_company_name = false;
     let mut allow_company_name_detection = true;
@@ -206,14 +238,7 @@ pub fn html_to_escpos(html: &str, line_width: usize, horizontal_offset: usize) -
             }
         }
 
-        let line_with_offset = if horizontal_offset > 0 && !line.trim().is_empty() {
-            format!("{}{}", " ".repeat(horizontal_offset), line)
-        } else {
-            line.to_string()
-        };
-
-        data.extend_from_slice(line_with_offset.as_bytes());
-        data.extend_from_slice(b"\n");
+        append_styled_text_line(&mut data, line, horizontal_offset, print_styles.body);
     }
 
     let mut has_qr = false;
@@ -229,6 +254,9 @@ pub fn html_to_escpos(html: &str, line_width: usize, horizontal_offset: usize) -
     }
 
     if let Some(marker) = end_receipt_marker {
+        // CSS margins do not survive HTML-to-ESC/POS conversion, so preserve a
+        // clear gap between the receipt footer and its closing marker.
+        data.extend_from_slice(b"\n");
         append_centered_text_line(&mut data, &marker, line_width, horizontal_offset);
     }
 
@@ -385,6 +413,37 @@ fn append_centered_text_line(
 
     data.extend_from_slice(line.as_bytes());
     data.extend_from_slice(b"\n");
+}
+
+fn append_styled_text_line(
+    data: &mut Vec<u8>,
+    text: &str,
+    horizontal_offset: usize,
+    style: ReceiptTextStyle,
+) {
+    let line_with_offset = if horizontal_offset > 0 && !text.trim().is_empty() {
+        format!("{}{}", " ".repeat(horizontal_offset), text)
+    } else {
+        text.to_string()
+    };
+
+    if style.size_mode == 0 && !style.bold {
+        data.extend_from_slice(line_with_offset.as_bytes());
+        data.extend_from_slice(b"\n");
+        return;
+    }
+
+    data.extend_from_slice(b"\x1B\x61\x00"); // left align
+    if style.bold {
+        data.extend_from_slice(b"\x1B\x45\x01"); // bold on
+    }
+    data.extend_from_slice(&[0x1D, 0x21, style.size_mode]); // text size
+    data.extend_from_slice(line_with_offset.as_bytes());
+    data.extend_from_slice(b"\n");
+    data.extend_from_slice(b"\x1D\x21\x00"); // normal size
+    if style.bold {
+        data.extend_from_slice(b"\x1B\x45\x00"); // bold off
+    }
 }
 
 fn append_styled_centered_text_line(
@@ -1217,6 +1276,30 @@ mod tests {
             assert!(is_receipt_marker(marker));
             assert!(!is_company_name_candidate(marker));
         }
+    }
+
+    #[test]
+    fn end_markers_keep_a_blank_line_after_the_footer() {
+        let output = html_to_escpos(
+            "<div>FOOTER</div><div>*** END OF BILL ***</div>",
+            DEFAULT_RECEIPT_LINE_WIDTH,
+            0,
+        );
+        let printable = String::from_utf8_lossy(&output);
+
+        assert!(printable.contains("FOOTER\n\n"));
+    }
+
+    #[test]
+    fn body_weight_and_line_height_are_applied_to_thermal_output() {
+        let output = html_to_escpos(
+            "<div data-receipt-font-weight=\"700\" data-receipt-line-height=\"1.4\">*** START OF RECEIPT ***</div><div>ORDER #: 1</div>",
+            DEFAULT_RECEIPT_LINE_WIDTH,
+            0,
+        );
+
+        assert!(output.windows(3).any(|command| command == [0x1B, 0x33, 34]));
+        assert!(output.windows(3).any(|command| command == [0x1B, 0x45, 0x01]));
     }
 
     #[test]
