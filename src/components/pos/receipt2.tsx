@@ -558,8 +558,23 @@ export const Receipt2 = ({
     (order as any).buyerTin,
     (order as any).buyer_tin
   );
+  const buyerPhone = resolveBuyerField(
+    (order as any).customerPhone,
+    (order as any).customer_phone,
+    (order as any).buyerPhone,
+    (order as any).buyer_phone
+  );
+  const buyerEmail = resolveBuyerField(
+    (order as any).customerEmail,
+    (order as any).customer_email,
+    (order as any).buyerEmail,
+    (order as any).buyer_email
+  );
   const fiscalBuyerName = buyerName || 'WALK-IN CUSTOMER';
   const fiscalBuyerTin = buyerTin || 'N/A';
+  const receiptReference = rawOrderNumber
+    ? `ORDER ${rawOrderNumber}`
+    : toTrimmedString((order as any).id) || '-';
   const eisStatus = toTrimmedString((order as any).eisStatus ?? (order as any).eis_status).toUpperCase() || 'PENDING';
   const eisUuid = toTrimmedString((order as any).eisUuid ?? (order as any).eis_uuid);
   const digitalSignature = toTrimmedString(
@@ -664,8 +679,8 @@ export const Receipt2 = ({
   const dotRule = '.'.repeat(lineWidth);
   const qrPixelSize = normalizeReceiptQRCodeSize(receiptQrCodeSize, resolvedPaperWidth);
   const fallbackBusinessNameFontSize = isCompactPaper
-    ? businessNameLength > 18 ? 13 : 15
-    : businessNameLength > 22 ? 15 : businessNameLength > 18 ? 16 : 18;
+    ? businessNameLength > 18 ? 12 : 13
+    : businessNameLength > 22 ? 14 : businessNameLength > 18 ? 15 : 16;
   const fallbackBusinessNameScale = businessNameLength > 22 ? 1.02 : businessNameLength > 18 ? 1.12 : 1.28;
   const businessNameFontSize = normalizeReceiptBusinessNameFontSize(
     receiptBusinessNameFontSize ?? fallbackBusinessNameFontSize,
@@ -728,6 +743,9 @@ export const Receipt2 = ({
         }
         .receipt2-center {
           text-align: center;
+        }
+        .receipt2-item-pricing {
+          text-align: left !important;
         }
         .receipt2-legal-marker {
           display: inline-block;
@@ -794,6 +812,9 @@ export const Receipt2 = ({
         }
         .receipt2-break {
           height: 8px;
+        }
+        .receipt2-identity {
+          margin-top: 16px;
         }
         .receipt2-rule {
           overflow: hidden;
@@ -900,20 +921,29 @@ export const Receipt2 = ({
         )}
         
         
-        {fiscalMode && (
-          <>
-            <div className="receipt2-line">BUYER&apos;S TIN : {fiscalBuyerTin}</div>
-            <div className="receipt2-line">BUYER&apos;S NAME : {fiscalBuyerName}</div>
-          </>
-        )}
-        <div className="receipt2-line">{fiscalMode ? 'RECEIPT NUMBER' : 'RECEIPT NO'} : {receiptNumber}</div>
+        <div className="receipt2-identity">
+          {fiscalMode ? (
+            <>
+              <LegalRow left="BUYER'S TIN" right={fiscalBuyerTin} />
+              <LegalRow left="BUYER'S NAME" right={fiscalBuyerName} />
+            </>
+          ) : (
+            <>
+              <LegalRow left="BUYER" right={fiscalBuyerName} />
+              {buyerPhone && <LegalRow left="PHONE" right={buyerPhone} />}
+              {buyerEmail && <LegalRow left="EMAIL" right={buyerEmail} />}
+            </>
+          )}
+          <LegalRow left={fiscalMode ? 'RECEIPT NUMBER' : 'RECEIPT NO'} right={receiptNumber} />
+          <LegalRow left="REFERENCE" right={receiptReference} />
+        </div>
 
         {showItemDetails && (
           <>
             <div className="receipt2-rule">{dotRule}</div>
             {legalItems.map((item) => (
               <React.Fragment key={item.id}>
-                <div className="receipt2-line">
+                <div className="receipt2-line receipt2-item-pricing">
                   {formatQuantity(item.quantity)} X {formatAmount(item.unitPrice)}
                 </div>
                 <LegalRow

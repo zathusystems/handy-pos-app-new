@@ -201,7 +201,9 @@ export function BillReceipt({
   const rule = '-'.repeat(ruleLength);
   const itemsTotal = cart.reduce((sum, item) => sum + resolveLineTotal(item), 0);
 
-  const formatBillAmount = (value: unknown): string => currencyFormatter(toFiniteNumber(value, 0));
+  const formatBillAmount = (value: unknown): string => new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 2,
+  }).format(toFiniteNumber(value, 0));
 
   return (
     <div id={rootId}>
@@ -221,15 +223,6 @@ export function BillReceipt({
         }
         .bill-center {
           text-align: center;
-        }
-        .bill-marker {
-          font-size: ${fontSize}px;
-          font-weight: ${fontWeight};
-          line-height: 1.05;
-          white-space: nowrap;
-        }
-        .bill-end-marker {
-          margin-top: 10px;
         }
         .bill-business {
           margin: 2px 0 3px;
@@ -258,16 +251,19 @@ export function BillReceipt({
           transform: scaleX(${headerDetailScale});
           transform-origin: center center;
         }
-        .bill-label {
-          margin: 7px 0 5px;
-          border: 1px solid #000;
-          padding: 4px 6px;
+        .bill-document-title {
+          margin: 9px 0 2px;
           text-align: center;
           font-weight: 800;
-          letter-spacing: 0;
+          font-size: ${fontSize + 1}px;
+        }
+        .bill-document-subtitle {
+          margin-bottom: 7px;
+          text-align: center;
+          font-size: ${Math.max(9, fontSize - 2)}px;
         }
         .bill-note {
-          text-align: center;
+          text-align: left;
           font-size: ${Math.max(9, fontSize - 2)}px;
         }
         .bill-rule {
@@ -296,9 +292,11 @@ export function BillReceipt({
         }
         .bill-item {
           margin-bottom: 5px;
+          text-align: left;
         }
         .bill-item-name {
           font-weight: 700;
+          text-align: left;
           white-space: normal;
           overflow-wrap: anywhere;
         }
@@ -365,8 +363,6 @@ export function BillReceipt({
         data-receipt-business-name-scale-x={businessNameScale}
         data-receipt-header-detail-scale-x={headerDetailScale}
       >
-        <div className="bill-center bill-marker">*** START OF BILL ***</div>
-        <div className="bill-rule">{rule}</div>
         <div className="bill-business">
           <span className="bill-business-text">{businessName}</span>
         </div>
@@ -386,16 +382,12 @@ export function BillReceipt({
           </div>
         )}
 
-        <div className="bill-label">CUSTOMER BILL</div>
-        <div className="bill-note">FOR PAYMENT - NOT A FISCAL RECEIPT</div>
+        <div className="bill-document-title">
+          {resolvedBillNumber ? `BILL #${resolvedBillNumber}` : 'BILL'}
+        </div>
+        <div className="bill-document-subtitle">PAYMENT DUE</div>
 
         <div className="bill-rule">{rule}</div>
-        {resolvedBillNumber && (
-          <div className="bill-row">
-            <span>ORDER</span>
-            <span>{resolvedBillNumber}</span>
-          </div>
-        )}
         {toTrimmedString(cartTitle) && (
           <div className="bill-row">
             <span>REFERENCE</span>
@@ -467,18 +459,17 @@ export function BillReceipt({
 
         <div className="bill-rule">{rule}</div>
         <div className="bill-row">
-          <span>ITEMS TOTAL</span>
+          <span>SUBTOTAL</span>
           <span>{formatBillAmount(itemsTotal || subtotal)}</span>
         </div>
         <div className="bill-row bill-total">
-          <span>AMOUNT DUE</span>
+          <span>TOTAL DUE</span>
           <span>{formatBillAmount(total)}</span>
         </div>
         <div className="bill-rule">{rule}</div>
         <div className="bill-footer">
           Please present this bill to the cashier for payment.
         </div>
-        <div className="bill-center bill-marker bill-end-marker">*** END OF BILL ***</div>
         <div className="bill-bottom-space" />
       </div>
     </div>

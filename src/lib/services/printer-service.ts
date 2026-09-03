@@ -32,6 +32,12 @@ export const getDefaultReceiptPaddingX = (paperWidth: '80mm' | '58mm' = '80mm'):
 export const getDefaultReceiptBusinessNameFontSize = (
   paperWidth: '80mm' | '58mm' = '80mm'
 ): number => (
+  paperWidth === '58mm' ? 13 : 16
+);
+
+const getPreviousReceiptBusinessNameFontSize = (
+  paperWidth: '80mm' | '58mm' = '80mm'
+): number => (
   paperWidth === '58mm' ? 15 : 18
 );
 
@@ -256,6 +262,10 @@ class PrinterService {
 
   private normalizePrinterSettings(branchId: string, raw?: Partial<PrinterSettings> | null): PrinterSettings {
     const receiptPaperWidth = this.getEffectiveReceiptPaperWidth(branchId, raw?.receiptPaperWidth);
+    const configuredBusinessNameSize = Number(raw?.receiptBusinessNameFontSize);
+    const usesPreviousBusinessNameDefault =
+      Number.isFinite(configuredBusinessNameSize) &&
+      configuredBusinessNameSize === getPreviousReceiptBusinessNameFontSize(receiptPaperWidth);
 
     return {
       branchId,
@@ -268,7 +278,7 @@ class PrinterService {
       receiptLineHeight: normalizeReceiptLineHeight(raw?.receiptLineHeight),
       receiptPaddingX: normalizeReceiptPaddingX(raw?.receiptPaddingX, receiptPaperWidth),
       receiptBusinessNameFontSize: normalizeReceiptBusinessNameFontSize(
-        raw?.receiptBusinessNameFontSize,
+        usesPreviousBusinessNameDefault ? undefined : raw?.receiptBusinessNameFontSize,
         receiptPaperWidth
       ),
       receiptBusinessNameFontWeight: normalizeReceiptFontWeight(
