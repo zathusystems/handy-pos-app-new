@@ -23,7 +23,13 @@ from .models import (
     Business, Branch, BusinessSettings, TaxRate, BusinessCharge, Invoice, InvoiceLine,
     Customer, CustomerAccountTransaction, CustomerLaybuy, Expense
 )
-from .customer_accounts import collect_laybuy, record_customer_payment, record_laybuy_payment
+from .customer_accounts import (
+    apply_available_prepaid_credit,
+    collect_laybuy,
+    get_invoice_balance_due,
+    record_customer_payment,
+    record_laybuy_payment,
+)
 from .access import (
     get_accessible_business,
     get_accessible_business_ids,
@@ -546,23 +552,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         return queryset.filter(user=request.user).order_by('-started_at').first()
 
     def _invoice_balance_due(self, invoice):
-        if invoice.document_type != 'Invoice' or invoice.status in {'Paid', 'Void'}:
-            return Decimal('0.00')
-
-        filters = Q(invoice_id=str(invoice.id))
-        if invoice.related_order_id:
-            filters |= Q(order_id=str(invoice.related_order_id))
-
-        transactions = CustomerAccountTransaction.objects.filter(
-            filters,
-            business=invoice.business,
-        )
-        debit_total = transactions.filter(direction='debit').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        credit_total = transactions.filter(direction='credit').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        if debit_total or credit_total:
-            return max(Decimal('0.00'), debit_total - credit_total)
-
-        return Decimal(invoice.total or 0) if invoice.status == 'Sent' else Decimal('0.00')
+        return get_invoice_balance_due(invoice)
 
     def perform_create(self, serializer):
         """Create customer"""
@@ -682,6 +672,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 notes=serializer.validated_data.get('notes', ''),
                 created_by=request.user,
             )
+            if not invoice:
+                apply_available_prepaid_credit(customer, created_by=request.user)
             if invoice:
                 invoice.refresh_from_db()
                 if self._invoice_balance_due(invoice) <= 0 and invoice.status != 'Paid':

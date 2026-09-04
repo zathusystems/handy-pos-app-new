@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Business, Branch, BusinessSettings, TaxRate, BusinessCharge, Customer,
-    CustomerAccountTransaction, CustomerLaybuy, CustomerLaybuyPayment,
+    CustomerAccountTransaction, CustomerAccountPaymentAllocation, CustomerLaybuy, CustomerLaybuyPayment,
     CustomerLaybuyReservation, Expense
 )
 
@@ -56,6 +56,15 @@ class CustomerAccountTransactionAdmin(admin.ModelAdmin):
     search_fields = ('customer__name', 'reference', 'order_id', 'invoice_id', 'session__id')
     list_filter = ('entry_type', 'direction', 'payment_method', 'created_at', 'business', 'session')
     readonly_fields = ('id', 'balance_after', 'created_at', 'updated_at')
+    ordering = ('-created_at',)
+
+
+@admin.register(CustomerAccountPaymentAllocation)
+class CustomerAccountPaymentAllocationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'customer', 'invoice', 'payment_transaction', 'amount', 'branch', 'created_at')
+    search_fields = ('customer__name', 'invoice__invoice_number', 'payment_transaction__reference', 'order_id')
+    list_filter = ('business', 'branch', 'created_at')
+    readonly_fields = ('id', 'created_at', 'updated_at')
     ordering = ('-created_at',)
 
 

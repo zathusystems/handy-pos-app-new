@@ -3,11 +3,13 @@ from datetime import timedelta
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from .models import (
     Customer,
     CustomerAccountTransaction,
+    CustomerAccountPaymentAllocation,
     CustomerLaybuy,
     CustomerLaybuyPayment,
     CustomerLaybuyReservation,
@@ -237,6 +239,144 @@ def record_customer_payment(
     )
 
 
+def get_invoice_account_totals(invoice):
+    """Return debit, direct payment, and prepaid allocation totals for an invoice."""
+    if not invoice or invoice.document_type != 'Invoice':
+        return Decimal('0.00'), Decimal('0.00'), Decimal('0.00')
+
+    from django.db.models import Q
+
+    filters = Q(invoice_id=str(invoice.id))
+    if invoice.related_order_id:
+        filters |= Q(order_id=str(invoice.related_order_id))
+
+    transactions = CustomerAccountTransaction.objects.filter(
+        filters,
+        business=invoice.business,
+    )
+    debit_total = transactions.filter(direction='debit').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    direct_payment_total = transactions.filter(direction='credit').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    prepaid_allocation_total = CustomerAccountPaymentAllocation.objects.filter(
+        invoice=invoice,
+        business=invoice.business,
+    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    return _money(debit_total), _money(direct_payment_total), _money(prepaid_allocation_total)
+
+
+def get_invoice_paid_amount(invoice):
+    """Calculate the amount paid without treating account credit as new money."""
+    if not invoice or invoice.document_type != 'Invoice' or invoice.status == 'Void':
+        return Decimal('0.00')
+
+    debit_total, direct_payment_total, prepaid_allocation_total = get_invoice_account_totals(invoice)
+    paid_total = direct_payment_total + prepaid_allocation_total
+    if debit_total or paid_total:
+        return min(_money(invoice.total), _money(paid_total))
+    return _money(invoice.total) if invoice.status == 'Paid' else Decimal('0.00')
+
+
+def get_invoice_balance_due(invoice):
+    """Calculate an invoice balance from linked account entries and allocations."""
+    if not invoice or invoice.document_type != 'Invoice' or invoice.status in {'Paid', 'Void'}:
+        return Decimal('0.00')
+
+    debit_total, direct_payment_total, prepaid_allocation_total = get_invoice_account_totals(invoice)
+    credited_total = direct_payment_total + prepaid_allocation_total
+    if debit_total or credited_total:
+        return max(Decimal('0.00'), _money(debit_total - credited_total))
+    return _money(invoice.total) if invoice.status == 'Sent' else Decimal('0.00')
+
+
+def apply_available_prepaid_credit(customer, created_by=None):
+    """
+    Apply unallocated customer payments to outstanding invoices oldest first.
+
+    A payment recorded without an invoice creates account credit. An allocation
+    makes that already-recorded money visible against the invoice without
+    changing the customer's balance for a second time.
+    """
+    if not getattr(customer, 'pk', None):
+        return []
+
+    with transaction.atomic():
+        locked_customer = Customer.objects.select_for_update().get(pk=customer.pk)
+        invoices = list(
+            Invoice.objects.select_for_update()
+            .filter(
+                business=locked_customer.business,
+                customer=locked_customer,
+                document_type='Invoice',
+                status='Sent',
+            )
+            .order_by('issue_date', 'invoice_number', 'created_at')
+        )
+        if not invoices:
+            return []
+
+        prepaid_transactions = list(
+            CustomerAccountTransaction.objects.select_for_update()
+            .filter(
+                business=locked_customer.business,
+                customer=locked_customer,
+                entry_type='payment',
+                direction='credit',
+                invoice_id__isnull=True,
+                order_id__isnull=True,
+            )
+            .order_by('created_at', 'id')
+        )
+        if not prepaid_transactions:
+            return []
+
+        existing_allocations = CustomerAccountPaymentAllocation.objects.select_for_update().filter(
+            payment_transaction__in=prepaid_transactions,
+        )
+        allocated_by_payment = {
+            row['payment_transaction_id']: _money(row['total'])
+            for row in existing_allocations.values('payment_transaction_id').annotate(total=Sum('amount'))
+        }
+        available_by_payment = {
+            payment.id: max(
+                Decimal('0.00'),
+                _money(payment.amount) - allocated_by_payment.get(payment.id, Decimal('0.00')),
+            )
+            for payment in prepaid_transactions
+        }
+
+        allocations = []
+        for invoice in invoices:
+            balance_due = get_invoice_balance_due(invoice)
+            if balance_due <= 0:
+                continue
+
+            for payment in prepaid_transactions:
+                available = available_by_payment[payment.id]
+                if available <= 0 or balance_due <= 0:
+                    continue
+
+                amount = min(available, balance_due)
+                allocation = CustomerAccountPaymentAllocation.objects.create(
+                    business=locked_customer.business,
+                    branch=invoice.branch or payment.branch or locked_customer.branch,
+                    customer=locked_customer,
+                    payment_transaction=payment,
+                    invoice=invoice,
+                    order_id=invoice.related_order_id or None,
+                    amount=amount,
+                    created_by=created_by if getattr(created_by, 'pk', None) else None,
+                )
+                allocations.append(allocation)
+                available_by_payment[payment.id] = _money(available - amount)
+                balance_due = _money(balance_due - amount)
+
+            if get_invoice_balance_due(invoice) <= 0 and invoice.status != 'Paid':
+                invoice.status = 'Paid'
+                invoice.is_dirty = True
+                invoice.save(update_fields=['status', 'is_dirty', 'updated_at'])
+
+        return allocations
+
+
 def _next_invoice_number(business):
     last_invoice = (
         Invoice.objects.select_for_update()
@@ -431,6 +571,7 @@ def record_credit_sale_for_order(order, created_by=None):
     ).first()
     if existing:
         ensure_invoice_for_account_order(order, account_tx=existing, created_by=created_by)
+        apply_available_prepaid_credit(existing.customer, created_by=created_by)
         return existing
 
     customer = getattr(order, 'customer', None)
@@ -487,6 +628,7 @@ def record_credit_sale_for_order(order, created_by=None):
     )
 
     ensure_invoice_for_account_order(order, account_tx=account_tx, created_by=created_by)
+    apply_available_prepaid_credit(customer, created_by=created_by)
     return account_tx
 
 

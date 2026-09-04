@@ -96,6 +96,10 @@ type CustomerAccountTransaction = {
   balanceAfter?: number | string;
   payment_method?: string;
   paymentMethod?: string;
+  allocated_amount?: number | string;
+  allocatedAmount?: number | string;
+  unallocated_amount?: number | string;
+  unallocatedAmount?: number | string;
   reference?: string;
   notes?: string;
   created_at?: string;
@@ -1692,6 +1696,8 @@ export default function CustomersPage() {
                 const entryType = String(tx.entryType ?? tx.entry_type ?? 'Activity').replace(/_/g, ' ');
                 const amount = toNumber(tx.amount, 0);
                 const balanceAfter = toNumber(tx.balanceAfter ?? tx.balance_after, 0);
+                const allocatedAmount = toNumber(tx.allocatedAmount ?? tx.allocated_amount, 0);
+                const unallocatedAmount = toNumber(tx.unallocatedAmount ?? tx.unallocated_amount, 0);
                 const createdAt = tx.createdAt ?? tx.created_at;
                 return (
                   <div key={tx.id} className="rounded-md border p-3">
@@ -1713,6 +1719,12 @@ export default function CustomersPage() {
                     {(tx.reference || tx.notes) && (
                       <p className="mt-2 text-xs text-muted-foreground">
                         {[tx.reference, tx.notes].filter(Boolean).join(' - ')}
+                      </p>
+                    )}
+                    {direction === 'credit' && (allocatedAmount > 0 || unallocatedAmount > 0) && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {allocatedAmount > 0 ? `Applied to invoices: ${format(allocatedAmount)}` : 'Not yet applied to an invoice'}
+                        {unallocatedAmount > 0 ? ` - Available credit: ${format(unallocatedAmount)}` : ''}
                       </p>
                     )}
                   </div>

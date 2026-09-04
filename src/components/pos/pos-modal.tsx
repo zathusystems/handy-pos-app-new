@@ -389,6 +389,7 @@ export function PosModal({
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
   const searchDropdownCloseTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickAddHandlerRef = React.useRef<((item: InventoryItem) => boolean | void | Promise<boolean | void>) | null>(null);
+  const processTakeOrderInFlightRef = React.useRef<string | null>(null);
   const { toast } = useToast();
   const { user, business } = useAuth();
   const normalizedSearchQuery = searchQuery.toLowerCase().trim();
@@ -1773,9 +1774,13 @@ export function PosModal({
   }, [activeSession, branchId, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast]);
 
   useEffect(() => {
+    if (!processTakeOrderId) {
+      processTakeOrderInFlightRef.current = null;
+      return;
+    }
+
     if (
       !isOpen ||
-      !processTakeOrderId ||
       !activeSession ||
       !isSessionActive(activeSession) ||
       !isSessionOwnedByCurrentUser(activeSession)
@@ -1783,16 +1788,30 @@ export function PosModal({
       return;
     }
 
-    let cancelled = false;
     const orderId = processTakeOrderId;
+    if (processTakeOrderInFlightRef.current === orderId) {
+      return;
+    }
+
+    // Cart updates replace the add-to-cart callback during this async import.
+    // Keep the request claimed until its parent clears the pending order ID so
+    // a rerender cannot add the same take-order lines again.
+    processTakeOrderInFlightRef.current = orderId;
 
     const loadOrderForSale = async () => {
       try {
-        const { syncService } = require('@/lib/services/sync-service');
-        await syncService.fetchAllTakeOrdersFromBackend(branchId);
-        if (cancelled) return;
+        // Orders opened from the dashboard are already in IndexedDB. Using
+        // that snapshot avoids making the cashier wait for an extra network
+        // request before the sale cart appears. Fetch only as a recovery path
+        // for a deep link or a device that has not received the order yet.
+        let order = await db.takeOrders.get(orderId);
+        if (!order) {
+          const { syncService } = require('@/lib/services/sync-service');
+          await syncService.fetchAllTakeOrdersFromBackend(branchId);
+          if (processTakeOrderInFlightRef.current !== orderId) return;
+          order = await db.takeOrders.get(orderId);
+        }
 
-        const order = await db.takeOrders.get(orderId);
         if (!order) {
           toast({
             variant: 'destructive',
@@ -1804,12 +1823,12 @@ export function PosModal({
         }
 
         await handleProcessTakeOrderForSale(order);
-        if (!cancelled) {
+        if (processTakeOrderInFlightRef.current === orderId) {
           onProcessTakeOrderLoaded?.(orderId);
         }
       } catch (error) {
         console.error('[POS Modal] Failed to load take order for sale:', error);
-        if (!cancelled) {
+        if (processTakeOrderInFlightRef.current === orderId) {
           toast({
             variant: 'destructive',
             title: 'Could not process order',
@@ -1821,10 +1840,6 @@ export function PosModal({
     };
 
     void loadOrderForSale();
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     activeSession,
     branchId,

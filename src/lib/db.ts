@@ -278,6 +278,12 @@ export interface Order {
     pumpName?: string; // Fuel pump used for this order (optional)
     customerId?: string;
     customer_id?: string;
+    isInvoiceSale?: boolean;
+    is_invoice_sale?: boolean;
+    invoiceId?: string;
+    invoice_id?: string;
+    isPaid?: boolean;
+    is_paid?: boolean;
     orderType?: 'sale' | 'return' | 'adjustment'; // Type of order
     isTakeaway?: boolean;
     is_takeaway?: boolean;

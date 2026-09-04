@@ -146,6 +146,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [billPrinterSettings, setBillPrinterSettings] = useState<Partial<PrinterSettings> | null>(null);
   const [billNumber, setBillNumber] = useState('');
   const [isPrintingBill, setIsPrintingBill] = useState(false);
+  const [processingSaleOrderId, setProcessingSaleOrderId] = useState<string | null>(null);
   const billPrintLockRef = React.useRef(false);
   const [, setRefresh] = useState(0);
   const kitchenEnabled = isKitchenBusinessType(businessType);
@@ -375,21 +376,30 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   };
 
   const handleProcessSale = async (order: TakeOrder) => {
-    if (onProcessSale) {
-      const processed = await onProcessSale(order);
-      if (processed === false) {
-        return;
-      }
-    } else if (onRequestProcessSale) {
-      onRequestProcessSale(order);
-    } else {
-      window.dispatchEvent(new CustomEvent('handypos-open-pos-modal', {
-        detail: { processTakeOrderId: order.id },
-      }));
+    if (processingSaleOrderId) {
+      return;
     }
 
-    setSelectedOrder(null);
-    onOpenChange(false);
+    setProcessingSaleOrderId(order.id);
+    try {
+      if (onProcessSale) {
+        const processed = await onProcessSale(order);
+        if (processed === false) {
+          return;
+        }
+      } else if (onRequestProcessSale) {
+        onRequestProcessSale(order);
+      } else {
+        window.dispatchEvent(new CustomEvent('handypos-open-pos-modal', {
+          detail: { processTakeOrderId: order.id },
+        }));
+      }
+
+      setSelectedOrder(null);
+      onOpenChange(false);
+    } finally {
+      setProcessingSaleOrderId(null);
+    }
   };
 
   const handlePrintBill = async (order: TakeOrder) => {
@@ -631,13 +641,16 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               <Button
                 size="sm"
                 className="w-full sm:w-auto"
+                disabled={'processSale' in primaryAction && Boolean(processingSaleOrderId)}
                 onClick={() => (
                   'processSale' in primaryAction
                     ? handleProcessSale(order)
                     : handleUpdateStatus(order.id, primaryAction.nextStatus, order)
                 )}
               >
-                {primaryAction.label}
+                {'processSale' in primaryAction && processingSaleOrderId === order.id
+                  ? 'Opening POS...'
+                  : primaryAction.label}
               </Button>
             )}
             <Button
@@ -900,8 +913,13 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                       </Button>
                     )}
                     {order.status === 'Ready' && (
-                      <Button className="w-full sm:w-auto" onClick={() => handleProcessSale(order)} variant="secondary">
-                        Process Sale
+                      <Button
+                        className="w-full sm:w-auto"
+                        disabled={Boolean(processingSaleOrderId)}
+                        onClick={() => handleProcessSale(order)}
+                        variant="secondary"
+                      >
+                        {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Sale'}
                       </Button>
                     )}
                     {canCancelOrders && (

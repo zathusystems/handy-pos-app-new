@@ -721,6 +721,93 @@ class CustomerAccountTransaction(models.Model):
         self.save(update_fields=['is_dirty'])
 
 
+class CustomerAccountPaymentAllocation(models.Model):
+    """
+    Links an existing customer prepayment to the invoice it settles.
+
+    Allocations do not alter Customer.current_balance: the money was already
+    recorded as a credit when it was received. They preserve the audit trail
+    between an unallocated customer payment and the sale it later pays for.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business = models.ForeignKey(
+        Business,
+        on_delete=models.CASCADE,
+        related_name='customer_payment_allocations',
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='customer_payment_allocations',
+    )
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.CASCADE,
+        related_name='payment_allocations',
+    )
+    payment_transaction = models.ForeignKey(
+        CustomerAccountTransaction,
+        on_delete=models.PROTECT,
+        related_name='allocations',
+    )
+    invoice = models.ForeignKey(
+        'Invoice',
+        on_delete=models.PROTECT,
+        related_name='customer_payment_allocations',
+    )
+    order_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='customer_payment_allocations_created',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_dirty = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['payment_transaction', 'invoice'],
+                name='unique_customer_payment_invoice_allocation',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['business', 'customer', 'created_at'], name='business_cu_busines_2eecad_idx'),
+            models.Index(fields=['invoice'], name='business_cu_invoice_f47953_idx'),
+            models.Index(fields=['is_dirty'], name='business_cu_is_dirt_8d4069_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.customer.name} prepaid {self.amount} to invoice #{self.invoice.invoice_number}"
+
+    def clean(self):
+        super().clean()
+        if self.amount is not None and self.amount <= 0:
+            raise ValidationError("Allocated amount must be greater than zero.")
+        if self.payment_transaction_id:
+            transaction = self.payment_transaction
+            if transaction.customer_id != self.customer_id or transaction.business_id != self.business_id:
+                raise ValidationError("The payment transaction must belong to the same customer and business.")
+            if transaction.entry_type != 'payment' or transaction.direction != 'credit':
+                raise ValidationError("Only customer payment credits can be allocated to an invoice.")
+
+    def mark_dirty(self):
+        self.is_dirty = True
+        self.save(update_fields=['is_dirty'])
+
+    def mark_synced(self):
+        self.is_dirty = False
+        self.save(update_fields=['is_dirty'])
+
+
 class CustomerLaybuy(models.Model):
     """
     Customer laybuy/reserved sale.

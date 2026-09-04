@@ -4,7 +4,7 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 import uuid
-from .models import Invoice, CustomerAccountTransaction
+from .models import Invoice, CustomerAccountTransaction, CustomerAccountPaymentAllocation
 from .customer_accounts import create_customer_account_transaction, record_credit_sale_for_order
 from pos_sessions.models import Order, OrderItem
 from inventory.models import InventoryItem
@@ -184,7 +184,11 @@ def _mark_invoice_order_as_paid(invoice):
                 invoice_id=str(invoice.id),
                 entry_type='payment',
             ).first()
-            if credit_sale and not existing_payment:
+            has_prepaid_allocation = CustomerAccountPaymentAllocation.objects.filter(
+                business=invoice.business,
+                invoice=invoice,
+            ).exists()
+            if credit_sale and not existing_payment and not has_prepaid_allocation:
                 create_customer_account_transaction(
                     customer=customer,
                     entry_type='payment',

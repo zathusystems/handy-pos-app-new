@@ -1656,6 +1656,12 @@ export default function PosPage() {
               console.log('[Order] Successfully synced order to backend:', finalOrderId, data);
 
               await db.orders.update(finalOrderId, {
+                is_invoice_sale: data?.is_invoice_sale,
+                isInvoiceSale: data?.is_invoice_sale,
+                invoice_id: data?.invoice_id,
+                invoiceId: data?.invoice_id,
+                is_paid: data?.is_paid,
+                isPaid: data?.is_paid,
                 fiscal_invoice_number: data?.fiscal_invoice_number,
                 fiscalInvoiceNumber: data?.fiscal_invoice_number,
                 eis_status: data?.eis_status,

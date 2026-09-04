@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation';
 import {
   Boxes,
   LayoutDashboard,
+  Landmark,
   Package,
   Settings,
   ShoppingBag,
@@ -240,6 +241,7 @@ const navSections = [
       { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', permission: 'view_dashboard' as Permission },
       { href: '/dashboard/pos', icon: MonitorPlay, label: 'POS', permission: 'access_pos' as Permission },
       { href: '/dashboard/sessions', icon: History, label: 'Sessions', permission: 'view_sessions' as Permission },
+      { href: '/dashboard/eis-sales', icon: Landmark, label: 'Fiscal Sales', permission: 'view_sessions' as Permission },
     ],
   },
   {
@@ -1815,12 +1817,14 @@ function AppSidebar({
   multiBranchEnabled,
   kitchenAvailable,
   customSalesSection,
+  eisEnabled,
 }: {
   user: User;
   onPosClick?: () => void;
   multiBranchEnabled: boolean;
   kitchenAvailable: boolean;
   customSalesSection: { enabled: boolean; name: string };
+  eisEnabled: boolean;
 }) {
   const pathname = usePathname();
   const { hasPermission } = useRBAC();
@@ -1843,7 +1847,8 @@ function AppSidebar({
 	      items: section.items.filter(item => (
 	        hasPermission(item.permission) &&
 	        (item.href !== '/dashboard/kitchen' || kitchenAvailable) &&
-	        (item.href !== '/dashboard/custom-section' || customSalesSection.enabled)
+	        (item.href !== '/dashboard/custom-section' || customSalesSection.enabled) &&
+        (item.href !== '/dashboard/eis-sales' || eisEnabled === true)
 	      )),
 	    }))
     .filter((section) => section.items.length > 0);
@@ -2023,13 +2028,59 @@ export default function DashboardLayout({
   const [pendingProcessTakeOrderId, setPendingProcessTakeOrderId] = useState<string | null>(null);
   const [activeBranchId, setActiveBranchId] = useState<string | null>(() => getStoredPreferredBranchId());
   const [customSalesSection, setCustomSalesSection] = useState({ enabled: false, name: '' });
+  const [eisEnabled, setEisEnabled] = useState<boolean | null>(null);
   const multiBranchEnabled = isLoadingMultiBranchAccess ? true : multiBranchAccess.allowed;
   const businessRecord = useLiveQuery(
     () => business?.id ? db.business.get(business.id) : undefined,
     [business?.id]
   );
+  const businessSettings = useLiveQuery(
+    () => business?.id ? db.businessSettings.get(business.id) : undefined,
+    [business?.id]
+  );
   const currentBusinessType = normalizeBusinessType(businessRecord?.type ?? business?.type, 'General Retail');
   const kitchenAvailable = isKitchenBusinessType(currentBusinessType);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadEisStatus = async () => {
+      if (!business?.id) {
+        if (!cancelled) setEisEnabled(false);
+        return;
+      }
+
+      const localValue =
+        (businessRecord as any)?.enableEis ??
+        (businessRecord as any)?.enable_eis ??
+        businessSettings?.enableEis;
+      if (localValue !== undefined && localValue !== null) {
+        setEisEnabled(localValue === true || localValue === 'true');
+      }
+
+      try {
+        const response = await authFetch.fetch<any>(`/business/businesses/${business.id}/`);
+        const remoteValue =
+          response?.enable_eis ??
+          response?.enableEis ??
+          response?.settings?.enable_eis ??
+          response?.settings?.enableEis;
+        if (!cancelled && remoteValue !== undefined && remoteValue !== null) {
+          setEisEnabled(remoteValue === true || remoteValue === 'true');
+        }
+      } catch (error) {
+        console.warn('[DashboardLayout] Failed to refresh EIS status:', error);
+        if (!cancelled && (localValue === undefined || localValue === null)) {
+          setEisEnabled(false);
+        }
+      }
+    };
+
+    void loadEisStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [business?.id, businessRecord, businessSettings]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2217,6 +2268,7 @@ export default function DashboardLayout({
     if (user) {
         const accessibleRoutes = [...navItems, ...settingsNav]
             .filter(item => item.href !== '/dashboard/kitchen' || kitchenAvailable)
+	    .filter(item => item.href !== '/dashboard/eis-sales' || eisEnabled !== false)
             .filter(item => checkPermission(user.role, item.permission))
             .map(item => item.href);
         
@@ -2236,7 +2288,7 @@ export default function DashboardLayout({
             }
         }
     }
-  }, [user, pathname, router, kitchenAvailable]);
+  }, [user, pathname, router, kitchenAvailable, eisEnabled]);
 
   if (loading || !user) {
     return (
@@ -2256,6 +2308,7 @@ export default function DashboardLayout({
 	             multiBranchEnabled={multiBranchEnabled}
 	             kitchenAvailable={kitchenAvailable}
 	             customSalesSection={customSalesSection}
+	             eisEnabled={eisEnabled === true}
 	           />
         </Sidebar>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">

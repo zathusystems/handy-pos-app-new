@@ -430,20 +430,26 @@ export async function refreshInventoryFromMraApprovedProducts(
       console.warn('[InventorySync] Branch terminal lookup failed; trying all accessible terminals.', branchLookupError);
     }
 
-    if (!terminals.some((candidate) => String(candidate?.status || '').toLowerCase() === 'active')) {
+    const hasActiveTerminalForBranch = terminals.some(
+      (candidate) => (
+        String(candidate?.status || '').toLowerCase() === 'active' &&
+        toBackendBranchId(getTerminalBranchId(candidate)) === normalizedBranchId
+      )
+    );
+
+    if (!hasActiveTerminalForBranch) {
       const terminalsResponse = await authFetch.fetch<any>(
         `/mra-eis/terminals/${businessQuery ? `?${businessQuery}` : ''}`
       );
       terminals = extractApiList<any>(terminalsResponse);
     }
 
-    const activeTerminals = terminals.filter(
-      (candidate) => String(candidate?.status || '').toLowerCase() === 'active'
-    );
-    const terminal = activeTerminals.find(
-      (candidate) => String(candidate?.status || '').toLowerCase() === 'active' &&
+    const terminal = terminals.find(
+      (candidate) => (
+        String(candidate?.status || '').toLowerCase() === 'active' &&
         toBackendBranchId(getTerminalBranchId(candidate)) === normalizedBranchId
-    ) || activeTerminals[0];
+      )
+    );
 
     if (!terminal?.id) {
       return {

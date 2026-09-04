@@ -18,6 +18,17 @@ export const DEFAULT_DESKTOP_DOWNLOAD_URL =
 
 const FALLBACK_DESKTOP_VERSION = FALLBACK_APP_VERSION;
 
+const getReleaseManifestUrl = (): string => {
+  // The browser app and the marketing site are served from the same release
+  // directory. A relative URL keeps the version label working on either host
+  // without requiring cross-origin headers.
+  if (typeof window !== 'undefined' && !isTauriApp()) {
+    return '/desktop-release.json';
+  }
+
+  return DEFAULT_DESKTOP_RELEASE_MANIFEST_URL;
+};
+
 const stripVersionDecorators = (value: string): string =>
   String(value || '')
     .trim()
@@ -66,7 +77,7 @@ export const getCurrentDesktopVersion = async (): Promise<string> => {
 
 export const fetchDesktopReleaseManifest = async (): Promise<DesktopReleaseManifest | null> => {
   try {
-    const response = await fetch(DEFAULT_DESKTOP_RELEASE_MANIFEST_URL, {
+    const response = await fetch(getReleaseManifestUrl(), {
       cache: 'no-store',
       headers: {
         Accept: 'application/json',

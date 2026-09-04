@@ -2867,6 +2867,8 @@ const PaymentDialog = ({
                                         const contact = customer.phone || customer.email;
                                         const balanceLabel = balance > 0
                                             ? ` - owes ${currencyFormatter(balance)}`
+                                            : balance < 0
+                                                ? ` - credit ${currencyFormatter(Math.abs(balance))}`
                                             : '';
 
                                         return (
@@ -2888,8 +2890,8 @@ const PaymentDialog = ({
                                         ? 'Refreshing saved customers...'
                                         : selectedPaymentMethod === 'Laybuy'
                                             ? 'Laybuy sales need a saved customer or enough details to create one.'
-                                            : selectedPaymentMethod === 'On Account'
-                                            ? 'Credit sales need a saved account or enough customer details to create one.'
+                                        : selectedPaymentMethod === 'On Account'
+                                            ? 'Prepaid credit is applied automatically; any remaining amount stays on account.'
                                             : 'Select a customer to attach this sale to their history and loyalty.'}
                                 </p>
                                 {onAccountCreditLimitExceeded && (

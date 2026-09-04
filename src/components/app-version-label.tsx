@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 
 import { isTauriApp } from '@/lib/tauri-init';
 import { FALLBACK_APP_VERSION } from '@/lib/app-version';
+import { fetchDesktopReleaseManifest } from '@/lib/desktop-update';
 import { cn } from '@/lib/utils';
 
 type AppVersionLabelProps = {
@@ -38,12 +39,18 @@ export function AppVersionLabel({
   tone = 'default',
 }: AppVersionLabelProps) {
   const [version, setVersion] = useState(FALLBACK_APP_VERSION);
+  const [isLatestRelease, setIsLatestRelease] = useState(false);
 
   useEffect(() => {
     let isActive = true;
 
     const loadVersion = async () => {
       if (!isTauriApp()) {
+        const release = await fetchDesktopReleaseManifest();
+        if (isActive && release?.latestVersion) {
+          setVersion(release.latestVersion);
+          setIsLatestRelease(true);
+        }
         return;
       }
 
@@ -58,6 +65,7 @@ export function AppVersionLabel({
 
         if (isActive && String(runtimeVersion || '').trim()) {
           setVersion(String(runtimeVersion).trim());
+          setIsLatestRelease(false);
         }
       } catch (error) {
         console.warn('[AppVersion] Failed to load runtime app version:', error);
@@ -101,7 +109,7 @@ export function AppVersionLabel({
       )}
     >
       <p className={cn('text-[10px] font-semibold uppercase tracking-[0.16em]', labelClassName)}>
-        App Version
+        {isLatestRelease ? 'Latest Version' : 'App Version'}
       </p>
       <p className={cn('mt-1 text-sm font-medium', valueClassName)}>v{version}</p>
     </div>

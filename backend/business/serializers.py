@@ -12,11 +12,11 @@ Provides serialization for business models with MRA compliance:
 from rest_framework import serializers
 from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Q, Sum
+from django.db.models import Sum
 
 from .models import (
     Business, Branch, BusinessSettings, TaxRate, BusinessCharge, Invoice, InvoiceLine,
-    Customer, CustomerAccountTransaction, CustomerLaybuy, CustomerLaybuyPayment,
+    Customer, CustomerAccountTransaction, CustomerAccountPaymentAllocation, CustomerLaybuy, CustomerLaybuyPayment,
     CustomerLaybuyReservation, Expense
 )
 
@@ -68,6 +68,8 @@ class CustomerAccountTransactionSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     branch_name = serializers.CharField(source='branch.name', read_only=True)
     created_by_name = serializers.SerializerMethodField()
+    allocated_amount = serializers.SerializerMethodField()
+    unallocated_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomerAccountTransaction
@@ -75,6 +77,7 @@ class CustomerAccountTransactionSerializer(serializers.ModelSerializer):
             'id', 'business', 'branch', 'branch_name', 'customer', 'customer_name',
             'entry_type', 'direction', 'amount', 'balance_after',
             'order_id', 'invoice_id', 'session', 'payment_method', 'reference', 'notes',
+            'allocated_amount', 'unallocated_amount',
             'created_by', 'created_by_name', 'created_at', 'updated_at',
         ]
         read_only_fields = fields
@@ -84,6 +87,17 @@ class CustomerAccountTransactionSerializer(serializers.ModelSerializer):
         if not user:
             return None
         return getattr(user, 'full_name', None) or user.get_username()
+
+    def get_allocated_amount(self, obj):
+        if obj.entry_type != 'payment' or obj.direction != 'credit':
+            return Decimal('0.00')
+        return obj.allocations.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+    def get_unallocated_amount(self, obj):
+        if obj.entry_type != 'payment' or obj.direction != 'credit':
+            return Decimal('0.00')
+        allocated = self.get_allocated_amount(obj)
+        return max(Decimal('0.00'), Decimal(obj.amount or 0) - Decimal(allocated or 0))
 
 
 class CustomerPaymentSerializer(serializers.Serializer):
@@ -289,13 +303,14 @@ class InvoiceSerializer(serializers.ModelSerializer):
     balance_due = serializers.SerializerMethodField()
     customer_current_balance = serializers.SerializerMethodField()
     customer_available_credit = serializers.SerializerMethodField()
+    prepaid_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
         fields = [
             'id', 'business', 'branch', 'branch_name', 'customer', 'customer_name_display',
             'invoice_number', 'document_type', 'customer_name', 'status', 'approval_status', 'lines',
-            'subtotal', 'tax', 'total', 'paid_amount', 'balance_due',
+            'subtotal', 'tax', 'total', 'paid_amount', 'prepaid_amount', 'balance_due',
             'customer_current_balance', 'customer_available_credit',
             'issue_date', 'due_date', 'notes',
             'related_order_id', 'approved_by', 'approved_at',
@@ -307,45 +322,27 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'business', 'created_at', 'updated_at', 'is_locked',
             'mra_invoice_number', 'mra_receipt_signature', 'mra_qr_code',
-            'mra_submitted_at', 'paid_amount', 'balance_due',
+            'mra_submitted_at', 'paid_amount', 'prepaid_amount', 'balance_due',
             'customer_current_balance', 'customer_available_credit',
         ]
 
-    def _account_totals(self, obj):
-        if obj.document_type != 'Invoice':
-            return Decimal('0.00'), Decimal('0.00')
-
-        filters = Q(invoice_id=str(obj.id))
-        if obj.related_order_id:
-            filters |= Q(order_id=str(obj.related_order_id))
-
-        transactions = CustomerAccountTransaction.objects.filter(
-            filters,
-            business=obj.business,
-        )
-        debit_total = transactions.filter(direction='debit').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        credit_total = transactions.filter(direction='credit').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        return debit_total, credit_total
-
     def get_paid_amount(self, obj):
+        from .customer_accounts import get_invoice_paid_amount
+
+        return get_invoice_paid_amount(obj)
+
+    def get_prepaid_amount(self, obj):
         if obj.document_type != 'Invoice' or obj.status == 'Void':
             return Decimal('0.00')
-
-        debit_total, credit_total = self._account_totals(obj)
-        if debit_total or credit_total:
-            return min(Decimal(obj.total or 0), credit_total)
-
-        return Decimal(obj.total or 0) if obj.status == 'Paid' else Decimal('0.00')
+        return CustomerAccountPaymentAllocation.objects.filter(
+            invoice=obj,
+            business=obj.business,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
 
     def get_balance_due(self, obj):
-        if obj.document_type != 'Invoice' or obj.status in {'Paid', 'Void'}:
-            return Decimal('0.00')
+        from .customer_accounts import get_invoice_balance_due
 
-        debit_total, credit_total = self._account_totals(obj)
-        if debit_total or credit_total:
-            return max(Decimal('0.00'), debit_total - credit_total)
-
-        return Decimal(obj.total or 0) if obj.status == 'Sent' else Decimal('0.00')
+        return get_invoice_balance_due(obj)
 
     def _fresh_customer(self, obj):
         if not obj.customer_id:

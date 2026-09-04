@@ -14,12 +14,19 @@ from business.models import (
     BusinessSettings,
     Customer,
     CustomerAccountTransaction,
+    CustomerAccountPaymentAllocation,
     CustomerLaybuy,
     CustomerLaybuyPayment,
     CustomerLaybuyReservation,
     Invoice,
 )
-from business.customer_accounts import collect_laybuy, record_customer_payment, record_laybuy_payment
+from business.customer_accounts import (
+    collect_laybuy,
+    get_invoice_balance_due,
+    get_invoice_paid_amount,
+    record_customer_payment,
+    record_laybuy_payment,
+)
 from inventory.models import InventoryItem, MRAProductMapping, PurchaseOrder, PurchaseOrderItem
 from pos_sessions.correction_views import VoidTransactionViewSet
 from pos_sessions.models import Order, OrderItem, Session
@@ -1251,6 +1258,106 @@ class SyncPushOrderTests(TestCase):
         self.assertEqual(account_tx.invoice_id, str(invoice.id))
         self.assertEqual(response.data['invoice_id'], str(invoice.id))
         self.assertTrue(response.data['is_invoice_sale'])
+
+    def test_on_account_sale_uses_prepaid_credit_and_marks_invoice_paid(self):
+        customer = Customer.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Prepaid Account Customer',
+            phone='0999000888',
+            account_enabled=True,
+        )
+        prepaid_payment = record_customer_payment(
+            customer=customer,
+            amount=Decimal('8.00'),
+            branch=self.branch,
+            session=self.session,
+            payment_method='Cash',
+            reference='Deposit before sale',
+            created_by=self.user,
+        )
+
+        customer.refresh_from_db()
+        self.assertEqual(customer.current_balance, Decimal('-8.00'))
+
+        order_id = str(uuid.uuid4())
+        payload = self._build_sync_payload(order_id)
+        order_payload = payload['changes'][0]['data']
+        order_payload['paymentMethod'] = 'On Account'
+        order_payload['customerId'] = str(customer.id)
+
+        response = self.client.post('/sessions/sync/push/', payload, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['results']['errors'], [])
+        self.assertTrue(response.data['results']['acknowledged'][0]['is_paid'])
+        created_order = Order.objects.get(id=order_id)
+        invoice = Invoice.objects.get(related_order_id=order_id, business=self.business)
+        allocation = CustomerAccountPaymentAllocation.objects.get(invoice=invoice)
+
+        self.assertEqual(allocation.payment_transaction_id, prepaid_payment.id)
+        self.assertEqual(allocation.amount, Decimal('5.00'))
+        self.assertEqual(invoice.status, 'Paid')
+        self.assertEqual(get_invoice_paid_amount(invoice), Decimal('5.00'))
+        self.assertEqual(get_invoice_balance_due(invoice), Decimal('0.00'))
+        created_order.refresh_from_db()
+        self.assertTrue(created_order.is_paid)
+        self.assertFalse(
+            CustomerAccountTransaction.objects.filter(
+                invoice_id=str(invoice.id),
+                entry_type='payment',
+            ).exists()
+        )
+        customer.refresh_from_db()
+        self.assertEqual(customer.current_balance, Decimal('-3.00'))
+
+        retry_response = self.client.post('/sessions/sync/push/', payload, format='json')
+        self.assertEqual(retry_response.status_code, 200)
+        self.assertEqual(retry_response.data['results']['errors'], [])
+        self.assertEqual(CustomerAccountPaymentAllocation.objects.filter(invoice=invoice).count(), 1)
+        customer.refresh_from_db()
+        self.assertEqual(customer.current_balance, Decimal('-3.00'))
+
+    def test_on_account_sale_applies_partial_prepaid_credit_and_keeps_balance_due(self):
+        customer = Customer.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Partially Prepaid Customer',
+            phone='0999000999',
+            account_enabled=True,
+        )
+        record_customer_payment(
+            customer=customer,
+            amount=Decimal('3.00'),
+            branch=self.branch,
+            session=self.session,
+            payment_method='Cash',
+            created_by=self.user,
+        )
+
+        order_id = str(uuid.uuid4())
+        payload = self._build_sync_payload(order_id)
+        order_payload = payload['changes'][0]['data']
+        order_payload['paymentMethod'] = 'On Account'
+        order_payload['customerId'] = str(customer.id)
+
+        response = self.client.post('/sessions/sync/push/', payload, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['results']['errors'], [])
+        self.assertFalse(response.data['results']['acknowledged'][0]['is_paid'])
+        created_order = Order.objects.get(id=order_id)
+        invoice = Invoice.objects.get(related_order_id=order_id, business=self.business)
+        allocation = CustomerAccountPaymentAllocation.objects.get(invoice=invoice)
+
+        self.assertEqual(allocation.amount, Decimal('3.00'))
+        self.assertEqual(invoice.status, 'Sent')
+        self.assertEqual(get_invoice_paid_amount(invoice), Decimal('3.00'))
+        self.assertEqual(get_invoice_balance_due(invoice), Decimal('2.00'))
+        created_order.refresh_from_db()
+        self.assertFalse(created_order.is_paid)
+        customer.refresh_from_db()
+        self.assertEqual(customer.current_balance, Decimal('2.00'))
 
     def test_sync_push_rejects_on_account_sale_above_credit_limit(self):
         customer = Customer.objects.create(
