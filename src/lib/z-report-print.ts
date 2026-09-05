@@ -3,6 +3,8 @@ import { format } from 'date-fns';
 import type { Session } from '@/lib/db';
 
 export const SESSION_END_REPORT_TITLE = 'Session End Report';
+export const SESSION_X_REPORT_TITLE = 'X Report';
+export const SESSION_STOCK_REPORT_TITLE = 'Session Stock Report';
 
 export type ZReportPaymentBreakdown = {
   cash: number;
@@ -111,6 +113,31 @@ type BuildZReportPrintHtmlInput = {
   financialSummary?: ZReportFinancialSummary;
   eisSummary?: ZReportEisSummary;
   formatCurrency: (amount: number) => string;
+  generatedAt?: Date;
+};
+
+type BuildXReportPrintHtmlInput = Omit<BuildZReportPrintHtmlInput, 'eisSummary'>;
+
+export type SessionStockReportRow = {
+  name: string;
+  opening: string;
+  received: string;
+  sold: string;
+  waste: string;
+  closing: string;
+};
+
+export type SessionStockOptionUsageRow = {
+  stockItemName: string;
+  menuItemName: string;
+  optionName: string;
+  quantity: string;
+};
+
+type BuildSessionStockReportPrintHtmlInput = {
+  session: Pick<Session, 'id' | 'status' | 'userName' | 'startedAt' | 'closedAt'>;
+  stockRows: SessionStockReportRow[];
+  optionUsage?: SessionStockOptionUsageRow[];
   generatedAt?: Date;
 };
 
@@ -427,6 +454,12 @@ const formatSessionDate = (value?: string): string => {
   }
 };
 
+const buildThermalReportHtml = (lines: string[]): string => `
+<div id="receipt-printable-area" style="font-family:'Courier New',monospace;font-size:12px;line-height:1.35;">
+  ${lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+</div>
+`.trim();
+
 export const isSessionClosedForZReport = (
   session: Pick<Session, 'status' | 'closedAt'>
 ): boolean => {
@@ -519,9 +552,112 @@ export const buildZReportPrintHtml = ({
     `END OF ${SESSION_END_REPORT_TITLE.toUpperCase()}`,
   ];
 
-  return `
-<div id="receipt-printable-area" style="font-family:'Courier New',monospace;font-size:12px;line-height:1.35;">
-  ${lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
-</div>
-`.trim();
+  return buildThermalReportHtml(lines);
+};
+
+/**
+ * A mid-session snapshot. Unlike the end-session report it deliberately does
+ * not include actual cash or a cash difference, because the drawer is still in use.
+ */
+export const buildXReportPrintHtml = ({
+  session,
+  paymentBreakdown,
+  financialSummary = DEFAULT_FINANCIAL_SUMMARY,
+  formatCurrency,
+  generatedAt = new Date(),
+}: BuildXReportPrintHtmlInput): string => {
+  const openingFloat = toFiniteNumber(session.openingFloat);
+  const cashCollected = toFiniteNumber(paymentBreakdown.cash);
+  const expectedDrawer = openingFloat + cashCollected;
+
+  const lines: string[] = [
+    SESSION_X_REPORT_TITLE.toUpperCase(),
+    `Session ID: ${session.id}`,
+    `Session By: ${toTrimmedString(session.userName) || 'Unknown'}`,
+    `Generated: ${format(generatedAt, 'PPpp')}`,
+    `Started: ${formatSessionDate(session.startedAt)}`,
+    `Status: ${toTrimmedString(session.status).toUpperCase() || 'OPEN'}`,
+    '--------------------------------',
+    'FINANCIAL SNAPSHOT',
+    `Orders: ${Math.max(0, Math.floor(toFiniteNumber(financialSummary.orderCount)))}`,
+    `Net Sales: ${formatCurrency(toFiniteNumber(financialSummary.netSales))}`,
+    `Tax: ${formatCurrency(toFiniteNumber(financialSummary.totalTax))}`,
+    `Levies: ${formatCurrency(toFiniteNumber(financialSummary.totalLevies))}`,
+    `Other Charges: ${formatCurrency(toFiniteNumber(financialSummary.totalOtherCharges))}`,
+    `Gross Sales: ${formatCurrency(toFiniteNumber(financialSummary.grossSales))}`,
+    `Sales Value: ${formatCurrency(toFiniteNumber(financialSummary.totalPayable))}`,
+    `Session Total Sales: ${formatCurrency(toFiniteNumber(session.totalSales))}`,
+    '--------------------------------',
+    'COLLECTIONS',
+    `Cash Collected: ${formatCurrency(cashCollected)}`,
+    `Card Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.card))}`,
+    `Mobile Money Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.mobileMoney))}`,
+    `Bank Transfer Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.bankTransfer))}`,
+    `Other Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.other))}`,
+    `Laybuy Deposits: ${formatCurrency(toFiniteNumber(paymentBreakdown.laybuyDeposits))}`,
+    `Total Collected: ${formatCurrency(toFiniteNumber(paymentBreakdown.totalCollected))}`,
+    '--------------------------------',
+    'AMOUNTS STILL DUE',
+    `Account / Invoice Due: ${formatCurrency(toFiniteNumber(paymentBreakdown.onAccount))}`,
+    `Laybuy Outstanding: ${formatCurrency(toFiniteNumber(paymentBreakdown.laybuyOutstanding))}`,
+    `Total Due: ${formatCurrency(toFiniteNumber(paymentBreakdown.totalDue))}`,
+    '--------------------------------',
+    'DRAWER SNAPSHOT',
+    `Opening Float: ${formatCurrency(openingFloat)}`,
+    `Expected in Drawer: ${formatCurrency(expectedDrawer)}`,
+    '--------------------------------',
+    `END OF ${SESSION_X_REPORT_TITLE.toUpperCase()}`,
+  ];
+
+  return buildThermalReportHtml(lines);
+};
+
+export const buildSessionStockReportPrintHtml = ({
+  session,
+  stockRows,
+  optionUsage = [],
+  generatedAt = new Date(),
+}: BuildSessionStockReportPrintHtmlInput): string => {
+  const lines: string[] = [
+    SESSION_STOCK_REPORT_TITLE.toUpperCase(),
+    `Session ID: ${session.id}`,
+    `Session By: ${toTrimmedString(session.userName) || 'Unknown'}`,
+    `Generated: ${format(generatedAt, 'PPpp')}`,
+    `Started: ${formatSessionDate(session.startedAt)}`,
+    `Status: ${toTrimmedString(session.status).toUpperCase() || 'OPEN'}`,
+    ...(session.closedAt ? [`Closed: ${formatSessionDate(session.closedAt)}`] : []),
+    '--------------------------------',
+    'STOCK MOVEMENT',
+  ];
+
+  if (stockRows.length === 0) {
+    lines.push('No stock movement recorded.');
+  } else {
+    stockRows.forEach((row) => {
+      lines.push(
+        row.name,
+        `Open: ${row.opening}`,
+        `Received: ${row.received}`,
+        `Sold: ${row.sold}`,
+        `Waste: ${row.waste}`,
+        `Closing: ${row.closing}`,
+        '--------------------------------'
+      );
+    });
+  }
+
+  if (optionUsage.length > 0) {
+    lines.push('OPTION INGREDIENT USAGE');
+    optionUsage.forEach((usage) => {
+      lines.push(
+        usage.stockItemName,
+        `${usage.menuItemName} - ${usage.optionName}`,
+        `Used: ${usage.quantity}`,
+        '--------------------------------'
+      );
+    });
+  }
+
+  lines.push(`END OF ${SESSION_STOCK_REPORT_TITLE.toUpperCase()}`);
+  return buildThermalReportHtml(lines);
 };
