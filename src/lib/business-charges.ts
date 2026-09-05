@@ -36,6 +36,11 @@ export const calculateAppliedCharges = ({
 }): AppliedBusinessCharge[] => {
   return charges
     .filter((charge) => isChargeEffective(charge))
+    .filter((charge) => {
+      if (charge.applicationRule !== 'over_amount') return true;
+      const threshold = Number(charge.minimumSaleAmount);
+      return !Number.isFinite(threshold) || grossTotal > Math.max(0, threshold);
+    })
     .map((charge) => {
       const rate = Number.isFinite(Number(charge.rate)) ? Number(charge.rate) : 0;
       const baseAmount = charge.calculationBase === 'gross_total' ? grossTotal : netSubtotal;
@@ -51,6 +56,8 @@ export const calculateAppliedCharges = ({
         rate,
         calculationMethod: charge.calculationMethod,
         calculationBase: charge.calculationBase,
+        applicationRule: charge.applicationRule,
+        minimumSaleAmount: roundMoney(Math.max(0, Number(charge.minimumSaleAmount) || 0)),
         baseAmount: roundMoney(baseAmount),
         amount: roundMoney(amount),
       };

@@ -627,6 +627,8 @@ export interface BusinessCharge {
     rate: number;
     calculationMethod: 'exclusive' | 'inclusive';
     calculationBase: 'net_subtotal' | 'gross_total';
+    applicationRule: 'all_sales' | 'over_amount';
+    minimumSaleAmount: number;
     autoApply: boolean;
     isActive: boolean;
     effectiveFrom: string;

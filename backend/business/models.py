@@ -405,6 +405,11 @@ class BusinessCharge(models.Model):
         ('gross_total', 'Gross total after VAT'),
     )
 
+    APPLICATION_RULE_CHOICES = (
+        ('all_sales', 'Every sale'),
+        ('over_amount', 'Only sales over an amount'),
+    )
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     business = models.ForeignKey(
         Business,
@@ -423,6 +428,18 @@ class BusinessCharge(models.Model):
         max_length=20,
         choices=CALCULATION_BASE_CHOICES,
         default='net_subtotal'
+    )
+    application_rule = models.CharField(
+        max_length=20,
+        choices=APPLICATION_RULE_CHOICES,
+        default='all_sales',
+        help_text='Whether the charge applies to every sale or only sales over a configured amount.'
+    )
+    minimum_sale_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='The sale total after VAT must be greater than this amount when the over-amount rule is selected.'
     )
     auto_apply = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
@@ -456,6 +473,10 @@ class BusinessCharge(models.Model):
         super().clean()
         if self.rate < 0 or self.rate > 100:
             raise ValidationError("Charge rate must be between 0 and 100.")
+        if self.minimum_sale_amount < 0:
+            raise ValidationError("Minimum sale amount cannot be negative.")
+        if self.application_rule == 'over_amount' and self.minimum_sale_amount <= 0:
+            raise ValidationError("Set a sale amount greater than zero for charges that apply over an amount.")
 
     def mark_dirty(self):
         """Mark this record as dirty (needs syncing)"""

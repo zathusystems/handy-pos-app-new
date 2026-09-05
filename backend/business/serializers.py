@@ -531,7 +531,7 @@ class BusinessChargeSerializer(serializers.ModelSerializer):
         model = BusinessCharge
         fields = [
             'id', 'business', 'name', 'charge_type', 'rate',
-            'calculation_method', 'calculation_base', 'auto_apply',
+            'calculation_method', 'calculation_base', 'application_rule', 'minimum_sale_amount', 'auto_apply',
             'is_active', 'effective_from', 'effective_to',
             'created_by', 'created_by_name', 'created_at', 'updated_at'
         ]
@@ -545,6 +545,26 @@ class BusinessChargeSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Charge rate must be between 0 and 100")
         return value
 
+    def validate_minimum_sale_amount(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Minimum sale amount cannot be negative")
+        return value
+
+    def validate(self, attrs):
+        application_rule = attrs.get(
+            'application_rule',
+            getattr(self.instance, 'application_rule', 'all_sales')
+        )
+        minimum_sale_amount = attrs.get(
+            'minimum_sale_amount',
+            getattr(self.instance, 'minimum_sale_amount', Decimal('0.00'))
+        )
+        if application_rule == 'over_amount' and minimum_sale_amount <= 0:
+            raise serializers.ValidationError({
+                'minimum_sale_amount': 'Enter an amount greater than zero for this rule.'
+            })
+        return attrs
+
 
 class BusinessChargeCreateUpdateSerializer(serializers.ModelSerializer):
     """Create/update serializer for business charges."""
@@ -553,7 +573,7 @@ class BusinessChargeCreateUpdateSerializer(serializers.ModelSerializer):
         model = BusinessCharge
         fields = [
             'name', 'charge_type', 'rate', 'calculation_method',
-            'calculation_base', 'auto_apply', 'is_active',
+            'calculation_base', 'application_rule', 'minimum_sale_amount', 'auto_apply', 'is_active',
             'effective_from', 'effective_to'
         ]
 
@@ -561,6 +581,25 @@ class BusinessChargeCreateUpdateSerializer(serializers.ModelSerializer):
         if value < 0 or value > 100:
             raise serializers.ValidationError("Charge rate must be between 0 and 100")
         return value
+
+    def validate(self, attrs):
+        application_rule = attrs.get(
+            'application_rule',
+            getattr(self.instance, 'application_rule', 'all_sales')
+        )
+        minimum_sale_amount = attrs.get(
+            'minimum_sale_amount',
+            getattr(self.instance, 'minimum_sale_amount', Decimal('0.00'))
+        )
+        if minimum_sale_amount < 0:
+            raise serializers.ValidationError({
+                'minimum_sale_amount': 'Minimum sale amount cannot be negative.'
+            })
+        if application_rule == 'over_amount' and minimum_sale_amount <= 0:
+            raise serializers.ValidationError({
+                'minimum_sale_amount': 'Enter an amount greater than zero for this rule.'
+            })
+        return attrs
 
 
 # ============================================================================

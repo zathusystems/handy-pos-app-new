@@ -59,6 +59,11 @@ def calculate_configured_business_charges(
         if eis_enabled and charge.charge_type == 'LEVY':
             continue
         rate = _money(charge.rate)
+        minimum_sale_amount = _money(charge.minimum_sale_amount)
+        # The threshold is always the customer-facing sale total after VAT and
+        # before this charge. This keeps the rule independent from the charge base.
+        if charge.application_rule == 'over_amount' and gross_amount <= minimum_sale_amount:
+            continue
         base_amount = gross_amount if charge.calculation_base == 'gross_total' else net_amount
         raw_amount = base_amount * rate / Decimal('100')
         amount = (
@@ -80,6 +85,8 @@ def calculate_configured_business_charges(
             'rate': float(rate),
             'calculationMethod': charge.calculation_method,
             'calculationBase': charge.calculation_base,
+            'applicationRule': charge.application_rule,
+            'minimumSaleAmount': float(minimum_sale_amount),
             'baseAmount': float(base_amount),
             'amount': float(amount),
             'source': 'business',

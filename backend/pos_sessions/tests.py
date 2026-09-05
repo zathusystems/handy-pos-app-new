@@ -11,6 +11,7 @@ from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 from business.models import (
     Business,
     Branch,
+    BusinessCharge,
     BusinessSettings,
     Customer,
     CustomerAccountTransaction,
@@ -27,11 +28,13 @@ from business.customer_accounts import (
     record_customer_payment,
     record_laybuy_payment,
 )
+from business.serializers import BusinessChargeCreateUpdateSerializer, BusinessChargeSerializer
 from inventory.models import InventoryItem, MRAProductMapping, PurchaseOrder, PurchaseOrderItem
 from pos_sessions.correction_views import VoidTransactionViewSet
 from pos_sessions.models import Order, OrderItem, Session
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
 from pos_sessions.sync_views import decrement_inventory_for_order
+from pos_sessions.charge_utils import calculate_configured_business_charges
 from staff.models import Staff, StaffRole
 
 User = get_user_model()
@@ -1754,3 +1757,75 @@ class SessionVisibilityTests(TestCase):
         self.assertEqual(active_session.actual_cash, Decimal('180.00'))
         self.assertEqual(active_session.closing_float, Decimal('180.00'))
         self.assertEqual(active_session.difference, Decimal('0.00'))
+
+
+class BusinessChargeApplicationRuleTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='charge-rule@example.com',
+            password='test12345',
+        )
+        self.business = Business.objects.create(
+            owner=self.user,
+            name='Charge Rule Business',
+        )
+        self.charge = BusinessCharge.objects.create(
+            business=self.business,
+            name='Tourism Levy',
+            charge_type='LEVY',
+            rate=Decimal('2.00'),
+            application_rule='over_amount',
+            minimum_sale_amount=Decimal('100.00'),
+            effective_from=timezone.localdate(),
+        )
+
+    def test_charge_applies_only_when_sale_is_over_configured_amount(self):
+        at_threshold = calculate_configured_business_charges(
+            self.business,
+            net_subtotal=Decimal('90.00'),
+            gross_total=Decimal('100.00'),
+        )
+        over_threshold = calculate_configured_business_charges(
+            self.business,
+            net_subtotal=Decimal('90.01'),
+            gross_total=Decimal('100.01'),
+        )
+
+        self.assertEqual(at_threshold['amount'], Decimal('0.00'))
+        self.assertEqual(at_threshold['snapshot'], [])
+        self.assertEqual(over_threshold['amount'], Decimal('1.80'))
+        self.assertEqual(over_threshold['snapshot'][0]['applicationRule'], 'over_amount')
+        self.assertEqual(over_threshold['snapshot'][0]['minimumSaleAmount'], 100.0)
+
+    def test_charge_defaults_to_every_sale(self):
+        self.charge.application_rule = 'all_sales'
+        self.charge.minimum_sale_amount = Decimal('0.00')
+        self.charge.save(update_fields=['application_rule', 'minimum_sale_amount'])
+
+        result = calculate_configured_business_charges(
+            self.business,
+            net_subtotal=Decimal('10.00'),
+            gross_total=Decimal('11.00'),
+        )
+
+        self.assertEqual(result['amount'], Decimal('0.20'))
+        self.assertEqual(result['exclusive_amount'], Decimal('0.20'))
+
+    def test_charge_serializers_reject_an_empty_over_amount_threshold(self):
+        payload = {
+            'name': 'Threshold Levy',
+            'charge_type': 'LEVY',
+            'rate': '2.00',
+            'calculation_method': 'exclusive',
+            'calculation_base': 'net_subtotal',
+            'application_rule': 'over_amount',
+            'minimum_sale_amount': '0.00',
+            'auto_apply': True,
+            'is_active': True,
+            'effective_from': str(timezone.localdate()),
+        }
+
+        for serializer_class in (BusinessChargeSerializer, BusinessChargeCreateUpdateSerializer):
+            serializer = serializer_class(data=payload)
+            self.assertFalse(serializer.is_valid())
+            self.assertIn('minimum_sale_amount', serializer.errors)

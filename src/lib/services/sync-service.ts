@@ -435,6 +435,8 @@ class SyncService {
     const calculationMethod = rawMethod === 'inclusive' ? 'inclusive' : 'exclusive';
     const rawBase = String(converted.calculationBase ?? record?.calculation_base ?? 'net_subtotal').trim().toLowerCase();
     const calculationBase = rawBase === 'gross_total' ? 'gross_total' : 'net_subtotal';
+    const rawApplicationRule = String(converted.applicationRule ?? record?.application_rule ?? 'all_sales').trim().toLowerCase();
+    const applicationRule = rawApplicationRule === 'over_amount' ? 'over_amount' : 'all_sales';
 
     return {
       id,
@@ -444,6 +446,8 @@ class SyncService {
       rate: this.toNumber(converted.rate ?? record?.rate, 0),
       calculationMethod,
       calculationBase,
+      applicationRule,
+      minimumSaleAmount: Math.max(0, this.toNumber(converted.minimumSaleAmount ?? record?.minimum_sale_amount, 0)),
       autoApply: this.toBoolean(converted.autoApply ?? record?.auto_apply, true),
       isActive: this.toBoolean(converted.isActive ?? record?.is_active, true),
       effectiveFrom: String(converted.effectiveFrom ?? record?.effective_from ?? defaultDate).trim() || defaultDate,

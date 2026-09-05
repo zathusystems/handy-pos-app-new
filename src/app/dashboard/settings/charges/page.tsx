@@ -43,11 +43,19 @@ const chargeSchema = z.object({
   rate: z.number().min(0, 'Rate must be positive.').max(100, 'Rate cannot exceed 100.'),
   calculationMethod: z.enum(['exclusive', 'inclusive']).default('exclusive'),
   calculationBase: z.enum(['net_subtotal', 'gross_total']).default('net_subtotal'),
+  applicationRule: z.enum(['all_sales', 'over_amount']).default('all_sales'),
+  minimumSaleAmount: z.number().min(0, 'Amount cannot be negative.').default(0),
   autoApply: z.boolean().default(true),
   isActive: z.boolean().default(true),
   effectiveFrom: z.string().min(1, 'Effective from date is required.'),
   effectiveTo: z.string().optional(),
-});
+}).refine(
+  (values) => values.applicationRule !== 'over_amount' || values.minimumSaleAmount > 0,
+  {
+    path: ['minimumSaleAmount'],
+    message: 'Enter an amount greater than zero for this rule.',
+  }
+);
 
 type ChargeFormValues = z.infer<typeof chargeSchema>;
 
@@ -68,6 +76,8 @@ const normalizeCharge = (charge: any, businessId: string): BusinessCharge => ({
   rate: toNumber(charge?.rate, 0),
   calculationMethod: String(charge?.calculation_method ?? charge?.calculationMethod).toLowerCase() === 'inclusive' ? 'inclusive' : 'exclusive',
   calculationBase: String(charge?.calculation_base ?? charge?.calculationBase).toLowerCase() === 'gross_total' ? 'gross_total' : 'net_subtotal',
+  applicationRule: String(charge?.application_rule ?? charge?.applicationRule).toLowerCase() === 'over_amount' ? 'over_amount' : 'all_sales',
+  minimumSaleAmount: Math.max(0, toNumber(charge?.minimum_sale_amount ?? charge?.minimumSaleAmount, 0)),
   autoApply: (charge?.auto_apply ?? charge?.autoApply ?? true) !== false,
   isActive: (charge?.is_active ?? charge?.isActive ?? true) !== false,
   effectiveFrom: String(charge?.effective_from ?? charge?.effectiveFrom ?? today()).trim() || today(),
@@ -82,6 +92,8 @@ const toBackendPayload = (values: ChargeFormValues) => ({
   rate: values.rate,
   calculation_method: values.calculationMethod,
   calculation_base: values.calculationBase,
+  application_rule: values.applicationRule,
+  minimum_sale_amount: values.minimumSaleAmount,
   auto_apply: values.autoApply,
   is_active: values.isActive,
   effective_from: values.effectiveFrom,
@@ -103,6 +115,8 @@ function ChargeForm({
       rate: 0,
       calculationMethod: 'exclusive',
       calculationBase: 'net_subtotal',
+      applicationRule: 'all_sales',
+      minimumSaleAmount: 0,
       autoApply: true,
       isActive: true,
       effectiveFrom: today(),
@@ -117,6 +131,8 @@ function ChargeForm({
       rate: defaultValues.rate,
       calculationMethod: defaultValues.calculationMethod,
       calculationBase: defaultValues.calculationBase,
+      applicationRule: defaultValues.applicationRule,
+      minimumSaleAmount: defaultValues.minimumSaleAmount,
       autoApply: defaultValues.autoApply,
       isActive: defaultValues.isActive,
       effectiveFrom: defaultValues.effectiveFrom,
@@ -127,12 +143,16 @@ function ChargeForm({
       rate: 0,
       calculationMethod: 'exclusive',
       calculationBase: 'net_subtotal',
+      applicationRule: 'all_sales',
+      minimumSaleAmount: 0,
       autoApply: true,
       isActive: true,
       effectiveFrom: today(),
       effectiveTo: '',
     });
   }, [defaultValues, form]);
+
+  const applicationRule = form.watch('applicationRule');
 
   return (
     <Form {...form}>
@@ -167,6 +187,40 @@ function ChargeForm({
               <FormMessage />
             </FormItem>
           )} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField control={form.control} name="applicationRule" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Apply To</FormLabel>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                <SelectContent>
+                  <SelectItem value="all_sales">Every sale</SelectItem>
+                  <SelectItem value="over_amount">Only sales over an amount</SelectItem>
+                </SelectContent>
+              </Select>
+              <FormDescription>The sale total is checked after VAT and before this charge.</FormDescription>
+            </FormItem>
+          )} />
+          {applicationRule === 'over_amount' && (
+            <FormField control={form.control} name="minimumSaleAmount" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Sale Amount</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    placeholder="e.g., 50000"
+                    value={field.value ?? ''}
+                    onChange={(event) => field.onChange(toNumber(event.target.value, 0))}
+                  />
+                </FormControl>
+                <FormDescription>A sale equal to this amount is not charged.</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )} />
+          )}
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField control={form.control} name="calculationBase" render={({ field }) => (
@@ -363,6 +417,7 @@ export default function ChargesSettingsPage() {
                   <TableHead>Type</TableHead>
                   <TableHead>Rate</TableHead>
                   <TableHead>Base</TableHead>
+                  <TableHead>Applies</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -374,6 +429,7 @@ export default function ChargesSettingsPage() {
                     <TableCell>{charge.chargeType === 'SERVICE_CHARGE' ? 'Service charge' : charge.chargeType === 'OTHER' ? 'Other' : 'Levy'}</TableCell>
                     <TableCell>{charge.rate.toFixed(2)}%</TableCell>
                     <TableCell>{charge.calculationBase === 'gross_total' ? 'Gross total' : 'Net subtotal'}</TableCell>
+                    <TableCell>{charge.applicationRule === 'over_amount' ? `Over ${charge.minimumSaleAmount.toFixed(2)}` : 'Every sale'}</TableCell>
                     <TableCell>{charge.isActive ? 'Active' : 'Inactive'}</TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -394,7 +450,7 @@ export default function ChargesSettingsPage() {
                 ))}
                 {charges.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                       No charges or levies configured.
                     </TableCell>
                   </TableRow>

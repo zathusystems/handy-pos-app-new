@@ -29,9 +29,9 @@ class TaxRateAdmin(admin.ModelAdmin):
 
 @admin.register(BusinessCharge)
 class BusinessChargeAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'charge_type', 'rate', 'business', 'auto_apply', 'is_active', 'created_at')
+    list_display = ('id', 'name', 'charge_type', 'rate', 'application_rule', 'minimum_sale_amount', 'business', 'auto_apply', 'is_active', 'created_at')
     search_fields = ('name', 'business__name')
-    list_filter = ('charge_type', 'auto_apply', 'is_active', 'created_at')
+    list_filter = ('charge_type', 'application_rule', 'auto_apply', 'is_active', 'created_at')
     ordering = ('name',)
 
 @admin.register(BusinessSettings)
