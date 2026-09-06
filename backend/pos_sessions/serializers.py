@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.db import transaction
 from .models import Session, Order, OrderItem
 from .tax_utils import (
+    calculate_eis_tax_snapshot_for_order_lines,
     calculate_tax_snapshot,
     get_default_tax_rate,
     lock_tax_rate_on_use,
@@ -334,11 +335,36 @@ class OrderSerializer(serializers.ModelSerializer):
             except DjangoValidationError as exc:
                 raise serializers.ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else str(exc))
 
-            # Calculate tax snapshot BEFORE creating the order.
-            # This captures exact tax values at the moment of sale.
-            subtotal = Decimal(str(validated_data.get('subtotal', 0)))
-            applied_tax_rate = get_default_tax_rate(business) if business else None
-            tax_snapshot = calculate_tax_snapshot(subtotal, business, applied_tax_rate)
+            # EIS sales use only the approved MRA product mapping. Other
+            # businesses retain their local tax configuration.
+            applied_tax_rate = None
+            if eis_enabled:
+                try:
+                    tax_snapshot = calculate_eis_tax_snapshot_for_order_lines(
+                        business,
+                        branch,
+                        items_data,
+                    )
+                except DjangoValidationError as exc:
+                    raise serializers.ValidationError(
+                        exc.message_dict if hasattr(exc, 'message_dict') else str(exc)
+                    )
+                for item_data, line_snapshot in zip(items_data, tax_snapshot['line_snapshots']):
+                    item_data.update({
+                        'inventory_item_id': line_snapshot['inventory_item_id'],
+                        'mra_product_code': line_snapshot['mra_product_code'],
+                        'vat_category': line_snapshot['vat_category'],
+                        'tax_rate': line_snapshot['tax_rate'],
+                        'tax_type': line_snapshot['tax_type'],
+                        'tax_calculation_method': line_snapshot['tax_calculation_method'],
+                        'subtotal': line_snapshot['subtotal'],
+                        'tax_amount': line_snapshot['tax_amount'],
+                        'total': line_snapshot['total'],
+                    })
+            else:
+                subtotal = Decimal(str(validated_data.get('subtotal', 0)))
+                applied_tax_rate = get_default_tax_rate(business) if business else None
+                tax_snapshot = calculate_tax_snapshot(subtotal, business, applied_tax_rate)
 
             # Apply tax snapshot to validated data
             validated_data['tax_rate_name'] = tax_snapshot['tax_rate_name']
@@ -426,7 +452,8 @@ class OrderSerializer(serializers.ModelSerializer):
                 OrderItem.objects.create(order=order, **item_data)
 
             # Once used in a transaction, lock the tax rate for fiscal immutability.
-            lock_tax_rate_on_use(applied_tax_rate)
+            if not eis_enabled:
+                lock_tax_rate_on_use(applied_tax_rate)
 
             if tip_amount > 0 and order.session_id:
                 order.session.total_tips = (order.session.total_tips or Decimal('0.00')) + tip_amount

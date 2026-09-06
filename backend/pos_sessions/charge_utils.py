@@ -15,7 +15,6 @@ def _decimal(value: Any, default: Decimal = Decimal('0.00')) -> Decimal:
     except (InvalidOperation, TypeError, ValueError):
         return default
 
-
 def _money(value: Any) -> Decimal:
     return _decimal(value).quantize(MONEY, rounding=ROUND_HALF_UP)
 
@@ -29,11 +28,15 @@ def calculate_configured_business_charges(
 ) -> dict[str, Any]:
     """Resolve local charges from current backend configuration.
 
-    When EIS is enabled, MRA is the source of levy charges. Local LEVY rows
-    are therefore skipped to avoid charging the same levy twice. Service and
-    other business charges remain available.
+    EIS businesses receive tax and statutory charges exclusively from MRA's
+    approved product configuration. Local charge settings are never combined
+    with those figures, which prevents double charging or a local rule from
+    changing a fiscal sale.
     """
     if not business:
+        return {'amount': Decimal('0.00'), 'exclusive_amount': Decimal('0.00'), 'snapshot': []}
+
+    if eis_enabled:
         return {'amount': Decimal('0.00'), 'exclusive_amount': Decimal('0.00'), 'snapshot': []}
 
     from business.models import BusinessCharge
@@ -56,8 +59,6 @@ def calculate_configured_business_charges(
     exclusive_amount = Decimal('0.00')
 
     for charge in charges:
-        if eis_enabled and charge.charge_type == 'LEVY':
-            continue
         rate = _money(charge.rate)
         minimum_sale_amount = _money(charge.minimum_sale_amount)
         # The threshold is always the customer-facing sale total after VAT and

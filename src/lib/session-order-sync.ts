@@ -45,6 +45,12 @@ const mapBackendOrderItemToLocal = (item: any): OrderItem => {
   const taxRate = toNumber(item?.tax_rate ?? item?.taxRate);
   const subtotal = toNumber(item?.subtotal);
   const taxAmount = toNumber(item?.tax_amount ?? item?.taxAmount);
+  const chargesAmount = toNumber(item?.charges_amount ?? item?.chargesAmount);
+  const chargesSnapshot = Array.isArray(item?.charges_snapshot)
+    ? item.charges_snapshot
+    : Array.isArray(item?.chargesSnapshot)
+      ? item.chargesSnapshot
+      : [];
 
   return {
     id: String(item?.id ?? ''),
@@ -66,6 +72,10 @@ const mapBackendOrderItemToLocal = (item: any): OrderItem => {
     subtotal,
     taxAmount,
     tax_amount: taxAmount,
+    chargesAmount,
+    charges_amount: chargesAmount,
+    chargesSnapshot,
+    charges_snapshot: chargesSnapshot,
     total: toNumber(item?.total),
     isTakeawayPackaging: Boolean(
       item?.is_takeaway_packaging ?? item?.isTakeawayPackaging ?? false
@@ -104,6 +114,12 @@ const mapBackendOrderToLocal = (
   const isFiscalLocked = Boolean(
     order?.is_fiscal_locked ?? order?.isFiscalLocked ?? false
   );
+  const chargesAmount = toNumber(order?.charges_amount ?? order?.chargesAmount);
+  const chargesSnapshot = Array.isArray(order?.charges_snapshot)
+    ? order.charges_snapshot
+    : Array.isArray(order?.chargesSnapshot)
+      ? order.chargesSnapshot
+      : [];
   const items = Array.isArray(order?.items)
     ? order.items.map((item: any) => mapBackendOrderItemToLocal(item))
     : [];
@@ -175,6 +191,10 @@ const mapBackendOrderToLocal = (
     net_amount: toNumber(order?.net_amount ?? order?.netAmount),
     grossAmount: toNumber(order?.gross_amount ?? order?.grossAmount),
     gross_amount: toNumber(order?.gross_amount ?? order?.grossAmount),
+    chargesAmount,
+    charges_amount: chargesAmount,
+    chargesSnapshot,
+    charges_snapshot: chargesSnapshot,
     fiscalInvoiceNumber,
     fiscal_invoice_number: fiscalInvoiceNumber,
     eisUuid,

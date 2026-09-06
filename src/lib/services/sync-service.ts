@@ -1869,6 +1869,10 @@ class SyncService {
         'vat_amount',
         'grossAmount',
         'gross_amount',
+        'chargesAmount',
+        'charges_amount',
+        'chargesSnapshot',
+        'charges_snapshot',
       ];
 
       for (const key of syncKeys) {

@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from .models import Session, Order, OrderItem
 from .serializers import SessionSerializer, OrderSerializer
-from .tax_utils import lock_tax_rate_on_use
+from .tax_utils import calculate_eis_tax_snapshot_for_order_lines, lock_tax_rate_on_use
 from business.customer_accounts import (
     create_laybuy_for_order,
     record_credit_sale_for_order,
@@ -839,7 +839,6 @@ def handle_create_order(
                 'success': True,
                 **_build_order_sync_payload(existing)
             }
-
         business_settings = getattr(business, 'settings', None)
         block_sales_if_tax_mapping_missing = bool(
             getattr(business_settings, 'block_sales_if_tax_mapping_missing', False)
@@ -890,6 +889,43 @@ def handle_create_order(
             print(f"[Sync Sessions] ✓ All products have approved+synced MRA mappings - proceeding with order creation")
         else:
             print(f"[Sync Sessions] MRA mapping enforcement disabled - proceeding with order creation")
+
+        eis_tax_snapshot = None
+        if eis_enabled:
+            try:
+                eis_tax_snapshot = calculate_eis_tax_snapshot_for_order_lines(
+                    business,
+                    branch,
+                    data.get('items') or [],
+                )
+            except DjangoValidationError as exc:
+                return {
+                    'success': False,
+                    'error': _validation_error_message(exc),
+                }
+
+            for item_data, line_snapshot in zip(
+                data.get('items') or [],
+                eis_tax_snapshot['line_snapshots'],
+            ):
+                item_data.update({
+                    'inventoryItemId': line_snapshot['inventory_item_id'],
+                    'inventory_item_id': line_snapshot['inventory_item_id'],
+                    'mraProductCode': line_snapshot['mra_product_code'],
+                    'mra_product_code': line_snapshot['mra_product_code'],
+                    'vatCategory': line_snapshot['vat_category'],
+                    'vat_category': line_snapshot['vat_category'],
+                    'taxRate': line_snapshot['tax_rate'],
+                    'tax_rate': line_snapshot['tax_rate'],
+                    'taxType': line_snapshot['tax_type'],
+                    'tax_type': line_snapshot['tax_type'],
+                    'taxCalculationMethod': line_snapshot['tax_calculation_method'],
+                    'tax_calculation_method': line_snapshot['tax_calculation_method'],
+                    'subtotal': line_snapshot['subtotal'],
+                    'taxAmount': line_snapshot['tax_amount'],
+                    'tax_amount': line_snapshot['tax_amount'],
+                    'total': line_snapshot['total'],
+                })
         
         def _next_order_number_for_branch(target_branch):
             last_order = Order.objects.filter(branch=target_branch).order_by('-order_number').first()
@@ -1224,6 +1260,13 @@ def handle_create_order(
             order_data['tax_rate_value'] = float(data.get('tax_rate_value'))
         if data.get('tax_type'):
             order_data['tax_type'] = data.get('tax_type')
+
+        if eis_tax_snapshot:
+            order_data.update({
+                'tax_rate_name': eis_tax_snapshot['tax_rate_name'],
+                'tax_rate_value': eis_tax_snapshot['tax_rate_value'],
+                'tax_type': eis_tax_snapshot['tax_type'],
+            })
         
         # Set calculated VAT amount - CRITICAL: Use sum of item taxes, not calculated from subtotal
         # This ensures accurate tax when items have different tax rates (mixed tax scenario)
@@ -1440,31 +1483,32 @@ def handle_create_order(
                     total=item_total
                 )
 
-        # Lock the matched tax rate after first use (MRA immutability requirement).
-        # We match by snapshot values saved on the order.
-        try:
-            tax_rate_name = str(order.tax_rate_name or '').strip()
-            tax_rate_value = order.tax_rate_value
-            if tax_rate_name or tax_rate_value:
-                normalized_tax_rate_value = None
-                if tax_rate_value:
-                    try:
-                        normalized_tax_rate_value = Decimal(str(tax_rate_value))
-                    except (InvalidOperation, TypeError, ValueError):
-                        normalized_tax_rate_value = None
+        # Local tax rates are locked after use. EIS sales have an immutable MRA
+        # product snapshot instead and must never lock or read local tax rules.
+        if not eis_enabled:
+            try:
+                tax_rate_name = str(order.tax_rate_name or '').strip()
+                tax_rate_value = order.tax_rate_value
+                if tax_rate_name or tax_rate_value:
+                    normalized_tax_rate_value = None
+                    if tax_rate_value:
+                        try:
+                            normalized_tax_rate_value = Decimal(str(tax_rate_value))
+                        except (InvalidOperation, TypeError, ValueError):
+                            normalized_tax_rate_value = None
 
-                tax_rate_query = TaxRate.objects.filter(
-                    business=business,
-                    is_active=True,
-                )
-                if tax_rate_name:
-                    tax_rate_query = tax_rate_query.filter(name=tax_rate_name)
-                if normalized_tax_rate_value is not None:
-                    tax_rate_query = tax_rate_query.filter(rate=normalized_tax_rate_value)
-                matched_tax_rate = tax_rate_query.order_by('-is_default', '-effective_from').first()
-                lock_tax_rate_on_use(matched_tax_rate)
-        except Exception as lock_exc:
-            print(f"[Sync Sessions] Warning: tax lock update failed for order {order_id}: {lock_exc}")
+                    tax_rate_query = TaxRate.objects.filter(
+                        business=business,
+                        is_active=True,
+                    )
+                    if tax_rate_name:
+                        tax_rate_query = tax_rate_query.filter(name=tax_rate_name)
+                    if normalized_tax_rate_value is not None:
+                        tax_rate_query = tax_rate_query.filter(rate=normalized_tax_rate_value)
+                    matched_tax_rate = tax_rate_query.order_by('-is_default', '-effective_from').first()
+                    lock_tax_rate_on_use(matched_tax_rate)
+            except Exception as lock_exc:
+                print(f"[Sync Sessions] Warning: tax lock update failed for order {order_id}: {lock_exc}")
 
         # Prepare order for MRA EIS pipeline.
         # In live mode with block_sales_if_eis_down enabled, this becomes blocking.

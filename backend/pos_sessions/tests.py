@@ -36,6 +36,7 @@ from pos_sessions.models import Order, OrderItem, Session
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
 from pos_sessions.sync_views import decrement_inventory_for_order
 from pos_sessions.charge_utils import calculate_configured_business_charges
+from pos_sessions.tax_utils import calculate_eis_tax_snapshot_for_order_lines
 from staff.models import Staff, StaffRole
 
 User = get_user_model()
@@ -1882,6 +1883,27 @@ class BusinessChargeApplicationRuleTests(TestCase):
 
         self.assertEqual(result['amount'], Decimal('0.20'))
         self.assertEqual(result['exclusive_amount'], Decimal('0.20'))
+
+    def test_eis_sales_do_not_apply_any_local_business_charge(self):
+        self.charge.charge_type = 'SERVICE_CHARGE'
+        self.charge.application_rule = 'all_sales'
+        self.charge.minimum_sale_amount = Decimal('0.00')
+        self.charge.save(update_fields=[
+            'charge_type',
+            'application_rule',
+            'minimum_sale_amount',
+        ])
+
+        result = calculate_configured_business_charges(
+            self.business,
+            net_subtotal=Decimal('100.00'),
+            gross_total=Decimal('116.50'),
+            eis_enabled=True,
+        )
+
+        self.assertEqual(result['amount'], Decimal('0.00'))
+        self.assertEqual(result['exclusive_amount'], Decimal('0.00'))
+        self.assertEqual(result['snapshot'], [])
 
     def test_charge_serializers_reject_an_empty_over_amount_threshold(self):
         payload = {
