@@ -18,6 +18,14 @@ export const DEFAULT_DESKTOP_DOWNLOAD_URL =
 
 const FALLBACK_DESKTOP_VERSION = FALLBACK_APP_VERSION;
 
+export const isDesktopTauriApp = (): boolean => {
+  if (!isTauriApp() || typeof navigator === 'undefined') {
+    return false;
+  }
+
+  return !/android|iphone|ipad|ipod/i.test(navigator.userAgent);
+};
+
 const getReleaseManifestUrl = (): string => {
   // The browser app and the marketing site are served from the same release
   // directory. A relative URL keeps the version label working on either host

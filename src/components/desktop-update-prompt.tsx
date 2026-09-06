@@ -12,11 +12,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { isTauriApp } from '@/lib/tauri-init';
 import {
   DEFAULT_DESKTOP_DOWNLOAD_URL,
   fetchDesktopReleaseManifest,
   getCurrentDesktopVersion,
+  isDesktopTauriApp,
   isNewerDesktopVersion,
   type DesktopReleaseManifest,
 } from '@/lib/desktop-update';
@@ -28,12 +28,15 @@ export function DesktopUpdatePrompt() {
   const [release, setRelease] = useState<DesktopReleaseManifest | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isOpeningDownload, setIsOpeningDownload] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
+  const isDesktopApp = isDesktopTauriApp();
 
   useEffect(() => {
     let alive = true;
 
     const run = async () => {
-      if (!isTauriApp()) {
+      if (!isDesktopApp) {
         return;
       }
 
@@ -77,7 +80,7 @@ export function DesktopUpdatePrompt() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [isDesktopApp]);
 
   const downloadUrl = useMemo(
     () => release?.downloadUrl || DEFAULT_DESKTOP_DOWNLOAD_URL,
@@ -93,15 +96,21 @@ export function DesktopUpdatePrompt() {
 
   const handleDownload = async () => {
     const targetUrl = downloadUrl || DEFAULT_DESKTOP_DOWNLOAD_URL;
+    if (isOpeningDownload) return;
 
-    if (typeof window !== 'undefined') {
-      window.open(targetUrl, '_blank', 'noopener,noreferrer');
-      window.localStorage.setItem(DISMISSED_VERSION_KEY, release?.latestVersion || '');
-    }
+    setIsOpeningDownload(true);
+    setDownloadError('');
 
-    setIsOpen(false);
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener');
+      await openUrl(targetUrl);
 
-    if (isTauriApp() && typeof window !== 'undefined') {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(DISMISSED_VERSION_KEY, release?.latestVersion || '');
+      }
+
+      setIsOpen(false);
+
       window.setTimeout(() => {
         void import('@tauri-apps/api/window')
           .then(({ getCurrentWindow }) => getCurrentWindow().close())
@@ -112,11 +121,16 @@ export function DesktopUpdatePrompt() {
               // ignore close failures in restricted environments
             }
           });
-      }, 150);
+      }, 350);
+    } catch (error) {
+      console.warn('[DesktopUpdate] Unable to open the download page:', error);
+      setDownloadError('We could not open your browser. Use the link below to download the installer, then try again.');
+    } finally {
+      setIsOpeningDownload(false);
     }
   };
 
-  if (!isTauriApp() || !release || !isOpen) {
+  if (!isDesktopApp || !release || !isOpen) {
     return null;
   }
 
@@ -146,15 +160,20 @@ export function DesktopUpdatePrompt() {
               <p className="text-sm leading-6">{release.notes}</p>
             </div>
           ) : null}
+          {downloadError ? (
+            <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {downloadError}
+            </div>
+          ) : null}
         </div>
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={handleLater} className="w-full sm:w-auto">
             <X className="mr-2 h-4 w-4" />
             Later
           </Button>
-          <Button onClick={handleDownload} className="w-full sm:w-auto">
+          <Button onClick={handleDownload} disabled={isOpeningDownload} className="w-full sm:w-auto">
             <Download className="mr-2 h-4 w-4" />
-            Open download page
+            {isOpeningDownload ? 'Opening browser...' : 'Open download page'}
           </Button>
         </DialogFooter>
         {isLoading ? (

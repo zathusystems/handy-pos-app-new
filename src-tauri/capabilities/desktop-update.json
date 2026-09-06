@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-update",
+  "description": "Allows the desktop update prompt to open Handy POS download pages in the system browser.",
+  "windows": ["main"],
+  "platforms": ["windows", "linux", "macOS"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://handypos.online/*" },
+        { "url": "https://app.handypos.online/*" }
+      ]
+    }
+  ]
+}
