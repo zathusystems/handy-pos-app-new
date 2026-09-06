@@ -588,14 +588,7 @@ export default function PosPage() {
 
       const activeTaxes = taxes.filter((tax) => tax.isActive !== false);
       const defaultTax = activeTaxes.find((tax) => tax.isDefault);
-      if (defaultTax) return defaultTax;
-
-      return activeTaxes
-        .sort((a, b) => {
-          const timeA = Date.parse(a.updatedAt || a.createdAt || '');
-          const timeB = Date.parse(b.updatedAt || b.createdAt || '');
-          return (Number.isFinite(timeB) ? timeB : 0) - (Number.isFinite(timeA) ? timeA : 0);
-        })[0] ?? null;
+      return defaultTax ?? null;
     },
     [business?.id],
     null
@@ -633,7 +626,7 @@ export default function PosPage() {
   };
 
   const handleAddToCart = async (item: InventoryItem, quantity: number = 1, price?: number, notes?: string, takeOrderId?: string) => {
-    if (blockSalesIfTaxMappingMissing) {
+    if (eisEnabled || blockSalesIfTaxMappingMissing) {
       // ALWAYS check if product has APPROVED AND SYNCED MRA mapping
       // Backend requires BOTH is_approved AND mra_synced to be true for sale
       try {
@@ -1131,8 +1124,9 @@ export default function PosPage() {
     }
 
     const defaultTaxRateAmount = defaultTaxRate ? defaultTaxRate.rate / 100 : 0;
-    let shouldUseMappings = eisEnabled;
-    let shouldEnforceTaxMapping = eisEnabled && blockSalesIfTaxMappingMissing === true;
+    const requiresApprovedMraMapping = eisEnabled || blockSalesIfTaxMappingMissing;
+    let shouldUseMappings = requiresApprovedMraMapping;
+    let shouldEnforceTaxMapping = requiresApprovedMraMapping;
     let mappingByItemId = new Map<string, any>();
 
     if (shouldUseMappings) {
@@ -1158,9 +1152,9 @@ export default function PosPage() {
         });
         mappingByItemId = buildMappingLookup(scopedMappings);
       } catch (mappingError) {
-        console.warn('[POS Page] Failed to load local MRA mappings, falling back to default tax:', mappingError);
+        console.warn('[POS Page] Failed to load local MRA mappings:', mappingError);
         shouldUseMappings = false;
-        shouldEnforceTaxMapping = false;
+        shouldEnforceTaxMapping = requiresApprovedMraMapping;
         mappingByItemId = new Map<string, any>();
       }
     }

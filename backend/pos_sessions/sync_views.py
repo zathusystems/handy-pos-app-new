@@ -31,6 +31,7 @@ from .stock_validation import (
     _business_allows_negative_stock,
     _modifier_quantity,
     _recipe_entries_for_modifier,
+    get_mra_product_mapping_issues,
     validate_stock_available_for_order_lines,
 )
 from .charge_utils import calculate_configured_business_charges
@@ -334,7 +335,7 @@ def sync_push(request):
         branch_id = request.data.get('branch_id')
         changes = request.data.get('changes', [])
         request_device_serial = TerminalService.extract_request_device_serial(request)
-        
+
         print(f"[Sync Push Sessions] Received {len(changes)} changes from frontend")
         print(f"[Sync Push Sessions] Last synced: {last_synced_at}, Branch: {branch_id}")
         
@@ -608,7 +609,7 @@ def handle_create_session(session_id, data, business, branch_id, user):
                 'success': False,
                 'error': f'Branch {branch_id} not found for this business'
             }
-        
+
         # Check if session already exists
         existing = Session.objects.filter(id=session_id, business=business).first()
         if existing:
@@ -838,72 +839,29 @@ def handle_create_order(
                 'success': True,
                 **_build_order_sync_payload(existing)
             }
-        
+
         business_settings = getattr(business, 'settings', None)
         block_sales_if_tax_mapping_missing = bool(
             getattr(business_settings, 'block_sales_if_tax_mapping_missing', False)
         )
+        eis_enabled = is_business_eis_enabled(business)
+        requires_approved_mra_mapping = (
+            eis_enabled or block_sales_if_tax_mapping_missing
+        )
 
-        # CRITICAL: Validate that ALL products have approved+synced MRA mappings
-        # Only enforce when block_sales_if_tax_mapping_missing is enabled.
+        # EIS sales always require approved, synced MRA products. The setting
+        # lets non-EIS businesses opt into the same pre-sale safeguard.
         print(f"[Sync Sessions] Validating MRA mappings for order {order_id}")
-        if block_sales_if_tax_mapping_missing and data.get('items'):
-            unmapped_products = []
-            unapproved_products = []
-            unsynced_products = []
-            
-            for item_data in data['items']:
-                # The item_data contains 'inventoryItemId' which is the actual inventory item ID
-                # NOT the order item ID (which is in 'id')
-                item_name = item_data.get('name', 'Unknown')
-                item_recipe = item_data.get('recipe') if isinstance(item_data.get('recipe'), list) else []
-                is_prepared_menu_item = bool(item_data.get('is_prepared_menu_item') or item_data.get('isPreparedMenuItem'))
-                item_id = item_data.get('inventoryItemId') or item_data.get('inventory_item_id')
-                if not item_id and not (is_prepared_menu_item or item_recipe):
-                    item_id = item_data.get('id', '')
-                # A menu-created meal is usually backed by a produced
-                # inventory item and still needs its own MRA mapping. Only a
-                # legacy recipe-only line without a sellable inventory ID is
-                # exempt from this early inventory lookup; the EIS service
-                # will reject that line before submission.
-                if not str(item_id or '').strip() and (is_prepared_menu_item or item_recipe):
-                    print(f"[Sync Sessions] Skipping inventory MRA mapping check for prepared menu item: {item_name}")
-                    continue
-                
-                print(f"[Sync Sessions] Checking MRA mapping for item: id={item_id}, name={item_name}, full_data={item_data}")
-                
-                try:
-                    # Check if MRA mapping exists and is approved
-                    all_mappings = list(MRAProductMapping.objects.filter(inventory_item_id=item_id))
-                    approved_and_synced = next(
-                        (m for m in all_mappings if m.is_approved and m.mra_synced),
-                        None
-                    )
-                    approved_but_unsynced = next(
-                        (m for m in all_mappings if m.is_approved and not m.mra_synced),
-                        None
-                    )
-                    any_mapping = all_mappings[0] if all_mappings else None
+        if requires_approved_mra_mapping and data.get('items'):
+            mapping_issues = get_mra_product_mapping_issues(
+                data['items'],
+                business,
+                branch,
+            )
+            unmapped_products = mapping_issues['unmapped_products']
+            unapproved_products = mapping_issues['unapproved_products']
+            unsynced_products = mapping_issues['unsynced_products']
 
-                    if approved_and_synced:
-                        print(f"[Sync Sessions] ✓ Product {item_name} ({item_id}) has approved+synced MRA mapping")
-                    elif approved_but_unsynced:
-                        print(f"[Sync Sessions] ⚠ Product {item_name} ({item_id}) mapping is approved but NOT synced")
-                        unsynced_products.append(item_name)
-                    elif any_mapping:
-                        print(f"[Sync Sessions] ⚠ Product {item_name} ({item_id}) has unapproved MRA mapping")
-                        unapproved_products.append(item_name)
-                    else:
-                        print(f"[Sync Sessions] ✗ Product {item_name} ({item_id}) has NO MRA mapping")
-                        unmapped_products.append(item_name)
-                        
-                except Exception as e:
-                    print(f"[Sync Sessions] Error checking MRA mapping for {item_name}: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                    unmapped_products.append(item_name)
-            
-            # Block order if any products are unmapped or unapproved
             if unmapped_products:
                 error_msg = f"Cannot create order: Products without MRA mappings: {', '.join(unmapped_products)}"
                 print(f"[Sync Sessions] ✗ BLOCKED order creation - {error_msg}")
@@ -928,7 +886,7 @@ def handle_create_order(
                     'error': error_msg
                 }
 
-        if block_sales_if_tax_mapping_missing:
+        if requires_approved_mra_mapping:
             print(f"[Sync Sessions] ✓ All products have approved+synced MRA mappings - proceeding with order creation")
         else:
             print(f"[Sync Sessions] MRA mapping enforcement disabled - proceeding with order creation")
@@ -999,17 +957,12 @@ def handle_create_order(
             print(f"[Sync Sessions] Items have complete price data: {items_have_complete_price_data}")
         
         default_tax_rate = None
-        if not block_sales_if_tax_mapping_missing:
+        if not requires_approved_mra_mapping:
             default_tax_rate = TaxRate.objects.filter(
                 business=business,
                 is_active=True,
                 is_default=True,
             ).order_by('-effective_from').first()
-            if not default_tax_rate:
-                default_tax_rate = TaxRate.objects.filter(
-                    business=business,
-                    is_active=True,
-                ).order_by('-effective_from').first()
 
         if data.get('items') and items_have_complete_price_data:
             total_vat = Decimal('0')
@@ -1073,7 +1026,7 @@ def handle_create_order(
                             item_data.get('taxType') or item_data.get('tax_type') or 'standard'
                         )
 
-                        if not block_sales_if_tax_mapping_missing and fallback_tax_rate <= 0 and fallback_tax_type == 'standard' and default_tax_rate:
+                        if not requires_approved_mra_mapping and fallback_tax_rate <= 0 and fallback_tax_type == 'standard' and default_tax_rate:
                             fallback_tax_rate = _to_decimal(default_tax_rate.rate, Decimal('0'))
                             fallback_tax_type = _normalize_tax_type(default_tax_rate.tax_type)
 
@@ -1108,7 +1061,7 @@ def handle_create_order(
                     fallback_tax_type = _normalize_tax_type(
                         item_data.get('taxType') or item_data.get('tax_type') or 'standard'
                     )
-                    if not block_sales_if_tax_mapping_missing and fallback_tax_rate <= 0 and fallback_tax_type == 'standard' and default_tax_rate:
+                    if not requires_approved_mra_mapping and fallback_tax_rate <= 0 and fallback_tax_type == 'standard' and default_tax_rate:
                         fallback_tax_rate = _to_decimal(default_tax_rate.rate, Decimal('0'))
                         fallback_tax_type = _normalize_tax_type(default_tax_rate.tax_type)
 
@@ -1136,7 +1089,7 @@ def handle_create_order(
             business,
             net_subtotal=subtotal,
             gross_total=total,
-            eis_enabled=is_business_eis_enabled(business),
+            eis_enabled=eis_enabled,
         )
         mra_levy_charges = calculate_mra_levy_charges(
             business,
@@ -1424,7 +1377,7 @@ def handle_create_order(
                     tax_rate = _to_decimal(mapping_for_item.mra_tax_rate, Decimal('0'))
                     tax_type = _normalize_tax_type(mapping_for_item.mra_tax_type)
                     tax_calculation_method = str(mapping_for_item.tax_calculation_method or 'inclusive').strip().lower()
-                elif not block_sales_if_tax_mapping_missing and default_tax_rate:
+                elif not requires_approved_mra_mapping and default_tax_rate:
                     if tax_type == 'standard' and tax_rate <= 0:
                         tax_rate = _to_decimal(default_tax_rate.rate, Decimal('0'))
                         tax_type = _normalize_tax_type(default_tax_rate.tax_type)

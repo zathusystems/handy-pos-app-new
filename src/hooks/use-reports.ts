@@ -11,7 +11,15 @@ import {
   readStoredCustomSalesSectionSettings,
   resolveCustomSalesSectionSettings,
 } from '@/lib/custom-sales-section';
-import { getOrderChargeBreakdown } from '@/lib/z-report-print';
+import { getOrderChargeBreakdown, getOrderChargeSnapshotRows } from '@/lib/z-report-print';
+
+export type ChargeReportRow = {
+  name: string;
+  chargeType: 'LEVY' | 'SERVICE_CHARGE' | 'OTHER';
+  rate: number;
+  amount: number;
+  saleCount: number;
+};
 
 export interface ReportData {
   totalRevenue: number;
@@ -20,6 +28,7 @@ export interface ReportData {
   totalCharges: number;
   totalLevies: number;
   totalOtherCharges: number;
+  chargeBreakdown: ChargeReportRow[];
   totalCogs: number;
   grossProfit: number;
   totalExpenses: number;
@@ -175,6 +184,7 @@ export const useReports = (dateRange?: DateRange) => {
     totalCharges: 0,
     totalLevies: 0,
     totalOtherCharges: 0,
+    chargeBreakdown: [],
     totalCogs: 0,
     grossProfit: 0,
     totalExpenses: 0,
@@ -205,6 +215,7 @@ export const useReports = (dateRange?: DateRange) => {
         totalCharges: 0,
         totalLevies: 0,
         totalOtherCharges: 0,
+        chargeBreakdown: [],
         totalCogs: 0,
         grossProfit: 0,
         totalExpenses: 0,
@@ -377,6 +388,40 @@ export const useReports = (dateRange?: DateRange) => {
           },
           { total: 0, levies: 0, otherCharges: 0 }
         );
+        const chargeBreakdownMap = new Map<string, ChargeReportRow>();
+        normalizedOrders.forEach((order) => {
+          getOrderChargeSnapshotRows(order as any).forEach((charge) => {
+            const key = [
+              charge.chargeType,
+              charge.name.trim().toLowerCase(),
+              charge.rate.toFixed(4),
+            ].join('|');
+            const existing = chargeBreakdownMap.get(key);
+            if (existing) {
+              existing.amount += charge.amount;
+              existing.saleCount += 1;
+              return;
+            }
+            chargeBreakdownMap.set(key, {
+              name: charge.name,
+              chargeType: charge.chargeType,
+              rate: charge.rate,
+              amount: charge.amount,
+              saleCount: 1,
+            });
+          });
+        });
+        const chargeBreakdown = Array.from(chargeBreakdownMap.values())
+          .sort((left, right) => {
+            if (left.chargeType !== right.chargeType) {
+              return left.chargeType === 'LEVY' ? -1 : right.chargeType === 'LEVY' ? 1 : 0;
+            }
+            return right.amount - left.amount || left.name.localeCompare(right.name);
+          })
+          .map((charge) => ({
+            ...charge,
+            amount: toFiniteNumber(charge.amount, 0),
+          }));
         const totalRevenue = normalizedOrders.reduce((acc, order) => acc + order.total, 0);
         const totalCogs = normalizedOrders.reduce((acc, order) => acc + order.cogs, 0);
         const totalExpenses = normalizedExpenses.reduce((acc, expense) => acc + toFiniteNumber(expense.amount, 0), 0);
@@ -590,6 +635,7 @@ export const useReports = (dateRange?: DateRange) => {
             totalCharges: toFiniteNumber(chargeTotals.total, 0),
             totalLevies: toFiniteNumber(chargeTotals.levies, 0),
             totalOtherCharges: toFiniteNumber(chargeTotals.otherCharges, 0),
+            chargeBreakdown,
             totalCogs: toFiniteNumber(totalCogs, 0),
             grossProfit: toFiniteNumber(grossProfit, 0),
             totalExpenses: toFiniteNumber(totalExpenses, 0),

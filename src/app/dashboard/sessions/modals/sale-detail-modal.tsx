@@ -36,7 +36,7 @@ import {
 } from '@/lib/services/printer-service';
 import { getNextReceiptCopyNumber, markReceiptPrinted } from '@/lib/services/receipt-copy-service';
 import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
-import { getOrderChargeBreakdown } from '@/lib/z-report-print';
+import { getOrderChargeBreakdown, getOrderChargeSnapshotRows } from '@/lib/z-report-print';
 import {
   Dialog,
   DialogContent,
@@ -233,6 +233,7 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
   const chargeBreakdown = order
     ? getOrderChargeBreakdown(order as any)
     : { total: 0, levies: 0, otherCharges: 0, exclusive: 0, inclusive: 0 };
+  const chargeRows = order ? getOrderChargeSnapshotRows(order as any) : [];
 
   const applyPrinterSettingsToReceipt = useCallback(
     (
@@ -915,6 +916,31 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
                     <span className="text-muted-foreground font-medium">Total VAT:</span>
                     <span className="font-bold text-blue-600 dark:text-blue-400">{formatCurrency(order.vatAmount || order.tax || 0)}</span>
                   </div>
+                  {chargeRows.length > 0 && (
+                    <div className="space-y-2 border-t pt-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Applied levies & charges</p>
+                      {chargeRows.map((charge) => (
+                        <div key={`${charge.id}-${charge.name}`} className="flex items-start justify-between gap-3 text-sm">
+                          <div className="min-w-0">
+                            <p className="font-medium break-words">{charge.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {charge.chargeType === 'LEVY'
+                                ? 'Levy'
+                                : charge.chargeType === 'SERVICE_CHARGE'
+                                  ? 'Service charge'
+                                  : 'Other charge'}
+                              {charge.rate > 0 ? ` · ${charge.rate.toFixed(2)}%` : ''}
+                              {' · '}
+                              {charge.calculationMethod === 'inclusive' ? 'Included in price' : 'Added to sale'}
+                            </p>
+                          </div>
+                          <span className="shrink-0 font-semibold text-amber-700 dark:text-amber-400">
+                            {formatCurrency(charge.amount)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {chargeBreakdown.levies > 0 && (
                     <div className="flex justify-between pt-2">
                       <span className="text-muted-foreground font-medium">Levies:</span>

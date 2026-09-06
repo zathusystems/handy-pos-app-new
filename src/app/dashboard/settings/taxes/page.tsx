@@ -721,7 +721,7 @@ export default function TaxesSettingsPage() {
                   <div>
                     <CardTitle>Tax Rate Management</CardTitle>
                     <CardDescription>
-                      Define tax rates to be applied to sales and invoices.
+                      Active rates are available for use. Mark one as Default only when it should apply automatically to products without an EIS tax mapping.
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">

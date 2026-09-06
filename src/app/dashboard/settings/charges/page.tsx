@@ -191,21 +191,21 @@ function ChargeForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField control={form.control} name="applicationRule" render={({ field }) => (
             <FormItem>
-              <FormLabel>Apply To</FormLabel>
+              <FormLabel>When to apply</FormLabel>
               <Select value={field.value} onValueChange={field.onChange}>
                 <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                 <SelectContent>
                   <SelectItem value="all_sales">Every sale</SelectItem>
-                  <SelectItem value="over_amount">Only sales over an amount</SelectItem>
+                  <SelectItem value="over_amount">Only when sale is above an amount</SelectItem>
                 </SelectContent>
               </Select>
-              <FormDescription>The sale total is checked after VAT and before this charge.</FormDescription>
+              <FormDescription>Choose which sales qualify for this charge. The qualifying sale total includes VAT but excludes this charge.</FormDescription>
             </FormItem>
           )} />
           {applicationRule === 'over_amount' && (
             <FormField control={form.control} name="minimumSaleAmount" render={({ field }) => (
               <FormItem>
-                <FormLabel>Sale Amount</FormLabel>
+                <FormLabel>Minimum qualifying sale</FormLabel>
                 <FormControl>
                   <Input
                     type="number"
@@ -216,7 +216,7 @@ function ChargeForm({
                     onChange={(event) => field.onChange(toNumber(event.target.value, 0))}
                   />
                 </FormControl>
-                <FormDescription>A sale equal to this amount is not charged.</FormDescription>
+                <FormDescription>The charge applies only when the sale total is greater than this amount.</FormDescription>
                 <FormMessage />
               </FormItem>
             )} />
@@ -225,7 +225,7 @@ function ChargeForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField control={form.control} name="calculationBase" render={({ field }) => (
             <FormItem>
-              <FormLabel>Calculate From</FormLabel>
+              <FormLabel>Percentage calculated from</FormLabel>
               <Select value={field.value} onValueChange={field.onChange}>
                 <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                 <SelectContent>
@@ -233,6 +233,7 @@ function ChargeForm({
                   <SelectItem value="gross_total">Gross total after VAT</SelectItem>
                 </SelectContent>
               </Select>
+              <FormDescription>Choose the amount used to calculate the percentage after the sale qualifies above.</FormDescription>
             </FormItem>
           )} />
           <FormField control={form.control} name="calculationMethod" render={({ field }) => (

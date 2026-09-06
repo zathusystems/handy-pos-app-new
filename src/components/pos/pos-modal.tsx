@@ -1146,14 +1146,7 @@ export function PosModal({
 
       const activeTaxes = taxes.filter((tax) => tax.isActive !== false);
       const defaultTax = activeTaxes.find((tax) => tax.isDefault);
-      if (defaultTax) return defaultTax;
-
-      return activeTaxes
-        .sort((a, b) => {
-          const timeA = Date.parse(a.updatedAt || a.createdAt || '');
-          const timeB = Date.parse(b.updatedAt || b.createdAt || '');
-          return (Number.isFinite(timeB) ? timeB : 0) - (Number.isFinite(timeA) ? timeA : 0);
-        })[0] ?? null;
+      return defaultTax ?? null;
     },
     [business?.id],
     null
@@ -1450,7 +1443,7 @@ export function PosModal({
       return false;
     }
 
-    if (blockSalesIfTaxMappingMissing && !isPreparedMenuItem) {
+    if (eisEnabled || blockSalesIfTaxMappingMissing) {
       // ALWAYS check if product has APPROVED AND SYNCED MRA mapping (regardless of EIS status)
       // Backend requires BOTH is_approved AND mra_synced to be true for sale
       // This is required for MRA compliance - MANDATORY CHECK
@@ -1628,7 +1621,7 @@ export function PosModal({
         return false;
       }
     } else {
-      console.log('[POS Modal] Tax mapping enforcement disabled, skipping MRA mapping validation for:', item.name);
+      console.log('[POS Modal] MRA mapping enforcement disabled, skipping mapping validation for:', item.name);
     }
 
     const isRecipeManagedSaleItem =
@@ -1728,7 +1721,7 @@ export function PosModal({
     }
 
     return true;
-  }, [branchId, blockSalesIfTaxMappingMissing, cart, toast, toPositiveNumber, updateActiveCartItems]);
+  }, [branchId, blockSalesIfTaxMappingMissing, cart, eisEnabled, toast, toPositiveNumber, updateActiveCartItems]);
 
   const handleProcessTakeOrderForSale = useCallback(async (order: TakeOrder): Promise<boolean> => {
     if (!activeSession || !isSessionActive(activeSession) || !isSessionOwnedByCurrentUser(activeSession)) {
@@ -2174,7 +2167,8 @@ export function PosModal({
     const localMappings = filterMappingsForBranch(await db.mraMappings.toArray(), branchId);
     const mappingByItemId = buildMappingLookup(localMappings);
 
-    if (blockSalesIfTaxMappingMissing) {
+    const requiresApprovedMraMapping = eisEnabled || blockSalesIfTaxMappingMissing;
+    if (requiresApprovedMraMapping) {
       const unmappedProducts: string[] = [];
       const unapprovedProducts: string[] = [];
       const unsyncedProducts: string[] = [];
@@ -2233,7 +2227,7 @@ export function PosModal({
     // Build tax snapshot from approved+synced mappings for consistent order math.
     // When mapping enforcement is disabled, fall back to the default tax rate for unmapped items.
     let cartItemTaxRates: Record<string, { rate: number; taxType: 'standard' | 'zero' | 'exempt'; calculationMethod: 'inclusive' | 'exclusive' }> = {};
-    const shouldApplyDefaultTax = !blockSalesIfTaxMappingMissing && Boolean(defaultTaxRate);
+    const shouldApplyDefaultTax = !requiresApprovedMraMapping && Boolean(defaultTaxRate);
     const defaultTaxType = defaultTaxRate ? normalizeMappedTaxType(defaultTaxRate.taxType) : 'standard';
     const rawDefaultRate = defaultTaxRate ? toTaxRateDecimal(defaultTaxRate.rate) : 0;
     const normalizedDefaultRate = defaultTaxType === 'zero' || defaultTaxType === 'exempt' ? 0 : rawDefaultRate;

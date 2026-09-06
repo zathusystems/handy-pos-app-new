@@ -990,7 +990,7 @@ const PaymentDialog = ({
     const [productTaxMappings, setProductTaxMappings] = useState<Record<string, ProductTaxMappingDetail>>({});
     const [unmappedProducts, setUnmappedProducts] = useState<string[]>([]);
     const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-    const shouldEnforceTaxMapping = eisEnabled && blockSalesIfTaxMappingMissing === true;
+    const shouldEnforceTaxMapping = Boolean(eisEnabled || blockSalesIfTaxMappingMissing);
     const defaultTaxRateDecimal = defaultTaxRate ? defaultTaxRate.rate / 100 : 0;
     const activeBranchId = useMemo(
         () => branchId ?? safeLocalStorageGetItem('handypos-active-branch') ?? 'main',
@@ -3273,7 +3273,7 @@ export const GenericPos = ({
   const { format: formatCurrency } = useCurrency();
   const { toast } = useToast();
   const billPrintLockRef = useRef(false);
-  const shouldEnforceTaxMapping = eisEnabled && blockSalesIfTaxMappingMissing === true;
+  const shouldEnforceTaxMapping = Boolean(eisEnabled || blockSalesIfTaxMappingMissing);
   const isInlineCheckout = checkoutMode === 'inline' && isMobileViewport;
   const isInlineMobileCart = mobileCartDisplay === 'inline' && isMobileViewport;
   const mobileCartOpen = isMobileCartOpen ?? internalMobileCartOpen;

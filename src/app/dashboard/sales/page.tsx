@@ -679,6 +679,9 @@ export default function ReportsPage() {
         { label: 'Laybuy Outstanding', value: displayedPaymentBreakdown.laybuyOutstanding },
     ].filter((row) => row.value > 0);
 
+    const levyChargeRows = data.chargeBreakdown.filter((charge) => charge.chargeType === 'LEVY');
+    const otherChargeRows = data.chargeBreakdown.filter((charge) => charge.chargeType !== 'LEVY');
+
     const handleExportReport = () => {
         if (!allOrders || allOrders.length === 0) {
             toast({
@@ -969,7 +972,7 @@ export default function ReportsPage() {
                     <Card className="col-span-1 lg:col-span-2">
                         <CardHeader>
                             <CardTitle>Profit & Loss</CardTitle>
-                            <CardDescription>Sales value, costs, and expenses for the selected period.</CardDescription>
+                            <CardDescription>Operating performance before VAT and separate sale charges.</CardDescription>
                         </CardHeader>
                         <CardContent>
                             {loading ? (
@@ -983,15 +986,7 @@ export default function ReportsPage() {
                             ) : (
                                 <Table>
                                     <TableBody>
-                                        <TableRow><TableCell>Subtotal (Before Tax)</TableCell><TableCell className="text-right font-medium">{formatCurrency(data.totalSubtotal)}</TableCell></TableRow>
-                                        <TableRow><TableCell>Tax Amount</TableCell><TableCell className="text-right font-medium text-green-600">+{formatCurrency(data.totalTax)}</TableCell></TableRow>
-                                        {data.totalLevies > 0 && (
-                                            <TableRow><TableCell>Levies</TableCell><TableCell className="text-right font-medium text-amber-700">+{formatCurrency(data.totalLevies)}</TableCell></TableRow>
-                                        )}
-                                        {data.totalOtherCharges > 0 && (
-                                            <TableRow><TableCell>Other Charges</TableCell><TableCell className="text-right font-medium text-amber-700">+{formatCurrency(data.totalOtherCharges)}</TableCell></TableRow>
-                                        )}
-                                        <TableRow className="bg-muted/50 font-semibold"><TableCell>Sales Value</TableCell><TableCell className="text-right">{formatCurrency(data.totalRevenue)}</TableCell></TableRow>
+                                        <TableRow><TableCell>Net Sales</TableCell><TableCell className="text-right font-medium">{formatCurrency(data.totalSubtotal)}</TableCell></TableRow>
                                         <TableRow><TableCell>Cost of Goods Sold (COGS)</TableCell><TableCell className="text-right font-medium">{`-${formatCurrency(data.totalCogs)}`}</TableCell></TableRow>
                                         <TableRow className="bg-muted/50 font-semibold"><TableCell>Gross Profit</TableCell><TableCell className="text-right">{formatCurrency(data.grossProfit)}</TableCell></TableRow>
                                         <TableRow><TableCell>Operating Expenses</TableCell><TableCell className="text-right font-medium">{`-${formatCurrency(data.totalExpenses)}`}</TableCell></TableRow>
@@ -1002,6 +997,86 @@ export default function ReportsPage() {
                         </CardContent>
                     </Card>
                 </div>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Tax, Levies & Charges</CardTitle>
+                        <CardDescription>VAT and every levy or charge applied to completed sales in the selected period.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                        {loading ? (
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                                {[...Array(6)].map((_, index) => <Skeleton key={index} className="h-20 w-full" />)}
+                            </div>
+                        ) : (
+                            <>
+                                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                                    <div className="rounded-md border p-3">
+                                        <p className="text-xs font-medium text-muted-foreground">Net Sales</p>
+                                        <p className="mt-1 text-lg font-semibold">{formatCurrency(data.totalSubtotal)}</p>
+                                    </div>
+                                    <div className="rounded-md border p-3">
+                                        <p className="text-xs font-medium text-muted-foreground">VAT</p>
+                                        <p className="mt-1 text-lg font-semibold text-blue-700">{formatCurrency(data.totalTax)}</p>
+                                    </div>
+                                    <div className="rounded-md border p-3">
+                                        <p className="text-xs font-medium text-muted-foreground">Levies</p>
+                                        <p className="mt-1 text-lg font-semibold text-amber-700">{formatCurrency(data.totalLevies)}</p>
+                                    </div>
+                                    <div className="rounded-md border p-3">
+                                        <p className="text-xs font-medium text-muted-foreground">Other Charges</p>
+                                        <p className="mt-1 text-lg font-semibold text-amber-700">{formatCurrency(data.totalOtherCharges)}</p>
+                                    </div>
+                                    <div className="rounded-md border p-3">
+                                        <p className="text-xs font-medium text-muted-foreground">Total Charges</p>
+                                        <p className="mt-1 text-lg font-semibold text-amber-700">{formatCurrency(data.totalCharges)}</p>
+                                    </div>
+                                    <div className="rounded-md border p-3">
+                                        <p className="text-xs font-medium text-muted-foreground">Sales Value</p>
+                                        <p className="mt-1 text-lg font-semibold text-green-700">{formatCurrency(data.totalRevenue)}</p>
+                                    </div>
+                                </div>
+
+                                {data.chargeBreakdown.length > 0 ? (
+                                    <div className="grid gap-5 lg:grid-cols-2">
+                                        <div className="space-y-2">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <h3 className="text-sm font-semibold">Levies</h3>
+                                                <span className="text-sm font-semibold text-amber-700">{formatCurrency(data.totalLevies)}</span>
+                                            </div>
+                                            {levyChargeRows.length > 0 ? levyChargeRows.map((charge) => (
+                                                <div key={`${charge.chargeType}-${charge.name}-${charge.rate}`} className="flex items-start justify-between gap-3 border-t py-2 text-sm">
+                                                    <div className="min-w-0">
+                                                        <p className="font-medium break-words">{charge.name}{charge.rate > 0 ? ` (${charge.rate.toFixed(2)}%)` : ''}</p>
+                                                        <p className="text-xs text-muted-foreground">Applied on {charge.saleCount} sale{charge.saleCount === 1 ? '' : 's'}</p>
+                                                    </div>
+                                                    <span className="shrink-0 font-semibold text-amber-700">{formatCurrency(charge.amount)}</span>
+                                                </div>
+                                            )) : <p className="border-t py-2 text-sm text-muted-foreground">No levies applied in this period.</p>}
+                                        </div>
+                                        <div className="space-y-2">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <h3 className="text-sm font-semibold">Other Charges</h3>
+                                                <span className="text-sm font-semibold text-amber-700">{formatCurrency(data.totalOtherCharges)}</span>
+                                            </div>
+                                            {otherChargeRows.length > 0 ? otherChargeRows.map((charge) => (
+                                                <div key={`${charge.chargeType}-${charge.name}-${charge.rate}`} className="flex items-start justify-between gap-3 border-t py-2 text-sm">
+                                                    <div className="min-w-0">
+                                                        <p className="font-medium break-words">{charge.name}{charge.rate > 0 ? ` (${charge.rate.toFixed(2)}%)` : ''}</p>
+                                                        <p className="text-xs text-muted-foreground">Applied on {charge.saleCount} sale{charge.saleCount === 1 ? '' : 's'}</p>
+                                                    </div>
+                                                    <span className="shrink-0 font-semibold text-amber-700">{formatCurrency(charge.amount)}</span>
+                                                </div>
+                                            )) : <p className="border-t py-2 text-sm text-muted-foreground">No other charges applied in this period.</p>}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm text-muted-foreground">No levies or other charges were applied in this period.</p>
+                                )}
+                            </>
+                        )}
+                    </CardContent>
+                </Card>
 
                 <Card>
                     <CardHeader>
@@ -1048,26 +1123,31 @@ export default function ReportsPage() {
                     <CardDescription>A detailed list of all orders within the selected period.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <Table>
+                    <div className="overflow-x-auto">
+                    <Table className="min-w-[860px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Order #</TableHead>
                                 <TableHead>Date</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Payment</TableHead>
+                                <TableHead className="text-right">VAT</TableHead>
+                                <TableHead className="text-right">Levies / Charges</TableHead>
                                 <TableHead className="text-right">Total</TableHead>
                                 <TableHead className="text-right">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {!allOrders ? (
-                                <TableRow><TableCell colSpan={6} className="text-center"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
+                                <TableRow><TableCell colSpan={8} className="text-center"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
                             ) : allOrders.map(order => (
                                 <TableRow key={order.id} className={`${order.status === 'Voided' ? 'opacity-60' : ''}`}>
                                     <TableCell className="font-mono">#{order.orderNumber}</TableCell>
                                     <TableCell>{format(new Date(order.createdAt), 'PPpp')}</TableCell>
                                     <TableCell><Badge variant={orderStatusBadge[order.status]}>{order.status}</Badge></TableCell>
                                     <TableCell><Badge variant="outline">{order.paymentMethod}</Badge></TableCell>
+                                    <TableCell className="text-right text-blue-700">{formatCurrency(Number(order.tax ?? order.vatAmount ?? order.vat_amount ?? 0))}</TableCell>
+                                    <TableCell className="text-right text-amber-700">{formatCurrency(getOrderChargeBreakdown(order as any).total)}</TableCell>
                                     <TableCell className="text-right font-semibold">{formatCurrency(order.total)}</TableCell>
                                     <TableCell className="text-right">
                                         <DropdownMenu>
@@ -1088,6 +1168,7 @@ export default function ReportsPage() {
                             ))}
                         </TableBody>
                     </Table>
+                    </div>
                 </CardContent>
             </Card>
         </TabsContent>
@@ -1388,6 +1469,14 @@ export default function ReportsPage() {
             onOpenChange={(open) => !open && setRefundingOrder(null)}
         />
     )}
+    <SaleDetailModal
+        order={selectedOrder}
+        isOpen={detailModalOpen}
+        onOpenChange={(open) => {
+            setDetailModalOpen(open);
+            if (!open) setSelectedOrder(null);
+        }}
+    />
     </>
   );
 }

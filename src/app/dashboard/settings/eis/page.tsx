@@ -417,6 +417,9 @@ export default function EISSettingsPage() {
   const saveSettings = async (): Promise<boolean> => {
     if (!businessId) return false;
 
+    const requiresApprovedMraMapping = (
+      settings.enableEis || settings.blockSalesIfTaxMappingMissing
+    );
     setIsSaving(true);
     try {
       const response = await authFetch.fetch(`/business/businesses/${businessId}/`, {
@@ -425,11 +428,14 @@ export default function EISSettingsPage() {
           enable_eis: settings.enableEis,
           eis_environment: settings.eisEnvironment,
           block_sales_if_eis_down: settings.blockSalesIfEisDown,
-          block_sales_if_tax_mapping_missing: settings.blockSalesIfTaxMappingMissing,
+          block_sales_if_tax_mapping_missing: requiresApprovedMraMapping,
         }),
       });
 
       const nextSettings = mapSettings(response);
+      nextSettings.blockSalesIfTaxMappingMissing = (
+        nextSettings.enableEis || nextSettings.blockSalesIfTaxMappingMissing
+      );
       setSettings(nextSettings);
       localStorage.setItem(
         'handypos-business-settings',
@@ -889,7 +895,7 @@ export default function EISSettingsPage() {
           </Card>
 
           <details className="rounded-lg border bg-card px-5 py-4">
-            <summary className="cursor-pointer font-medium">Optional sales safeguards</summary>
+            <summary className="cursor-pointer font-medium">Sales safeguards</summary>
             <div className="mt-4 space-y-4 border-t pt-4">
               <div className="flex items-center justify-between gap-4">
                 <div>
@@ -904,13 +910,16 @@ export default function EISSettingsPage() {
               </div>
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium">Block sales without product mappings</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Turn this on after your MRA product mappings are complete.</p>
+                  <p className="text-sm font-medium">Require approved MRA product mappings</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Always required while EIS is enabled. Turn it on here only to use the same validation before enabling EIS.
+                  </p>
                 </div>
                 <Switch
-                  checked={settings.blockSalesIfTaxMappingMissing}
+                  checked={settings.enableEis || settings.blockSalesIfTaxMappingMissing}
                   onCheckedChange={(checked) => updateSetting('blockSalesIfTaxMappingMissing', checked)}
-                  aria-label="Block sales without product mappings"
+                  aria-label="Require approved MRA product mappings"
+                  disabled={settings.enableEis}
                 />
               </div>
             </div>

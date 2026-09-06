@@ -10,7 +10,10 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from business.customer_accounts import resolve_customer_for_account_payload
-from .stock_validation import validate_stock_available_for_order_lines
+from .stock_validation import (
+    validate_mra_product_mappings_for_order_lines,
+    validate_stock_available_for_order_lines,
+)
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -306,6 +309,26 @@ class OrderSerializer(serializers.ModelSerializer):
                         'customer': 'This customer account is not enabled for credit sales.'
                     })
 
+            eis_enabled = False
+            try:
+                from mra_eis.services import is_business_eis_enabled
+
+                eis_enabled = is_business_eis_enabled(business)
+            except Exception:
+                eis_enabled = False
+
+            if eis_enabled:
+                try:
+                    validate_mra_product_mappings_for_order_lines(
+                        items_data,
+                        business,
+                        branch,
+                    )
+                except DjangoValidationError as exc:
+                    raise serializers.ValidationError(
+                        exc.message_dict if hasattr(exc, 'message_dict') else str(exc)
+                    )
+
             try:
                 validate_stock_available_for_order_lines(items_data, business, branch)
             except DjangoValidationError as exc:
@@ -323,13 +346,6 @@ class OrderSerializer(serializers.ModelSerializer):
             validated_data['tax_type'] = tax_snapshot['tax_type']
             validated_data['vat_amount'] = tax_snapshot['vat_amount']
             validated_data['net_amount'] = tax_snapshot['net_amount']
-            eis_enabled = False
-            try:
-                from mra_eis.services import is_business_eis_enabled
-
-                eis_enabled = is_business_eis_enabled(business)
-            except Exception:
-                eis_enabled = False
 
             from .charge_utils import calculate_configured_business_charges
             from .levy_utils import calculate_mra_levy_charges

@@ -235,6 +235,76 @@ def _build_stock_targets(order_lines, business, branch):
     return list(targets.values()), missing
 
 
+def get_mra_product_mapping_issues(order_lines, business, branch):
+    """Return sale lines that are not ready for an MRA EIS transaction."""
+    issues = {
+        'unmapped_products': [],
+        'unapproved_products': [],
+        'unsynced_products': [],
+    }
+    if not business or not branch:
+        return issues
+
+    from inventory.models import MRAProductMapping
+
+    seen = {key: set() for key in issues}
+
+    def add_issue(key, value):
+        label = _clean_text(value) or 'Unknown item'
+        if label not in seen[key]:
+            seen[key].add(label)
+            issues[key].append(label)
+
+    for line in order_lines or []:
+        item_name = _clean_text(_line_value(line, 'name'))
+        is_prepared_menu_item = bool(
+            _line_value(line, 'is_prepared_menu_item', 'isPreparedMenuItem')
+        )
+        item_reference = _first_non_empty(
+            _line_value(line, 'inventory_item_id', 'inventoryItemId', 'inventory_item')
+        )
+        if not item_reference and not is_prepared_menu_item:
+            item_reference = _first_non_empty(_line_value(line, 'id'))
+
+        inventory_item = _resolve_inventory_item(
+            business,
+            branch,
+            item_reference,
+            item_name,
+        )
+        label = item_name or item_reference
+        if not inventory_item:
+            add_issue('unmapped_products', label)
+            continue
+
+        mapping = MRAProductMapping.objects.filter(
+            inventory_item=inventory_item,
+        ).first()
+        if not mapping:
+            add_issue('unmapped_products', inventory_item.name)
+        elif not mapping.is_approved:
+            add_issue('unapproved_products', inventory_item.name)
+        elif not mapping.mra_synced:
+            add_issue('unsynced_products', inventory_item.name)
+
+    return issues
+
+
+def validate_mra_product_mappings_for_order_lines(order_lines, business, branch):
+    """Require approved, synced MRA product mappings for every sale line."""
+    issues = get_mra_product_mapping_issues(order_lines, business, branch)
+    if not any(issues.values()):
+        return
+
+    raise ValidationError({
+        'error': (
+            'MRA EIS requires every sale item to have an approved and synced '
+            'MRA product mapping.'
+        ),
+        **issues,
+    })
+
+
 def validate_stock_available_for_order_lines(order_lines, business, branch):
     """
     Validate stock before accepting a sale/order.

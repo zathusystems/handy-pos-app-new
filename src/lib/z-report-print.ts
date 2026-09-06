@@ -171,6 +171,87 @@ export type ZReportChargeBreakdown = {
   inclusive: number;
 };
 
+export type OrderChargeSnapshotRow = {
+  id: string;
+  name: string;
+  chargeType: 'LEVY' | 'SERVICE_CHARGE' | 'OTHER';
+  rate: number;
+  calculationMethod: 'exclusive' | 'inclusive';
+  amount: number;
+};
+
+/**
+ * Read the named charge rows captured at sale time. Older orders may only
+ * contain a total; those retain their value as an explicitly unclassified row.
+ */
+export const getOrderChargeSnapshotRows = (
+  order: Pick<ZReportOrderRecord, 'chargesAmount' | 'charges_amount' | 'chargesSnapshot' | 'charges_snapshot'>
+): OrderChargeSnapshotRow[] => {
+  const snapshot = Array.isArray(order.chargesSnapshot)
+    ? order.chargesSnapshot
+    : Array.isArray(order.charges_snapshot)
+      ? order.charges_snapshot
+      : [];
+  const rows: OrderChargeSnapshotRow[] = [];
+
+  snapshot.forEach((entry, index) => {
+    const amount = Math.max(0, toFiniteNumber(
+      entry?.amount ?? entry?.charge_amount ?? entry?.chargeAmount,
+      0
+    ));
+    if (amount <= 0) return;
+
+    const rawChargeType = String(
+      entry?.chargeType ?? entry?.charge_type ?? entry?.type ?? ''
+    ).trim().toUpperCase();
+    const chargeType: OrderChargeSnapshotRow['chargeType'] = rawChargeType === 'LEVY'
+      ? 'LEVY'
+      : rawChargeType === 'SERVICE_CHARGE'
+        ? 'SERVICE_CHARGE'
+        : 'OTHER';
+    const calculationMethod: OrderChargeSnapshotRow['calculationMethod'] = String(
+      entry?.calculationMethod ?? entry?.calculation_method ?? ''
+    ).trim().toLowerCase() === 'inclusive'
+      ? 'inclusive'
+      : 'exclusive';
+    const rate = Math.max(0, toFiniteNumber(
+      entry?.rate ?? entry?.levyRate ?? entry?.levy_rate,
+      0
+    ));
+    const name = toTrimmedString(entry?.name) || (
+      chargeType === 'LEVY' ? 'Levy' : chargeType === 'SERVICE_CHARGE' ? 'Service charge' : 'Other charge'
+    );
+
+    rows.push({
+      id: toTrimmedString(entry?.id) || `${chargeType.toLowerCase()}-${index}`,
+      name,
+      chargeType,
+      rate,
+      calculationMethod,
+      amount,
+    });
+  });
+
+  const declaredTotal = Math.max(0, toFiniteNumber(
+    order.chargesAmount ?? order.charges_amount,
+    0
+  ));
+  const capturedTotal = rows.reduce((total, row) => total + row.amount, 0);
+  const unclassifiedAmount = Math.max(0, declaredTotal - capturedTotal);
+  if (unclassifiedAmount > 0) {
+    rows.push({
+      id: 'unclassified-charge',
+      name: 'Unclassified charge',
+      chargeType: 'OTHER',
+      rate: 0,
+      calculationMethod: 'exclusive',
+      amount: unclassifiedAmount,
+    });
+  }
+
+  return rows;
+};
+
 /** Read the immutable charge snapshot saved with a completed sale. */
 export const getOrderChargeBreakdown = (
   order: Pick<ZReportOrderRecord, 'chargesAmount' | 'charges_amount' | 'chargesSnapshot' | 'charges_snapshot'>

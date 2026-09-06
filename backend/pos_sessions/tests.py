@@ -20,6 +20,7 @@ from business.models import (
     CustomerLaybuyPayment,
     CustomerLaybuyReservation,
     Invoice,
+    TaxRate,
 )
 from business.customer_accounts import (
     collect_laybuy,
@@ -664,7 +665,7 @@ class SyncPushOrderTests(TestCase):
             owner=self.user,
             name='Sync Push Test Business',
         )
-        BusinessSettings.objects.create(
+        self.business_settings = BusinessSettings.objects.create(
             business=self.business,
             block_sales_if_tax_mapping_missing=True,
         )
@@ -835,6 +836,32 @@ class SyncPushOrderTests(TestCase):
 
         self.inventory_item.refresh_from_db()
         self.assertEqual(self.inventory_item.stock_units, Decimal('9.000'))
+
+    def test_sync_push_does_not_apply_an_active_tax_that_is_not_default(self):
+        self.business_settings.block_sales_if_tax_mapping_missing = False
+        self.business_settings.save(update_fields=['block_sales_if_tax_mapping_missing', 'updated_at'])
+        MRAProductMapping.objects.filter(inventory_item=self.inventory_item).delete()
+        TaxRate.objects.create(
+            business=self.business,
+            name='Available but not default VAT',
+            rate=Decimal('16.50'),
+            tax_type='VAT_STANDARD',
+            is_default=False,
+            effective_from=timezone.localdate(),
+            is_active=True,
+            created_by=self.user,
+        )
+
+        order_id = str(uuid.uuid4())
+        response = self.client.post('/sessions/sync/push/', self._build_sync_payload(order_id), format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['results']['errors'], [])
+        created_order = Order.objects.get(id=order_id)
+        created_item = created_order.items.get()
+        self.assertEqual(created_order.vat_amount, Decimal('0.00'))
+        self.assertEqual(created_item.tax_rate, Decimal('0.00'))
+        self.assertEqual(created_item.tax_amount, Decimal('0.00'))
 
     def test_sync_push_records_cash_change_tip_in_session_totals(self):
         order_id = str(uuid.uuid4())
@@ -1120,6 +1147,51 @@ class SyncPushOrderTests(TestCase):
         self.assertEqual(Order.objects.filter(id=order_id).count(), 0)
         self.assertTrue(response.data['results']['errors'])
         self.assertIn('unsynced MRA mappings', response.data['results']['errors'][0]['error'])
+
+    def test_sync_push_requires_mra_mapping_when_eis_is_enabled(self):
+        self.business_settings.enable_eis = True
+        self.business_settings.block_sales_if_tax_mapping_missing = False
+        self.business_settings.save(update_fields=[
+            'enable_eis',
+            'block_sales_if_tax_mapping_missing',
+            'updated_at',
+        ])
+        MRAProductMapping.objects.filter(inventory_item=self.inventory_item).delete()
+
+        order_id = str(uuid.uuid4())
+        response = self.client.post(
+            '/sessions/sync/push/',
+            self._build_sync_payload(order_id),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Order.objects.filter(id=order_id).count(), 0)
+        self.assertTrue(response.data['results']['errors'])
+        self.assertIn(
+            'Products without MRA mappings',
+            response.data['results']['errors'][0]['error'],
+        )
+
+    def test_direct_pos_sale_requires_mra_mapping_when_eis_is_enabled(self):
+        self.business_settings.enable_eis = True
+        self.business_settings.block_sales_if_tax_mapping_missing = False
+        self.business_settings.save(update_fields=[
+            'enable_eis',
+            'block_sales_if_tax_mapping_missing',
+            'updated_at',
+        ])
+        MRAProductMapping.objects.filter(inventory_item=self.inventory_item).delete()
+
+        order_id = str(uuid.uuid4())
+        payload = self._build_sync_payload(order_id)['changes'][0]['data']
+        payload['branch'] = str(self.branch.id)
+
+        response = self.client.post('/sessions/orders/', payload, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Order.objects.filter(id=order_id).count(), 0)
+        self.assertIn('unmapped_products', response.data)
 
     def test_sync_push_cash_sale_can_be_assigned_to_customer_without_credit_debit(self):
         customer = Customer.objects.create(
