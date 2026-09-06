@@ -7,6 +7,12 @@ type AudioWindow = Window & typeof globalThis & {
 };
 
 let audioContext: AudioContext | null = null;
+let orderNotificationAudio: HTMLAudioElement | null = null;
+let notificationAudioUnlocked = false;
+let lastNotificationAt = 0;
+
+const ORDER_NOTIFICATION_SOUND_SRC = '/sounds/order-bell.mp3';
+const ORDER_NOTIFICATION_COOLDOWN_MS = 900;
 
 const getAudioContext = (): AudioContext | null => {
   if (typeof window === 'undefined') return null;
@@ -22,18 +28,47 @@ const getAudioContext = (): AudioContext | null => {
   return audioContext;
 };
 
+const getOrderNotificationAudio = (): HTMLAudioElement | null => {
+  if (typeof window === 'undefined') return null;
+
+  if (!orderNotificationAudio) {
+    orderNotificationAudio = new Audio(ORDER_NOTIFICATION_SOUND_SRC);
+    orderNotificationAudio.preload = 'auto';
+    orderNotificationAudio.volume = 1;
+  }
+
+  return orderNotificationAudio;
+};
+
 export const unlockOrderNotificationSound = async () => {
   const context = getAudioContext();
-  if (!context || context.state !== 'suspended') return;
+  if (context?.state === 'suspended') {
+    try {
+      await context.resume();
+    } catch (error) {
+      console.warn('[OrderSound] Unable to unlock audio context:', error);
+    }
+  }
+
+  if (notificationAudioUnlocked) return;
+
+  const audio = getOrderNotificationAudio();
+  if (!audio) return;
 
   try {
-    await context.resume();
+    audio.muted = true;
+    await audio.play();
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+    notificationAudioUnlocked = true;
   } catch (error) {
-    console.warn('[OrderSound] Unable to unlock audio context:', error);
+    audio.muted = false;
+    console.warn('[OrderSound] Unable to unlock notification audio:', error);
   }
 };
 
-export const playOrderNotificationSound = async () => {
+const playFallbackOrderNotificationSound = async () => {
   const context = getAudioContext();
   if (!context) return;
 
@@ -62,6 +97,29 @@ export const playOrderNotificationSound = async () => {
   } catch (error) {
     console.warn('[OrderSound] Unable to play notification sound:', error);
   }
+};
+
+export const playOrderNotificationSound = async () => {
+  const now = Date.now();
+  if (now - lastNotificationAt < ORDER_NOTIFICATION_COOLDOWN_MS) return;
+
+  lastNotificationAt = now;
+
+  const audio = getOrderNotificationAudio();
+  if (audio) {
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      audio.volume = 1;
+      await audio.play();
+      return;
+    } catch (error) {
+      console.warn('[OrderSound] Unable to play bell audio; using fallback:', error);
+    }
+  }
+
+  await playFallbackOrderNotificationSound();
 };
 
 export const useOrderNotificationSound = (
