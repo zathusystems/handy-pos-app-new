@@ -58,10 +58,14 @@ import {
 } from '@/lib/session-stock-tracking';
 import { syncService } from '@/lib/services/sync-service';
 import {
+  buildSessionStockReportPrintHtml,
+  buildXReportPrintHtml,
   buildZReportPrintHtml,
   calculateZReportSummary,
   isSessionClosedForZReport,
   SESSION_END_REPORT_TITLE,
+  SESSION_STOCK_REPORT_TITLE,
+  SESSION_X_REPORT_TITLE,
 } from '@/lib/z-report-print';
 import {
   formatInventoryQuantity,
@@ -82,6 +86,42 @@ const LOCAL_STORAGE_KEYS = {
     ACTIVE_BRANCH: 'handypos-active-branch'
 };
 const BRANCHES_STORAGE_KEY = 'handypos-branches';
+
+type SessionReportPrintResult =
+    | { success: true; printerName: string }
+    | { success: false; reason: 'missing-printer' | 'print-failed' };
+
+const printSessionReport = async (htmlContent: string): Promise<SessionReportPrintResult> => {
+    const activeBranchId = localStorage.getItem(LOCAL_STORAGE_KEYS.ACTIVE_BRANCH) || 'main';
+    const [{ printerService }, { silentPrintService }] = await Promise.all([
+        import('@/lib/services/printer-service'),
+        import('@/lib/services/silent-print-service'),
+    ]);
+
+    const [printerSettings, defaultPrinter] = await Promise.all([
+        printerService.getPrinterSettings(activeBranchId),
+        printerService.getDefaultPrinter(activeBranchId),
+    ]);
+
+    if (!defaultPrinter) {
+        return { success: false, reason: 'missing-printer' };
+    }
+
+    const selectedPaperSize: '80mm' | '58mm' =
+        printerSettings.receiptPaperWidth === '58mm' ? '58mm' : '80mm';
+    const didPrint = await silentPrintService.printSilentlyViaSystem(htmlContent, {
+        printerName: defaultPrinter.name,
+        printerId: defaultPrinter.id,
+        copies: 1,
+        paperSize: selectedPaperSize,
+        printerPaperSize: defaultPrinter.paperWidth === '58mm' ? '58mm' : '80mm',
+        timeout: 20000,
+    });
+
+    return didPrint
+        ? { success: true, printerName: defaultPrinter.name }
+        : { success: false, reason: 'print-failed' };
+};
 
 const isPlaceholderBranchId = (value?: string | null): boolean => {
     const normalized = String(value ?? '').trim().toLowerCase();
@@ -603,6 +643,7 @@ const SessionSalesList = ({ sessionId }: { sessionId: string }) => {
 const ZReportTab = ({ session }: { session: Session }) => {
     const { format: formatCurrency } = useCurrency();
     const [isPrintingZReport, setIsPrintingZReport] = useState(false);
+    const [isPrintingXReport, setIsPrintingXReport] = useState(false);
     
     const sessionOrders = useLiveQuery(
         () => db.orders.where({ sessionId: session.id }).toArray(),
@@ -711,27 +752,115 @@ const ZReportTab = ({ session }: { session: Session }) => {
         }
     }, [formatCurrency, isSessionClosed, session, sessionOrders]);
 
+    const handlePrintXReport = useCallback(async () => {
+        if (isSessionClosed) {
+            return;
+        }
+
+        try {
+            setIsPrintingXReport(true);
+            let reportOrders = sessionOrders;
+            try {
+                const syncedOrders = await syncSessionOrdersToLocalDb({
+                    sessionId: session.id,
+                    branchId: String(session.branchId || ''),
+                });
+                if (syncedOrders.length > 0) {
+                    reportOrders = syncedOrders;
+                }
+            } catch (syncError) {
+                console.warn('[Sessions Page] Could not refresh session orders before printing X report:', syncError);
+            }
+
+            const reportSummary = calculateZReportSummary(reportOrders as any);
+            const htmlContent = buildXReportPrintHtml({
+                session,
+                paymentBreakdown: reportSummary.paymentBreakdown,
+                financialSummary: reportSummary.financialSummary,
+                formatCurrency,
+            });
+            const printResult = await printSessionReport(htmlContent);
+
+            if (printResult.success === false && printResult.reason === 'missing-printer') {
+                toast({
+                    variant: 'destructive',
+                    title: 'No Printer Configured',
+                    description: `Please configure a default printer before printing the ${SESSION_X_REPORT_TITLE.toLowerCase()}.`,
+                });
+                return;
+            }
+
+            if (printResult.success === false) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Print Failed',
+                    description: `Could not print the ${SESSION_X_REPORT_TITLE.toLowerCase()}. Check the printer connection and try again.`,
+                });
+                return;
+            }
+
+            toast({
+                title: `${SESSION_X_REPORT_TITLE} Printed`,
+                description: `Sent to ${printResult.printerName}`,
+            });
+        } catch (error) {
+            console.error('Error printing X report:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Print Error',
+                description:
+                    error instanceof Error
+                        ? error.message
+                        : `Unexpected error while printing the ${SESSION_X_REPORT_TITLE.toLowerCase()}.`,
+            });
+        } finally {
+            setIsPrintingXReport(false);
+        }
+    }, [formatCurrency, isSessionClosed, session, sessionOrders]);
+
     return (
         <Card>
             <CardHeader>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                        <CardTitle>{SESSION_END_REPORT_TITLE}</CardTitle>
-                        <CardDescription>Complete session summary and cash reconciliation</CardDescription>
+                        <CardTitle>{isSessionClosed ? SESSION_END_REPORT_TITLE : SESSION_X_REPORT_TITLE}</CardTitle>
+                        <CardDescription>
+                            {isSessionClosed
+                                ? 'Complete session summary and cash reconciliation'
+                                : 'Current sales and cash collection snapshot'}
+                        </CardDescription>
                     </div>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!isSessionClosed || isPrintingZReport}
-                        onClick={handlePrintZReport}
-                    >
-                        {isPrintingZReport ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                            <Printer className="mr-2 h-4 w-4" />
-                        )}
-                        {isPrintingZReport ? 'Printing...' : `Print ${SESSION_END_REPORT_TITLE}`}
-                    </Button>
+                    {isSessionClosed ? (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full sm:w-auto"
+                            disabled={isPrintingZReport}
+                            onClick={handlePrintZReport}
+                        >
+                            {isPrintingZReport ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <Printer className="mr-2 h-4 w-4" />
+                            )}
+                            {isPrintingZReport ? 'Printing...' : `Print ${SESSION_END_REPORT_TITLE}`}
+                        </Button>
+                    ) : (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full sm:w-auto"
+                            disabled={isPrintingXReport}
+                            onClick={handlePrintXReport}
+                        >
+                            {isPrintingXReport ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <Printer className="mr-2 h-4 w-4" />
+                            )}
+                            {isPrintingXReport ? 'Printing...' : `Print ${SESSION_X_REPORT_TITLE}`}
+                        </Button>
+                    )}
                 </div>
                 {!isSessionClosed && (
                     <p className="text-xs text-muted-foreground">
@@ -932,6 +1061,7 @@ const ZReportTab = ({ session }: { session: Session }) => {
 
 const StockReportTab = ({ session }: { session: Session }) => {
     const { format: formatCurrency } = useCurrency();
+    const [isPrintingStockReport, setIsPrintingStockReport] = useState(false);
     
     const sessionOrders = useLiveQuery(
         () => db.orders.where({ sessionId: session.id }).toArray(),
@@ -1440,11 +1570,90 @@ const StockReportTab = ({ session }: { session: Session }) => {
         });
     }, [sessionOrders, productIdentity, stockTrackingInventoryLookup]);
 
+    const handlePrintStockReport = useCallback(async () => {
+        try {
+            setIsPrintingStockReport(true);
+            const htmlContent = buildSessionStockReportPrintHtml({
+                session,
+                stockRows: comprehensiveStockData.map((item) => ({
+                    name: item.name,
+                    opening: formatSessionQuantity(item.key, item.opening),
+                    received: formatSessionQuantity(item.key, item.received),
+                    sold: formatSessionQuantity(item.key, item.sold),
+                    waste: formatSessionQuantity(item.key, item.waste),
+                    closing: formatSessionQuantity(item.key, item.remaining),
+                })),
+                optionUsage: optionStockUsageData.map((item) => ({
+                    stockItemName: item.name,
+                    menuItemName: item.parentItemName,
+                    optionName: item.optionGroupName
+                        ? `${item.optionGroupName}: ${item.optionName}`
+                        : item.optionName,
+                    quantity: formatSessionQuantity(item.itemKey, item.quantity),
+                })),
+            });
+            const printResult = await printSessionReport(htmlContent);
+
+            if (printResult.success === false && printResult.reason === 'missing-printer') {
+                toast({
+                    variant: 'destructive',
+                    title: 'No Printer Configured',
+                    description: `Please configure a default printer before printing the ${SESSION_STOCK_REPORT_TITLE.toLowerCase()}.`,
+                });
+                return;
+            }
+
+            if (printResult.success === false) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Print Failed',
+                    description: `Could not print the ${SESSION_STOCK_REPORT_TITLE.toLowerCase()}. Check the printer connection and try again.`,
+                });
+                return;
+            }
+
+            toast({
+                title: `${SESSION_STOCK_REPORT_TITLE} Printed`,
+                description: `Sent to ${printResult.printerName}`,
+            });
+        } catch (error) {
+            console.error('Error printing session stock report:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Print Error',
+                description:
+                    error instanceof Error
+                        ? error.message
+                        : `Unexpected error while printing the ${SESSION_STOCK_REPORT_TITLE.toLowerCase()}.`,
+            });
+        } finally {
+            setIsPrintingStockReport(false);
+        }
+    }, [comprehensiveStockData, formatSessionQuantity, optionStockUsageData, session]);
+
     return (
         <Card className="min-h-[500px]">
             <CardHeader>
-                <CardTitle>Stock Report</CardTitle>
-                <CardDescription>Product sales quantities, cash value, and remaining stock</CardDescription>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <CardTitle>Stock Report</CardTitle>
+                        <CardDescription>Product sales quantities, cash value, and remaining stock</CardDescription>
+                    </div>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        disabled={isPrintingStockReport}
+                        onClick={handlePrintStockReport}
+                    >
+                        {isPrintingStockReport ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                            <Printer className="mr-2 h-4 w-4" />
+                        )}
+                        {isPrintingStockReport ? 'Printing...' : 'Print Stock Report'}
+                    </Button>
+                </div>
             </CardHeader>
             <CardContent className="space-y-4">
                 <Tabs defaultValue="sold" className="w-full">
