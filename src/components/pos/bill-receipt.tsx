@@ -385,6 +385,7 @@ export function BillReceipt({
         data-receipt-business-name-font-size={businessNameFontSize}
         data-receipt-business-name-font-weight={businessNameWeight}
         data-receipt-business-name-scale-x={businessNameScale}
+        data-receipt-header-detail-font-size={isCompactPaper ? 13 : Math.max(15, fontSize)}
         data-receipt-header-detail-scale-x={headerDetailScale}
       >
         <div className="bill-business">

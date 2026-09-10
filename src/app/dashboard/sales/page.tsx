@@ -1474,6 +1474,145 @@ export default function ReportsPage() {
                         </div>
                     </CardContent>
                 </Card>
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Top Selling Products</CardTitle>
+                        <CardDescription>Your best performing products by revenue for the selected period.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="overflow-x-auto">
+                            <Table className="min-w-[680px]">
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Product</TableHead>
+                                        <TableHead className="text-right">Quantity Sold</TableHead>
+                                        <TableHead className="text-right">Revenue Before Tax</TableHead>
+                                        <TableHead className="text-right">Revenue With Tax</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {loading ? (
+                                        [...Array(5)].map((_, index) => (
+                                            <TableRow key={index}>
+                                                <TableCell><Skeleton className="h-5 w-40" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-16" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+                                            </TableRow>
+                                        ))
+                                    ) : data.topProducts.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                                                No completed product sales for this period.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : data.topProducts.map((product) => (
+                                        <TableRow key={product.name}>
+                                            <TableCell className="font-medium">{product.name}</TableCell>
+                                            <TableCell className="text-right">{product.quantity.toFixed(2)}</TableCell>
+                                            <TableCell className="text-right font-medium">{formatCurrency(product.revenue)}</TableCell>
+                                            <TableCell className="text-right font-medium text-green-600">{formatCurrency(product.revenueWithTax)}</TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <div className="grid gap-6 xl:grid-cols-2">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Fast-Moving Products</CardTitle>
+                            <CardDescription>Products with the highest quantity sold in the selected period.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="overflow-x-auto">
+                                <Table className="min-w-[520px]">
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Product</TableHead>
+                                            <TableHead className="text-right">Qty Sold</TableHead>
+                                            <TableHead className="text-right">Avg/Day</TableHead>
+                                            <TableHead className="text-right">Remaining</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {loading ? (
+                                            [...Array(5)].map((_, index) => (
+                                                <TableRow key={index}>
+                                                    <TableCell><Skeleton className="h-5 w-32" /></TableCell>
+                                                    <TableCell><Skeleton className="ml-auto h-5 w-14" /></TableCell>
+                                                    <TableCell><Skeleton className="ml-auto h-5 w-14" /></TableCell>
+                                                    <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+                                                </TableRow>
+                                            ))
+                                        ) : data.fastMovingProducts.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                                                    No product movement for this period.
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : data.fastMovingProducts.map((product, index) => (
+                                            <TableRow key={`fast-${product.name}-${index}`}>
+                                                <TableCell className="font-medium">{product.name}</TableCell>
+                                                <TableCell className="text-right">{product.quantity.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right">{product.averagePerDay.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right">{product.currentStock.toFixed(2)} {product.unitType}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Slow-Moving Products</CardTitle>
+                            <CardDescription>Products with the least movement in the selected period.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="overflow-x-auto">
+                                <Table className="min-w-[520px]">
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Product</TableHead>
+                                            <TableHead className="text-right">Qty Sold</TableHead>
+                                            <TableHead className="text-right">Avg/Day</TableHead>
+                                            <TableHead className="text-right">Remaining</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {loading ? (
+                                            [...Array(5)].map((_, index) => (
+                                                <TableRow key={index}>
+                                                    <TableCell><Skeleton className="h-5 w-32" /></TableCell>
+                                                    <TableCell><Skeleton className="ml-auto h-5 w-14" /></TableCell>
+                                                    <TableCell><Skeleton className="ml-auto h-5 w-14" /></TableCell>
+                                                    <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+                                                </TableRow>
+                                            ))
+                                        ) : data.slowMovingProducts.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                                                    No products available for movement analysis.
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : data.slowMovingProducts.map((product, index) => (
+                                            <TableRow key={`slow-${product.name}-${index}`}>
+                                                <TableCell className="font-medium">{product.name}</TableCell>
+                                                <TableCell className="text-right">{product.quantity.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right">{product.averagePerDay.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right">{product.currentStock.toFixed(2)} {product.unitType}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
         </TabsContent>
         <TabsContent value="categories">

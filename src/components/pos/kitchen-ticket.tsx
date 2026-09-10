@@ -110,25 +110,25 @@ export function KitchenTicket({
         .kitchen-ticket-title {
           margin-bottom: 2px;
           text-align: center;
-          font-size: ${isCompactPaper ? 16 : 18}px;
+          font-size: ${isCompactPaper ? 16 : 20}px;
           font-weight: 800;
         }
         .kitchen-ticket-business {
           margin-bottom: 5px;
           text-align: center;
-          font-size: ${isCompactPaper ? 14 : 16}px;
+          font-size: ${isCompactPaper ? 14 : 18}px;
           font-weight: 800;
           overflow-wrap: anywhere;
         }
         .kitchen-ticket-order {
           margin-bottom: 6px;
           text-align: center;
-          font-size: ${isCompactPaper ? 13 : 14}px;
+          font-size: ${isCompactPaper ? 13 : 16}px;
           font-weight: 700;
         }
         .kitchen-ticket-meta {
           margin: 6px 0 8px;
-          font-size: ${isCompactPaper ? 11 : 12}px;
+          font-size: ${isCompactPaper ? 11 : 14}px;
           font-weight: 600;
           line-height: 1.35;
         }
@@ -142,14 +142,18 @@ export function KitchenTicket({
           white-space: nowrap;
         }
         .kitchen-ticket-item {
+          margin-bottom: 8px;
+        }
+        .kitchen-ticket-item-line {
           display: grid;
           grid-template-columns: minmax(0, 1fr) max-content;
           column-gap: 10px;
           align-items: start;
-          margin-bottom: 8px;
+          text-align: left;
         }
         .kitchen-ticket-item-name {
           min-width: 0;
+          text-align: left;
           font-weight: 800;
           overflow-wrap: anywhere;
         }
@@ -160,7 +164,6 @@ export function KitchenTicket({
         }
         .kitchen-ticket-option,
         .kitchen-ticket-note {
-          grid-column: 1 / -1;
           margin-top: 2px;
           padding-left: 8px;
           font-size: ${isCompactPaper ? 11 : 12}px;
@@ -194,6 +197,7 @@ export function KitchenTicket({
         data-receipt-font-size={isCompactPaper ? 13 : 15}
         data-receipt-font-weight={600}
         data-receipt-line-height={1.2}
+        data-receipt-header-detail-font-size={isCompactPaper ? 13 : 15}
       >
         {toTrimmedString(businessName) && (
           <div className="kitchen-ticket-business">{toTrimmedString(businessName).toUpperCase()}</div>
@@ -212,8 +216,9 @@ export function KitchenTicket({
           const selectedOptions = getSelectedOptions(item).map(formatOption).filter(Boolean);
           return (
             <div className="kitchen-ticket-item" key={item.id}>
-              <div className="kitchen-ticket-item-name">{item.name}</div>
-              <div className="kitchen-ticket-quantity">x {formatQuantity(item.quantity)}</div>
+              <div className="kitchen-ticket-item-line">
+                <span className="kitchen-ticket-item-name">{item.name}</span><span className="kitchen-ticket-quantity">x {formatQuantity(item.quantity)}</span>
+              </div>
               {selectedOptions.map((option, index) => (
                 <div className="kitchen-ticket-option" key={`${item.id}-option-${index}`}>
                   + {option}

@@ -66,7 +66,7 @@ impl ReceiptPrintStyles {
             1.28,
         );
         let header_detail_size = escpos_size_mode(
-            None,
+            extract_data_attr_number(html, "data-receipt-header-detail-font-size"),
             extract_data_attr_number(html, "data-receipt-header-detail-scale-x"),
             13.0,
             1.0,
