@@ -186,6 +186,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
   const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
   const [kitchenTicketBusinessName, setKitchenTicketBusinessName] = useState('');
+  const [printingKitchenTicketOrderId, setPrintingKitchenTicketOrderId] = useState<string | null>(null);
   const [processingSaleOrderId, setProcessingSaleOrderId] = useState<string | null>(null);
   const billPrintLockRef = React.useRef(false);
   const kitchenTicketPrintLockRef = React.useRef(false);
@@ -656,6 +657,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     if (kitchenItems.length === 0) return;
 
     kitchenTicketPrintLockRef.current = true;
+    setPrintingKitchenTicketOrderId(order.id);
 
     try {
       const { printerService } = await import('@/lib/services/printer-service');
@@ -725,6 +727,20 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         return;
       }
 
+      try {
+        const printedOrder = await authFetch.fetch<any>(
+          `/orders/take-orders/${order.id}/mark_kitchen_ticket_printed/`,
+          { method: 'POST' },
+        );
+        await db.takeOrders.update(order.id, {
+          kitchenTicketPrinted: true,
+          kitchenTicketPrintedAt: printedOrder?.kitchen_ticket_printed_at || new Date().toISOString(),
+        });
+        window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+      } catch (markError) {
+        console.warn('[Orders Kitchen Ticket] Ticket printed but print state was not saved:', markError);
+      }
+
       toast({
         title: 'Kitchen Ticket Printed',
         description: `Order ${order.orderNumber} was sent to the kitchen.`,
@@ -738,6 +754,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       });
     } finally {
       kitchenTicketPrintLockRef.current = false;
+      setPrintingKitchenTicketOrderId(null);
     }
   };
 
@@ -841,6 +858,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       order.status !== 'Completed' &&
       canCurrentUserProcessPayment(order);
     const kitchenItemCount = kitchenEnabled ? getKitchenOrderItems(order, kitchenInventoryLookup).length : 0;
+    const canPrintKitchenTicket =
+      kitchenItemCount > 0 &&
+      !order.kitchenTicketPrinted &&
+      ['Sent to Kitchen', 'Preparing', 'Ready'].includes(order.status);
     const hasNotes = Boolean(order.customerNotes || order.specialInstructions || order.items.some((item) => item.notes));
 
     return (
@@ -925,6 +946,18 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               >
                 <CreditCard className="h-4 w-4" />
                 {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Payment'}
+              </Button>
+            )}
+            {canPrintKitchenTicket && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full gap-2 sm:w-auto"
+                disabled={printingKitchenTicketOrderId !== null}
+                onClick={() => void handlePrintKitchenTicket(order)}
+              >
+                <Printer className="h-4 w-4" />
+                {printingKitchenTicketOrderId === order.id ? 'Printing…' : 'Print Kitchen Ticket'}
               </Button>
             )}
             <Button
@@ -1137,6 +1170,17 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                   <Printer className="h-4 w-4" />
                   {isPrintingBill ? 'Printing...' : 'Print Customer Bill'}
                 </Button>
+                {hasKitchenItems && !order.kitchenTicketPrinted && ['Sent to Kitchen', 'Preparing', 'Ready'].includes(order.status) && (
+                  <Button
+                    className="w-full gap-2 sm:w-auto"
+                    variant="outline"
+                    disabled={printingKitchenTicketOrderId !== null}
+                    onClick={() => void handlePrintKitchenTicket(order)}
+                  >
+                    <Printer className="h-4 w-4" />
+                    {printingKitchenTicketOrderId === order.id ? 'Printing…' : 'Print Kitchen Ticket'}
+                  </Button>
+                )}
                 <Button
                   className="w-full gap-2 sm:w-auto"
                   variant="outline"

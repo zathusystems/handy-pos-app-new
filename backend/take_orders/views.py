@@ -172,6 +172,18 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return TakeOrderCreateSerializer
         return TakeOrderSerializer
+
+    @action(detail=True, methods=['post'])
+    def mark_kitchen_ticket_printed(self, request, pk=None):
+        """Record a successful kitchen-ticket print without changing the order workflow."""
+        take_order = self.get_object()
+        if not _take_order_has_kitchen_items(take_order):
+            return Response({'error': 'This order has no kitchen items to print.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        take_order.kitchen_ticket_printed = True
+        take_order.kitchen_ticket_printed_at = timezone.now()
+        take_order.save(update_fields=['kitchen_ticket_printed', 'kitchen_ticket_printed_at', 'updated_at'])
+        return Response(TakeOrderSerializer(take_order).data)
     
     def retrieve(self, request, *args, **kwargs):
         """Retrieve a single take order by ID"""

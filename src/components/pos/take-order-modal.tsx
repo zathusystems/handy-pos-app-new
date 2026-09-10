@@ -956,6 +956,20 @@ export function TakeOrderModal({
                 return;
             }
 
+            try {
+                const printedOrder = await authFetch.fetch<any>(
+                    `/orders/take-orders/${order.id}/mark_kitchen_ticket_printed/`,
+                    { method: 'POST' },
+                );
+                await db.takeOrders.update(order.id, {
+                    kitchenTicketPrinted: true,
+                    kitchenTicketPrintedAt: printedOrder?.kitchen_ticket_printed_at || new Date().toISOString(),
+                });
+                window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+            } catch (markError) {
+                console.warn('[Take Order Kitchen Ticket] Ticket printed but print state was not saved:', markError);
+            }
+
             toast({
                 title: 'Kitchen Ticket Printed',
                 description: `Order ${order.orderNumber} was sent to the kitchen.`,
@@ -1079,6 +1093,8 @@ export function TakeOrderModal({
                     orderType: 'staff',
                     isTakeaway,
                     is_takeaway: isTakeaway,
+                    kitchenTicketPrinted: Boolean(createdOrder.kitchen_ticket_printed),
+                    kitchenTicketPrintedAt: createdOrder.kitchen_ticket_printed_at || undefined,
                 };
 
             await db.takeOrders.add(takeOrder);

@@ -435,6 +435,8 @@ export interface TakeOrder {
     createdAt: string; // ISO string
     updatedAt: string; // ISO string
     completedAt?: string; // ISO string
+    kitchenTicketPrinted?: boolean;
+    kitchenTicketPrintedAt?: string;
     // Sync fields
     _dirty?: boolean;
     _operation?: 'create' | 'update' | 'delete';

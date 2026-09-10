@@ -61,6 +61,8 @@ class TakeOrder(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    kitchen_ticket_printed = models.BooleanField(default=False)
+    kitchen_ticket_printed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at']

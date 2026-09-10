@@ -112,12 +112,14 @@ class TakeOrderSerializer(serializers.ModelSerializer):
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
             'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'created_by', 'created_by_name',
             'completed_by', 'completed_by_name',
-            'created_at', 'updated_at', 'completed_at'
+            'created_at', 'updated_at', 'completed_at',
+            'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
         ]
         read_only_fields = [
             'id', 'order_number', 'created_by', 'created_by_name',
             'session',
             'completed_by', 'completed_by_name', 'created_at', 'updated_at',
+            'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
         ]
     
     def get_created_by_name(self, obj):
@@ -158,13 +160,15 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
             'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'items_response',
             'created_by', 'created_by_name', 'completed_by', 'completed_by_name',
-            'created_at', 'updated_at', 'completed_at'
+            'created_at', 'updated_at', 'completed_at',
+            'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
         ]
         read_only_fields = [
             'id', 'order_number', 'order_type', 'order_type_display',
             'session',
             'created_by', 'created_by_name', 'completed_by', 'completed_by_name',
             'created_at', 'updated_at', 'completed_at',
+            'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
         ]
     
     def to_internal_value(self, data):
@@ -287,4 +291,6 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'created_at': instance.created_at.isoformat(),
             'updated_at': instance.updated_at.isoformat(),
             'completed_at': instance.completed_at.isoformat() if instance.completed_at else None,
+            'kitchen_ticket_printed': instance.kitchen_ticket_printed,
+            'kitchen_ticket_printed_at': instance.kitchen_ticket_printed_at.isoformat() if instance.kitchen_ticket_printed_at else None,
         }

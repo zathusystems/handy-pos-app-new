@@ -22,6 +22,8 @@ TAKE_ORDER_SYNC_ALIASES = {
     'createdAt': 'created_at',
     'updatedAt': 'updated_at',
     'completedAt': 'completed_at',
+    'kitchenTicketPrinted': 'kitchen_ticket_printed',
+    'kitchenTicketPrintedAt': 'kitchen_ticket_printed_at',
 }
 TAKE_ORDER_SYNC_READ_ONLY_FIELDS = {
     'id',
