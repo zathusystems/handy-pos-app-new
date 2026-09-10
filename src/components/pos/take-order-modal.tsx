@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { ArrowLeft, Plus, Minus, Search, Send, ShoppingBasket, Trash2, Loader2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Plus, Minus, Search, Send, ShoppingBasket, Trash2, Loader2, X } from 'lucide-react';
 import { useCurrency } from '@/hooks/use-currency';
 import { toast } from '@/hooks/use-toast';
 import { Textarea } from '../ui/textarea';
@@ -349,6 +349,7 @@ export function TakeOrderModal({
     const [kitchenTicketBusinessName, setKitchenTicketBusinessName] = useState('');
     const kitchenTicketPrintLockRef = React.useRef(false);
     const menuSearchInputRef = useRef<HTMLInputElement>(null);
+    const categoryTabsRef = useRef<HTMLDivElement>(null);
     const kitchenEnabled = isKitchenBusinessType(businessType);
 
     useEffect(() => {
@@ -1136,7 +1137,14 @@ export function TakeOrderModal({
   return (
     <>
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-screen h-[100dvh] max-h-screen max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-[90vh] sm:max-h-[90vh] sm:w-[95vw] sm:max-w-[95vw] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4">
+      <DialogContent
+        className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-screen h-[100dvh] max-h-screen max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-[90vh] sm:max-h-[90vh] sm:w-[95vw] sm:max-w-[95vw] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4"
+        onInteractOutside={(event) => {
+          if (selectedOptionsItem || selectedPortionItem) {
+            event.preventDefault();
+          }
+        }}
+      >
         <DialogHeader className="p-4 sm:p-6 pb-2 sm:pb-2 shrink-0">
           <DialogTitle className="text-xl sm:text-2xl">
             {isAddingToExistingOrder ? `Add Items to Order ${existingOrder?.orderNumber}` : 'Take a New Order'}
@@ -1151,7 +1159,7 @@ export function TakeOrderModal({
         {/* Mobile uses one focused panel at a time; desktop keeps menu and cart side by side. */}
         <div className="flex flex-1 min-h-0 overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_380px]">
             {/* Menu Items */}
-            <div className={`${mobilePanel === 'menu' ? 'flex' : 'hidden'} min-h-0 h-full flex-col overflow-hidden border-r lg:flex`}>
+            <div className={`${mobilePanel === 'menu' ? 'flex' : 'hidden'} min-h-0 w-full flex-1 flex-col overflow-hidden border-r lg:flex lg:h-full lg:w-auto`}>
                 <Tabs defaultValue="All" className="flex h-full min-h-0 flex-col overflow-hidden">
                     <div className="shrink-0 border-b bg-background px-3 pb-3 pt-3 sm:px-4">
                         <div className="relative">
@@ -1197,17 +1205,44 @@ export function TakeOrderModal({
                             </Button>
                         </div>
                     ) : <>
-                    <TabsList className="mx-3 mt-3 h-12 w-[calc(100%-1.5rem)] shrink-0 justify-start gap-1 overflow-x-auto rounded-md p-1 sm:mx-4 sm:w-[calc(100%-2rem)]">
-                        {categories.map(category => (
-                            <TabsTrigger
-                                key={category}
-                                value={category}
-                                className="h-9 shrink-0 px-4 text-sm font-medium"
-                            >
-                                {category}
-                            </TabsTrigger>
-                        ))}
-                    </TabsList>
+                    <div className="mx-3 mt-3 flex shrink-0 items-center gap-2 sm:mx-4">
+                        <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="hidden h-10 w-10 shrink-0 lg:inline-flex"
+                            onClick={() => categoryTabsRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
+                            aria-label="Show previous menu categories"
+                            title="Previous categories"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                        </Button>
+                        <TabsList
+                            ref={categoryTabsRef}
+                            className="m-0 h-12 min-w-0 flex-1 justify-start gap-1 overflow-x-auto rounded-md p-1"
+                        >
+                            {categories.map(category => (
+                                <TabsTrigger
+                                    key={category}
+                                    value={category}
+                                    className="h-9 shrink-0 px-4 text-sm font-medium"
+                                >
+                                    {category}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                        <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="hidden h-10 w-10 shrink-0 lg:inline-flex"
+                            onClick={() => categoryTabsRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
+                            aria-label="Show more menu categories"
+                            title="More categories"
+                        >
+                            <ArrowRight className="h-4 w-4" />
+                        </Button>
+                    </div>
                     <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
                         {categories.map(category => {
                             const categoryItems = searchedMenuItems.filter(
@@ -1275,7 +1310,7 @@ export function TakeOrderModal({
             </div>
             
             {/* Cart */}
-            <div className={`${mobilePanel === 'order' ? 'flex' : 'hidden'} min-h-0 h-full flex-col bg-muted/30 lg:flex`}>
+            <div className={`${mobilePanel === 'order' ? 'flex' : 'hidden'} min-h-0 w-full flex-1 flex-col bg-muted/30 lg:flex lg:h-full lg:w-auto`}>
                 <div className="p-3 sm:p-4 border-b shrink-0">
                     <h3 className="text-base sm:text-lg font-semibold flex justify-between items-center">
                         <span>Current Order</span>
