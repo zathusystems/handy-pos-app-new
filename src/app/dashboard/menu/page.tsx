@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { PlusCircle, Utensils, QrCode, Copy, Loader2, Upload, X, Download, Settings, Save, Palette, Pencil, Trash2 } from 'lucide-react';
+import { PlusCircle, Utensils, QrCode, Copy, Loader2, Upload, X, Download, Settings, Save, Palette, Pencil, Trash2, Search } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -86,6 +86,7 @@ const formatPackagingStock = (item: InventoryItem): string => {
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'https://api.handypos.online/api').replace(/\/$/, '');
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, '');
+const ALL_MENU_CATEGORIES = '__all_menu_categories__';
 
 const firstNonEmpty = (...values: Array<unknown>): string | undefined => {
   for (const value of values) {
@@ -116,6 +117,15 @@ const getMenuEntryInventoryId = (entry: any): string => String(
 ).trim();
 
 const getMenuEntryId = (entry: any): string => String(entry?.id ?? entry?.menu_id ?? '').trim();
+
+type MenuOptionsMetadata = {
+  optionGroups?: Array<{
+    id: string;
+    is_visible?: boolean;
+    options?: Array<{ id: string; is_visible?: boolean }>;
+  }>;
+  menuOptionsLoaded?: boolean;
+};
 
 const resolveMenuItemImageSrc = (image?: string | null): string | null => {
   const value = String(image ?? '').trim();
@@ -189,8 +199,13 @@ const buildMenuInventoryItem = (
       : hasOwn(entry || {}, 'isVisible')
         ? Boolean(entry.isVisible)
         : localItem?.menuIsVisible !== false,
+    optionGroups: Array.isArray(entry?.option_groups)
+      ? entry.option_groups
+      : (localItem as (InventoryItem & MenuOptionsMetadata) | undefined)?.optionGroups,
+    menuOptionsLoaded: Array.isArray(entry?.option_groups)
+      || (localItem as (InventoryItem & MenuOptionsMetadata) | undefined)?.menuOptionsLoaded,
     image: prepared ? firstNonEmpty(entry?.image, image) : image,
-  };
+  } as InventoryItem;
 };
 
 type MenuOption = {
@@ -1349,6 +1364,10 @@ const MenuItemCard = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const imageSrc = resolveMenuItemImageSrc(item.image);
   const visible = isMenuItemVisible(item);
+  const menuOptions = item as InventoryItem & MenuOptionsMetadata;
+  const selectableOptionGroups = (menuOptions.optionGroups || []).filter((group) => (
+    group.is_visible !== false && (group.options || []).some((option) => option.is_visible !== false)
+  ));
 
   const handleDelete = async () => {
     if (isDeleting) return;
@@ -1411,6 +1430,13 @@ const MenuItemCard = ({
             </Badge>
           </div>
           <Badge variant="secondary">${Number(item.price)?.toFixed(2) || '0.00'}</Badge>
+          {menuOptions.menuOptionsLoaded && (
+            <Badge variant={selectableOptionGroups.length > 0 ? 'outline' : 'secondary'}>
+              {selectableOptionGroups.length > 0
+                ? `${selectableOptionGroups.length} ${selectableOptionGroups.length === 1 ? 'option group' : 'option groups'}`
+                : 'No sides or options'}
+            </Badge>
+          )}
         </div>
 
         <Separator className="my-3" />
@@ -2982,10 +3008,26 @@ export default function MenuBuilderPage() {
   const [isLoadingMenuItems, setIsLoadingMenuItems] = useState(false);
   const [optionsItem, setOptionsItem] = useState<InventoryItem | null>(null);
   const [editingMenuItem, setEditingMenuItem] = useState<InventoryItem | null>(null);
+  const [selectedMenuCategory, setSelectedMenuCategory] = useState(ALL_MENU_CATEGORIES);
+  const [menuSearchQuery, setMenuSearchQuery] = useState('');
   const visibleMenuItems = useMemo(
     () => menuItems.filter((item) => isMenuItemVisible(item)),
     [menuItems]
   );
+  const menuCategories = useMemo(
+    () => [...new Set(menuItems.map((item) => item.category?.trim() || 'Uncategorized'))]
+      .sort((left, right) => left.localeCompare(right)),
+    [menuItems]
+  );
+  const filteredMenuItems = useMemo(() => {
+    const normalizedQuery = menuSearchQuery.trim().toLowerCase();
+    return menuItems.filter((item) => {
+      const category = item.category?.trim() || 'Uncategorized';
+      const matchesCategory = selectedMenuCategory === ALL_MENU_CATEGORIES || category === selectedMenuCategory;
+      const matchesSearch = !normalizedQuery || `${item.name || ''} ${category}`.toLowerCase().includes(normalizedQuery);
+      return matchesCategory && matchesSearch;
+    });
+  }, [menuItems, menuSearchQuery, selectedMenuCategory]);
 
   // Fetch all sellable items from local database
   const allSellableItems = useLiveQuery(
@@ -3366,16 +3408,57 @@ export default function MenuBuilderPage() {
         <TabsContent value="menu" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Current Menu</CardTitle>
-              <CardDescription>
-                Keep items saved here and switch them on or off for the public customer menu.
-                {menuItems.length > 0 ? ` ${visibleMenuItems.length} of ${menuItems.length} items are visible.` : ''}
-              </CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle>Current Menu</CardTitle>
+                  <CardDescription>
+                    Keep items saved here and switch them on or off for the public customer menu.
+                    {menuItems.length > 0 ? ` ${visibleMenuItems.length} of ${menuItems.length} items are visible.` : ''}
+                  </CardDescription>
+                </div>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={menuSearchQuery}
+                      onChange={(event) => setMenuSearchQuery(event.target.value)}
+                      placeholder="Search menu items"
+                      aria-label="Search menu items"
+                      className="pl-9 pr-9"
+                    />
+                    {menuSearchQuery && (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
+                        onClick={() => setMenuSearchQuery('')}
+                        aria-label="Clear menu search"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {menuCategories.length > 1 && (
+                    <Select value={selectedMenuCategory} onValueChange={setSelectedMenuCategory}>
+                      <SelectTrigger className="w-full sm:w-52" aria-label="Filter menu items by category">
+                        <SelectValue placeholder="All categories" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL_MENU_CATEGORIES}>All categories</SelectItem>
+                        {menuCategories.map((category) => (
+                          <SelectItem key={category} value={category}>{category}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              {menuItems.length > 0 ? (
+              {filteredMenuItems.length > 0 ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {menuItems.map((item) => (
+                  {filteredMenuItems.map((item) => (
 	                    <MenuItemCard
 	                      key={item.id}
 	                      item={item}
@@ -3386,6 +3469,12 @@ export default function MenuBuilderPage() {
 	                      onDelete={handleMenuItemDelete}
 	                    />
                   ))}
+                </div>
+              ) : menuItems.length > 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+                  <Utensils className="h-12 w-12 text-muted-foreground/30" />
+                  <h2 className="mt-4 text-lg font-semibold">No menu items found</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">Try another search or category.</p>
                 </div>
               ) : (
                 <div
