@@ -22,7 +22,7 @@ const clampNumber = (value: number, min: number, max: number): number => {
 };
 
 export const getDefaultReceiptFontSize = (paperWidth: '80mm' | '58mm' = '80mm'): number => (
-  paperWidth === '58mm' ? 11 : 13
+  paperWidth === '58mm' ? 11 : 15
 );
 
 export const getDefaultReceiptPaddingX = (paperWidth: '80mm' | '58mm' = '80mm'): number => (
@@ -57,7 +57,14 @@ export const normalizeReceiptFontSize = (
 ): number => {
   const parsed = Number(value);
   const fallback = getDefaultReceiptFontSize(paperWidth);
-  return Number.isFinite(parsed) ? clampNumber(parsed, 8, 18) : fallback;
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const normalized = clampNumber(parsed, 8, 18);
+  // Existing 80 mm configurations stored the old default (13px). Upgrade
+  // that default so installed printers become readable without affecting 58 mm.
+  return paperWidth === '80mm' && normalized === 13 ? fallback : normalized;
 };
 
 export const normalizeReceiptFontWeight = (value: unknown): ReceiptFontWeight => {

@@ -47,11 +47,16 @@ struct ReceiptPrintStyles {
 }
 
 impl ReceiptPrintStyles {
-    fn from_html(html: &str) -> Self {
+    fn from_html(html: &str, line_width: usize) -> Self {
+        let default_body_font_size = if line_width == COMPACT_RECEIPT_LINE_WIDTH {
+            13.0
+        } else {
+            15.0
+        };
         let body_size = escpos_size_mode(
             extract_data_attr_number(html, "data-receipt-font-size"),
             None,
-            13.0,
+            default_body_font_size,
             1.0,
         );
         let business_size = escpos_size_mode(
@@ -86,9 +91,10 @@ impl ReceiptPrintStyles {
                 size_mode: header_detail_size,
                 bold: false,
             },
-            line_spacing: resolve_line_spacing(
-                extract_data_attr_number(html, "data-receipt-line-height"),
-            ),
+            line_spacing: resolve_line_spacing(extract_data_attr_number(
+                html,
+                "data-receipt-line-height",
+            )),
         }
     }
 }
@@ -166,7 +172,7 @@ pub fn html_to_escpos(html: &str, line_width: usize, horizontal_offset: usize) -
     data.extend_from_slice(b"\x1B\x21\x00"); // Normal mode
     data.extend_from_slice(b"\x1B\x32"); // Restore default line spacing
 
-    let print_styles = ReceiptPrintStyles::from_html(html);
+    let print_styles = ReceiptPrintStyles::from_html(html, line_width);
     if let Some(line_spacing) = print_styles.line_spacing {
         data.extend_from_slice(&[0x1B, 0x33, line_spacing]); // ESC 3 n
     }
@@ -260,7 +266,7 @@ pub fn html_to_escpos(html: &str, line_width: usize, horizontal_offset: usize) -
         append_centered_text_line(&mut data, &marker, line_width, horizontal_offset);
     }
 
-    append_feed_and_cut(&mut data, has_qr);
+    append_feed_and_cut(&mut data, has_qr, line_width == COMPACT_RECEIPT_LINE_WIDTH);
     data
 }
 
@@ -472,10 +478,15 @@ fn append_styled_centered_text_line(
     data.extend_from_slice(b"\x1B\x61\x00"); // left align
 }
 
-fn append_feed_and_cut(data: &mut Vec<u8>, has_qr: bool) {
-    // Keep feed short so the cutter triggers soon after the last printed block.
-    // QR codes still need a little trailing paper to avoid clipping.
-    let feed_lines: u8 = if has_qr { 3 } else { 2 };
+fn append_feed_and_cut(data: &mut Vec<u8>, has_qr: bool, is_compact_layout: bool) {
+    // 80 mm printers need enough paper after the last line for the cutter to
+    // clear the print head. Keep the established 58 mm clearance unchanged.
+    let feed_lines: u8 = match (is_compact_layout, has_qr) {
+        (true, false) => 2,
+        (true, true) => 3,
+        (false, false) => 7,
+        (false, true) => 9,
+    };
     data.extend_from_slice(&[0x1B, 0x64, feed_lines]); // Print buffer and feed n lines
     data.extend_from_slice(b"\x1D\x56\x00"); // Full cut
 }
@@ -1285,9 +1296,19 @@ mod tests {
             DEFAULT_RECEIPT_LINE_WIDTH,
             0,
         );
-        let printable = String::from_utf8_lossy(&output);
+        let footer_end = output
+            .windows(b"FOOTER\n".len())
+            .position(|window| window == b"FOOTER\n")
+            .expect("footer should be printed")
+            + b"FOOTER\n".len();
+        let end_marker_start = output
+            .windows(b"*** END OF BILL ***".len())
+            .position(|window| window == b"*** END OF BILL ***")
+            .expect("end marker should be printed");
 
-        assert!(printable.contains("FOOTER\n\n"));
+        // ESC/POS text-size reset commands may appear between the blank line
+        // and the marker, but the formatter must still emit the gap itself.
+        assert!(output[footer_end..end_marker_start].contains(&b'\n'));
     }
 
     #[test]
@@ -1299,7 +1320,9 @@ mod tests {
         );
 
         assert!(output.windows(3).any(|command| command == [0x1B, 0x33, 34]));
-        assert!(output.windows(3).any(|command| command == [0x1B, 0x45, 0x01]));
+        assert!(output
+            .windows(3)
+            .any(|command| command == [0x1B, 0x45, 0x01]));
     }
 
     #[test]
@@ -1308,6 +1331,17 @@ mod tests {
 
         assert_eq!(line_width, COMPACT_RECEIPT_LINE_WIDTH);
         assert_eq!(horizontal_offset, 5);
+    }
+
+    #[test]
+    fn standard_roll_uses_extra_feed_before_cut_without_changing_58mm() {
+        let standard = build_escpos_receipt("<div>Receipt</div>", Some("80mm"), Some("80mm"));
+        let compact = build_escpos_receipt("<div>Receipt</div>", Some("58mm"), Some("58mm"));
+
+        assert!(standard
+            .windows(3)
+            .any(|command| command == [0x1B, 0x64, 7]));
+        assert!(compact.windows(3).any(|command| command == [0x1B, 0x64, 2]));
     }
 
     #[test]

@@ -14,6 +14,13 @@ type KitchenTicketItem = {
 type KitchenTicketProps = {
   items: KitchenTicketItem[];
   orderNumber: number;
+  businessName?: string;
+  takenByName?: string;
+  customerName?: string;
+  tableNumber?: string;
+  createdAt?: string;
+  isTakeaway?: boolean;
+  isSelfService?: boolean;
   paperWidth?: '80mm' | '58mm';
   rootId?: string;
 };
@@ -48,15 +55,42 @@ const formatQuantity = (value: unknown): string => new Intl.NumberFormat('en-US'
   maximumFractionDigits: 3,
 }).format(toFiniteNumber(value, 0));
 
+const formatTicketDateTime = (value?: string): string => {
+  if (!value) return '';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+};
+
 export function KitchenTicket({
   items,
   orderNumber,
+  businessName,
+  takenByName,
+  customerName,
+  tableNumber,
+  createdAt,
+  isTakeaway = false,
+  isSelfService = false,
   paperWidth = '80mm',
   rootId = 'kitchen-ticket-printable-area',
 }: KitchenTicketProps) {
   const resolvedPaperWidth = paperWidth === '58mm' ? '58mm' : '80mm';
   const isCompactPaper = resolvedPaperWidth === '58mm';
   const rule = '-'.repeat(isCompactPaper ? 32 : 42);
+  const preparedBy = toTrimmedString(takenByName) || (isSelfService ? 'Customer QR order' : 'Staff');
+  const orderLocation = toTrimmedString(tableNumber);
+  const customer = toTrimmedString(customerName);
+  const printedAt = formatTicketDateTime(createdAt);
 
   return (
     <div id={rootId}>
@@ -74,16 +108,32 @@ export function KitchenTicket({
           line-height: 1.2;
         }
         .kitchen-ticket-title {
-          margin-bottom: 3px;
+          margin-bottom: 2px;
           text-align: center;
           font-size: ${isCompactPaper ? 16 : 18}px;
           font-weight: 800;
         }
+        .kitchen-ticket-business {
+          margin-bottom: 5px;
+          text-align: center;
+          font-size: ${isCompactPaper ? 14 : 16}px;
+          font-weight: 800;
+          overflow-wrap: anywhere;
+        }
         .kitchen-ticket-order {
-          margin-bottom: 8px;
+          margin-bottom: 6px;
           text-align: center;
           font-size: ${isCompactPaper ? 13 : 14}px;
           font-weight: 700;
+        }
+        .kitchen-ticket-meta {
+          margin: 6px 0 8px;
+          font-size: ${isCompactPaper ? 11 : 12}px;
+          font-weight: 600;
+          line-height: 1.35;
+        }
+        .kitchen-ticket-meta-line {
+          overflow-wrap: anywhere;
         }
         .kitchen-ticket-rule {
           overflow: hidden;
@@ -139,9 +189,24 @@ export function KitchenTicket({
         }
       `}</style>
 
-      <div className="kitchen-ticket-sheet">
+      <div
+        className="kitchen-ticket-sheet"
+        data-receipt-font-size={isCompactPaper ? 13 : 15}
+        data-receipt-font-weight={600}
+        data-receipt-line-height={1.2}
+      >
+        {toTrimmedString(businessName) && (
+          <div className="kitchen-ticket-business">{toTrimmedString(businessName).toUpperCase()}</div>
+        )}
         <div className="kitchen-ticket-title">KITCHEN TICKET</div>
         <div className="kitchen-ticket-order">ORDER #{orderNumber}</div>
+        <div className="kitchen-ticket-meta">
+          <div className="kitchen-ticket-meta-line">TAKEN BY: {preparedBy}</div>
+          {orderLocation && <div className="kitchen-ticket-meta-line">TABLE / ADDRESS: {orderLocation}</div>}
+          {customer && <div className="kitchen-ticket-meta-line">CUSTOMER: {customer}</div>}
+          {isTakeaway && <div className="kitchen-ticket-meta-line">TAKEAWAY</div>}
+          {printedAt && <div className="kitchen-ticket-meta-line">ORDERED: {printedAt}</div>}
+        </div>
         <div className="kitchen-ticket-rule">{rule}</div>
         {items.map((item) => {
           const selectedOptions = getSelectedOptions(item).map(formatOption).filter(Boolean);

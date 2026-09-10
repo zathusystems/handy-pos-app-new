@@ -29,6 +29,7 @@ import { isKitchenBusinessType, type BusinessType } from '@/lib/inventory/config
 import { PortionSaleDialog, canSellInPortions } from './portion-sale-dialog';
 import { getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { KitchenTicket } from './kitchen-ticket';
+import { getOfflineBusinessProfile } from '@/lib/business-profile';
 
 type TakeOrderModalProps = {
   branchId: string;
@@ -342,6 +343,7 @@ export function TakeOrderModal({
     const [mobilePanel, setMobilePanel] = useState<'menu' | 'order'>('menu');
     const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
     const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
+    const [kitchenTicketBusinessName, setKitchenTicketBusinessName] = useState('');
     const kitchenTicketPrintLockRef = React.useRef(false);
     const menuSearchInputRef = useRef<HTMLInputElement>(null);
     const kitchenEnabled = isKitchenBusinessType(businessType);
@@ -871,9 +873,10 @@ export function TakeOrderModal({
         try {
             const { printerService } = await import('@/lib/services/printer-service');
             const { silentPrintService } = await import('@/lib/services/silent-print-service');
-            const [printerSettings, defaultPrinter] = await Promise.all([
+            const [printerSettings, defaultPrinter, businessProfile] = await Promise.all([
                 printerService.getPrinterSettings(branchId),
                 printerService.getDefaultPrinter(branchId),
+                getOfflineBusinessProfile(),
             ]);
 
             if (!defaultPrinter) {
@@ -890,6 +893,7 @@ export function TakeOrderModal({
                     ? printerSettings.receiptPaperWidth
                     : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
             setKitchenTicketPaperWidth(selectedPaperWidth);
+            setKitchenTicketBusinessName(businessProfile?.name || '');
             setKitchenTicketOrder(order);
             await new Promise((resolve) => setTimeout(resolve, 150));
 
@@ -1563,6 +1567,13 @@ export function TakeOrderModal({
             <KitchenTicket
                 rootId={TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID}
                 orderNumber={kitchenTicketOrder.orderNumber}
+                businessName={kitchenTicketBusinessName}
+                takenByName={kitchenTicketOrder.createdByName || kitchenTicketOrder.createdBy}
+                customerName={kitchenTicketOrder.customerName}
+                tableNumber={kitchenTicketOrder.tableNumber}
+                createdAt={kitchenTicketOrder.createdAt}
+                isTakeaway={Boolean(kitchenTicketOrder.isTakeaway ?? kitchenTicketOrder.is_takeaway)}
+                isSelfService={kitchenTicketOrder.orderType === 'self_service'}
                 paperWidth={kitchenTicketPaperWidth}
                 items={getKitchenOrderItems(kitchenTicketOrder, kitchenInventoryLookup).map((item) => ({
                     id: String(item.id),

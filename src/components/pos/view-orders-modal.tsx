@@ -59,7 +59,7 @@ import { KitchenTicket } from './kitchen-ticket';
 import { SplitBillDialog, type SplitBillShare } from './split-bill-dialog';
 import { syncService } from '@/lib/services/sync-service';
 import type { PrinterSettings } from '@/lib/services/printer-service';
-import { resolveOfflineBusinessId } from '@/lib/business-profile';
+import { getOfflineBusinessProfile, resolveOfflineBusinessId } from '@/lib/business-profile';
 import {
   getCustomerBillPaymentAccountsFromPayload,
   hasCustomerBillPaymentAccountsInPayload,
@@ -185,6 +185,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [splitBillOrder, setSplitBillOrder] = useState<TakeOrder | null>(null);
   const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
   const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
+  const [kitchenTicketBusinessName, setKitchenTicketBusinessName] = useState('');
   const [processingSaleOrderId, setProcessingSaleOrderId] = useState<string | null>(null);
   const billPrintLockRef = React.useRef(false);
   const kitchenTicketPrintLockRef = React.useRef(false);
@@ -659,9 +660,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     try {
       const { printerService } = await import('@/lib/services/printer-service');
       const { silentPrintService } = await import('@/lib/services/silent-print-service');
-      const [printerSettings, defaultPrinter] = await Promise.all([
+      const [printerSettings, defaultPrinter, businessProfile] = await Promise.all([
         printerService.getPrinterSettings(branchId),
         printerService.getDefaultPrinter(branchId),
+        getOfflineBusinessProfile(),
       ]);
 
       if (!defaultPrinter) {
@@ -678,6 +680,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           ? printerSettings.receiptPaperWidth
           : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
       setKitchenTicketPaperWidth(selectedPaperWidth);
+      setKitchenTicketBusinessName(businessProfile?.name || '');
       setKitchenTicketOrder(order);
       await new Promise((resolve) => setTimeout(resolve, 150));
 
@@ -1448,6 +1451,13 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           <KitchenTicket
             rootId={KITCHEN_TICKET_PRINT_ROOT_ID}
             orderNumber={kitchenTicketOrder.orderNumber}
+            businessName={kitchenTicketBusinessName}
+            takenByName={kitchenTicketOrder.createdByName || kitchenTicketOrder.createdBy}
+            customerName={kitchenTicketOrder.customerName}
+            tableNumber={kitchenTicketOrder.tableNumber}
+            createdAt={kitchenTicketOrder.createdAt}
+            isTakeaway={Boolean(kitchenTicketOrder.isTakeaway ?? kitchenTicketOrder.is_takeaway)}
+            isSelfService={kitchenTicketOrder.orderType === 'self_service'}
             paperWidth={kitchenTicketPaperWidth}
             items={getKitchenOrderItems(kitchenTicketOrder, kitchenInventoryLookup).map((item) => ({
               id: String(item.id),
