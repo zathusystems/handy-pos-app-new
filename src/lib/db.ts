@@ -861,6 +861,13 @@ export interface BusinessSettings {
     updatedAt: string;
 }
 
+export interface MenuEntryCache {
+    id: string;
+    branchId: string;
+    items: Array<Record<string, unknown>>;
+    updatedAt: string;
+}
+
 export class HandyPosDatabase extends Dexie {
     inventory!: EntityTable<InventoryItem, 'id'>;
     suppliers!: EntityTable<Supplier, 'id'>;
@@ -887,6 +894,7 @@ export class HandyPosDatabase extends Dexie {
     inventorySnapshots!: EntityTable<InventorySnapshot, 'id'>;
     stockAudits!: EntityTable<StockAudit, 'id'>;
     businessSettings!: EntityTable<BusinessSettings, 'id'>;
+    menuEntryCache!: EntityTable<MenuEntryCache, 'id'>;
 
 
     constructor() {
@@ -918,6 +926,10 @@ export class HandyPosDatabase extends Dexie {
             inventorySnapshots: 'id, inventoryItemId, branchId, createdAt',
             stockAudits: 'id, branchId, status, createdAt, _dirty',
             businessSettings: 'id',
+        });
+
+        this.version(40).stores({
+            menuEntryCache: 'id, branchId, updatedAt',
         });
     }
 }

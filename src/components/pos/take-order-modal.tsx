@@ -335,7 +335,10 @@ export function TakeOrderModal({
     const [pendingSelectedOptions, setPendingSelectedOptions] = useState<Array<Record<string, unknown>>>([]);
     const [selectedMenuItemId, setSelectedMenuItemId] = useState<string | null>(null);
     const [menuSearchQuery, setMenuSearchQuery] = useState('');
-    const [backendMenuItems, setBackendMenuItems] = useState<MenuItemWithOptions[]>([]);
+    const [backendMenuItems, setBackendMenuItems] = useState<MenuItemWithOptions[] | null>(null);
+    const [isLoadingMenuItems, setIsLoadingMenuItems] = useState(false);
+    const [menuLoadError, setMenuLoadError] = useState<string | null>(null);
+    const [menuRefreshToken, setMenuRefreshToken] = useState(0);
     const [takeawayConfig, setTakeawayConfig] = useState<TakeawayConfig | null>(null);
     const [takeawayPackagingItem, setTakeawayPackagingItem] = useState<InventoryItem | null>(null);
     const [isLoadingTakeawayConfig, setIsLoadingTakeawayConfig] = useState(false);
@@ -378,21 +381,36 @@ export function TakeOrderModal({
         [branchId]
     ) || [];
 
+    const menuCacheId = useMemo(() => {
+        const backendBranchId = getBackendBranchId(branchId);
+        return backendBranchId === null ? null : `take-order-menu:${backendBranchId}`;
+    }, [branchId]);
+    const cachedMenu = useLiveQuery(
+        () => menuCacheId ? db.menuEntryCache.get(menuCacheId) : undefined,
+        [menuCacheId]
+    );
+
     useEffect(() => {
         let cancelled = false;
 
         const fetchMenuEntries = async () => {
             if (!isOpen || !branchId) {
-                setBackendMenuItems([]);
+                setBackendMenuItems(null);
+                setIsLoadingMenuItems(false);
                 return;
             }
 
             const backendBranchId = getBackendBranchId(branchId);
             if (backendBranchId === null) {
-                setBackendMenuItems([]);
+                setBackendMenuItems(null);
+                setMenuLoadError('A valid branch is required to load menu options.');
+                setIsLoadingMenuItems(false);
                 return;
             }
 
+            setBackendMenuItems(null);
+            setMenuLoadError(null);
+            setIsLoadingMenuItems(true);
             try {
                 const menuData = await authFetch.fetch<any>(`/digital-menu/menu/by_branch/?branch_id=${backendBranchId}`);
                 const menuEntries = Array.isArray(menuData)
@@ -412,11 +430,23 @@ export function TakeOrderModal({
 
                 if (!cancelled) {
                     setBackendMenuItems(normalizedItems);
+                    void db.menuEntryCache.put({
+                        id: `take-order-menu:${backendBranchId}`,
+                        branchId: String(backendBranchId),
+                        items: normalizedItems as unknown as Array<Record<string, unknown>>,
+                        updatedAt: new Date().toISOString(),
+                    }).catch((cacheError) => {
+                        console.warn('[TakeOrderModal] Could not cache menu options:', cacheError);
+                    });
                 }
             } catch (error) {
                 console.warn('[TakeOrderModal] Could not load backend menu entries:', error);
                 if (!cancelled) {
-                    setBackendMenuItems([]);
+                    setMenuLoadError('Menu options could not be loaded. Check your connection and try again.');
+                }
+            } finally {
+                if (!cancelled) {
+                    setIsLoadingMenuItems(false);
                 }
             }
         };
@@ -426,7 +456,7 @@ export function TakeOrderModal({
         return () => {
             cancelled = true;
         };
-    }, [branchId, isOpen, localMenuItems]);
+    }, [branchId, isOpen, localMenuItems, menuRefreshToken]);
 
     useEffect(() => {
         let cancelled = false;
@@ -524,21 +554,9 @@ export function TakeOrderModal({
     }, [branchId, isOpen]);
 
     const menuItems = useMemo(() => {
-        const mergedByKey = new Map<string, InventoryItem>();
-
-        localMenuItems
-            .filter((item) => item.menuIsVisible !== false)
-            .forEach((item) => {
-                mergedByKey.set(String(item.id), item);
-            });
-
-        backendMenuItems.forEach((item) => {
-            const key = String(item.isPreparedMenuItem || item.is_prepared_menu_item ? item.menuEntryId || item.id : item.id);
-            mergedByKey.set(key, item);
-        });
-
-        return Array.from(mergedByKey.values());
-    }, [backendMenuItems, localMenuItems]);
+        if (backendMenuItems) return backendMenuItems;
+        return (cachedMenu?.items || []) as unknown as MenuItemWithOptions[];
+    }, [backendMenuItems, cachedMenu]);
 
     const categories = useMemo(() => {
         const uniqueCategories = [...new Set(menuItems.map(item => item.category || 'Uncategorized'))];
@@ -1148,6 +1166,21 @@ export function TakeOrderModal({
                             )}
                         </div>
                     </div>
+                    {isLoadingMenuItems && menuItems.length === 0 ? (
+                        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground">
+                            <Loader2 className="h-8 w-8 animate-spin" />
+                            <p className="text-sm font-medium">Loading menu choices…</p>
+                            <p className="text-xs">Checking sides and options before items can be added.</p>
+                        </div>
+                    ) : menuLoadError && menuItems.length === 0 ? (
+                        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground">
+                            <p className="text-sm font-medium">Menu choices are unavailable</p>
+                            <p className="max-w-sm text-xs">{menuLoadError}</p>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setMenuRefreshToken((value) => value + 1)}>
+                                Try again
+                            </Button>
+                        </div>
+                    ) : <>
                     <TabsList className="mx-3 mt-3 h-12 w-[calc(100%-1.5rem)] shrink-0 justify-start gap-1 overflow-x-auto rounded-md p-1 sm:mx-4 sm:w-[calc(100%-2rem)]">
                         {categories.map(category => (
                             <TabsTrigger
@@ -1221,6 +1254,7 @@ export function TakeOrderModal({
                             );
                         })}
                     </div>
+                    </>}
                 </Tabs>
             </div>
             
