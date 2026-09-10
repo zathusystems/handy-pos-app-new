@@ -41,6 +41,11 @@ export const markTakeOrdersCompleted = async (
       });
     } catch (error) {
       console.warn('[TakeOrder] Backend completion update failed:', takeOrderId, error);
+      const httpStatus = Number((error as { status?: number } | null)?.status || 0);
+      if (httpStatus >= 400 && httpStatus < 500) {
+        failed.push(takeOrderId);
+        continue;
+      }
     }
 
     try {

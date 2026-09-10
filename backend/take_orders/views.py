@@ -17,6 +17,7 @@ from business.access import get_accessible_business_ids
 from inventory.models import InventoryItem
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
 from .takeaway import normalise_takeaway_items
+from .session_access import get_active_staff_session, user_can_process_take_order_payment
 
 
 KITCHEN_BUSINESS_TYPES = {'restaurant', 'bar_liquor'}
@@ -241,6 +242,14 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
                 {'cancellation_reason': 'Cancellation reason is required.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        if resolved_status == 'Completed' and not user_can_process_take_order_payment(
+            user=request.user,
+            take_order=take_order,
+        ):
+            return Response(
+                {'error': 'Only the staff member who took this order can process its payment.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if resolved_status in {'Sent to Kitchen', 'Preparing', 'Ready'}:
             order_lines = [
@@ -298,6 +307,22 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        attached_active_session = False
+        if take_order.order_type == 'staff':
+            active_session = get_active_staff_session(
+                user=request.user,
+                business=take_order.business,
+                branch=take_order.branch,
+            )
+            if not active_session:
+                return Response(
+                    {'error': 'Start an active session before adding items to an order.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not take_order.session_id:
+                take_order.session = active_session
+                attached_active_session = True
+
         items_data = request.data.get('items', [])
         if not isinstance(items_data, list) or len(items_data) == 0:
             return Response(
@@ -329,6 +354,8 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
             TakeOrderItem.objects.create(take_order=take_order, **item_data)
 
         update_fields = ['updated_at']
+        if attached_active_session:
+            update_fields.append('session')
         if is_takeaway and not take_order.is_takeaway:
             take_order.is_takeaway = True
             update_fields.append('is_takeaway')

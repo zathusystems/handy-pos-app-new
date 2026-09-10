@@ -76,6 +76,28 @@ export const API_ENDPOINTS = {
     roles: `${API_BASE_URL}/staff/roles/`,
   },
 
+  // People & Payroll foundation
+  hr: {
+    employees: `${API_BASE_URL}/hr/employees/`,
+    employee: (id: string) => `${API_BASE_URL}/hr/employees/${id}/`,
+    employmentTerms: `${API_BASE_URL}/hr/employment-terms/`,
+    employmentTerm: (id: string) => `${API_BASE_URL}/hr/employment-terms/${id}/`,
+    shifts: `${API_BASE_URL}/hr/shifts/`,
+    shift: (id: string) => `${API_BASE_URL}/hr/shifts/${id}/`,
+    attendance: `${API_BASE_URL}/hr/attendance/`,
+    clockIn: `${API_BASE_URL}/hr/attendance/clock-in/`,
+    clockOut: `${API_BASE_URL}/hr/attendance/clock-out/`,
+    leaveTypes: `${API_BASE_URL}/hr/leave-types/`,
+    leaveBalances: `${API_BASE_URL}/hr/leave-balances/`,
+    leaveRequests: `${API_BASE_URL}/hr/leave-requests/`,
+    overtimeRequests: `${API_BASE_URL}/hr/overtime-requests/`,
+    payrollSettings: `${API_BASE_URL}/hr/payroll-settings/`,
+    payrollRuns: `${API_BASE_URL}/hr/payroll-runs/`,
+    payrollRun: (id: string) => `${API_BASE_URL}/hr/payroll-runs/${id}/`,
+    payrollEntries: `${API_BASE_URL}/hr/payroll-entries/`,
+    payrollLines: `${API_BASE_URL}/hr/payroll-lines/`,
+  },
+
   // Settings
   settings: {
     get: `${API_BASE_URL}/settings/`,

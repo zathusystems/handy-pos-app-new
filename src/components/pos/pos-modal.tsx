@@ -38,6 +38,10 @@ import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantit
 import { safeLocalStorageGetItem, safeLocalStorageSetItem } from '@/lib/safe-local-storage';
 import { addTakeOrderToSaleCart } from '@/lib/take-order-sale';
 import { markTakeOrdersCompleted } from '@/lib/take-order-status';
+import {
+  canProcessTakeOrderPayment,
+  TAKE_ORDER_PAYMENT_PERMISSION_MESSAGE,
+} from '@/lib/take-order-payment-access';
 import { calculateAppliedCharges, sumAppliedCharges } from '@/lib/business-charges';
 import { calculateAppliedMraLevies } from '@/lib/mra-levies';
 import { v4 as uuidv4 } from 'uuid';
@@ -1733,6 +1737,15 @@ export function PosModal({
       return false;
     }
 
+    if (!canProcessTakeOrderPayment(order, user?.uid, user?.role)) {
+      toast({
+        variant: 'destructive',
+        title: 'Payment restricted',
+        description: TAKE_ORDER_PAYMENT_PERMISSION_MESSAGE,
+      });
+      return false;
+    }
+
     if (order.status !== 'Ready') {
       toast({
         variant: 'destructive',
@@ -1764,7 +1777,7 @@ export function PosModal({
       description: `Order #${order.orderNumber} has been added to the sale cart.`,
     });
     return true;
-  }, [activeSession, branchId, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast]);
+  }, [activeSession, branchId, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast, user?.role, user?.uid]);
 
   useEffect(() => {
     if (!processTakeOrderId) {

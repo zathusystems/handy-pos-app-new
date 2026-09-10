@@ -9,9 +9,9 @@ from rest_framework.test import APIClient
 from business.models import Branch, Business, BusinessSettings
 from digitalmenu.models import MenuConfig
 from inventory.models import InventoryItem
+from pos_sessions.models import Session
 from staff.models import Staff, StaffRole
 from .models import TakeOrder, TakeOrderItem
-
 
 User = get_user_model()
 
@@ -371,14 +371,24 @@ class TakeOrderStatusManagementTests(TestCase):
             value=Decimal('20.00'),
         )
         self.client.force_authenticate(self.owner)
+        self.active_session = Session.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=self.owner,
+            status='active',
+            opening_float=Decimal('0.00'),
+            expected_cash=Decimal('0.00'),
+            started_at=timezone.now(),
+        )
 
-    def _create_order(self, status='Pending'):
+    def _create_order(self, status='Pending', *, created_by=None, order_type='staff'):
         order = TakeOrder.objects.create(
             order_number=1001,
             branch=self.branch,
             business=self.business,
             customer_name='Guest',
-            order_type='staff',
+            created_by=self.owner if created_by is None and order_type == 'staff' else created_by,
+            order_type=order_type,
             status=status,
         )
         TakeOrderItem.objects.create(
@@ -432,11 +442,37 @@ class TakeOrderStatusManagementTests(TestCase):
 
         self.assertEqual(response.status_code, 201, response.data)
         order = TakeOrder.objects.get(id=response.data['id'])
+        self.assertEqual(order.session, self.active_session)
         self.assertTrue(order.is_takeaway)
         package_lines = list(order.items.filter(is_takeaway_packaging=True))
         self.assertEqual(len(package_lines), 1)
         self.assertEqual(package_lines[0].inventory_item_id, str(packaging_item.id))
         self.assertEqual(package_lines[0].price, Decimal('1.25'))
+
+    def test_staff_order_requires_an_active_session(self):
+        self.active_session.status = 'closed'
+        self.active_session.closed_at = timezone.now()
+        self.active_session.save(update_fields=['status', 'closed_at', 'updated_at'])
+
+        response = self.client.post(
+            '/api/orders/take-orders/',
+            {
+                'branch_id': str(self.branch.id),
+                'items': [
+                    {
+                        'inventory_item_id': str(self.item.id),
+                        'name': self.item.name,
+                        'quantity': '1.000',
+                        'price': '8.50',
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Start an active session', str(response.data))
+        self.assertEqual(TakeOrder.objects.count(), 0)
 
     def test_cancelled_order_stays_accessible_and_can_be_reopened(self):
         order = self._create_order(status='Pending')
@@ -562,6 +598,8 @@ class TakeOrderStatusManagementTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data['status'], 'Ready')
+        order.refresh_from_db()
+        self.assertEqual(order.session, self.active_session)
         self.assertEqual(len(response.data['items']), 2)
         self.assertTrue(
             TakeOrderItem.objects.filter(
@@ -704,6 +742,88 @@ class TakeOrderStatusManagementTests(TestCase):
 
         order.refresh_from_db()
         self.assertEqual(order.completed_by, self.owner)
+
+    def test_other_cashier_cannot_process_staff_order_payment(self):
+        cashier = User.objects.create_user(email='other-cashier@example.com', password='test12345')
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=cashier,
+            name='Other Cashier',
+            email='other-cashier@example.com',
+            role=StaffRole.CASHIER,
+            is_active=True,
+        )
+        order = self._create_order(status='Ready')
+        self.client.force_authenticate(cashier)
+
+        response = self.client.patch(
+            f'/api/orders/take-orders/{order.id}/update_status/',
+            {'status': 'Completed'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 403)
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'Ready')
+        self.assertIsNone(order.completed_by)
+
+    def test_cashier_can_process_self_service_order_payment(self):
+        cashier = User.objects.create_user(email='qr-cashier@example.com', password='test12345')
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=cashier,
+            name='QR Cashier',
+            email='qr-cashier@example.com',
+            role=StaffRole.CASHIER,
+            is_active=True,
+        )
+        order = self._create_order(status='Ready', order_type='self_service')
+        self.client.force_authenticate(cashier)
+
+        response = self.client.patch(
+            f'/api/orders/take-orders/{order.id}/update_status/',
+            {'status': 'Completed'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['completed_by'], cashier.id)
+
+    def test_sync_cannot_bypass_staff_order_payment_restriction(self):
+        cashier = User.objects.create_user(email='sync-cashier@example.com', password='test12345')
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=cashier,
+            name='Sync Cashier',
+            email='sync-cashier@example.com',
+            role=StaffRole.CASHIER,
+            is_active=True,
+        )
+        order = self._create_order(status='Ready')
+        self.client.force_authenticate(cashier)
+
+        response = self.client.post(
+            '/api/orders/sync/push/',
+            {
+                'branch_id': str(self.branch.id),
+                'changes': [{
+                    'entity_type': 'TakeOrder',
+                    'op': 'update',
+                    'id': str(order.id),
+                    'data': {'status': 'Completed'},
+                }],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['results']['acknowledged'], [])
+        self.assertIn('Only the staff member', response.data['results']['errors'][0]['error'])
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'Ready')
 
     def test_reopened_completed_order_clears_cashier_name(self):
         order = self._create_order(status='Ready')

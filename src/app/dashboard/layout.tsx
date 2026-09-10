@@ -44,6 +44,7 @@ import {
   Trash2,
   CheckCircle2,
   ShoppingBasket,
+  Clock3,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useForm, FormProvider } from 'react-hook-form';
@@ -242,6 +243,7 @@ const navSections = [
       { href: '/dashboard/pos', icon: MonitorPlay, label: 'POS', permission: 'access_pos' as Permission },
       { href: '/dashboard/sessions', icon: History, label: 'Sessions', permission: 'view_sessions' as Permission },
       { href: '/dashboard/eis-sales', icon: Landmark, label: 'Fiscal Sales', permission: 'view_sessions' as Permission },
+      { href: '/dashboard/work', icon: Clock3, label: 'My Work', permission: 'view_dashboard' as Permission },
     ],
   },
   {
@@ -268,6 +270,7 @@ const navSections = [
       { href: '/dashboard/custom-section', icon: Boxes, label: 'Custom Section', permission: 'view_reports' as Permission },
       { href: '/dashboard/expenses', icon: CreditCard, label: 'Expenses', permission: 'view_expenses' as Permission },
       { href: '/dashboard/staff', icon: Users, label: 'Staff', permission: 'manage_staff' as Permission },
+      { href: '/dashboard/people', icon: Group, label: 'People', permission: 'manage_staff' as Permission },
     ],
   },
 ];

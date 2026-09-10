@@ -671,6 +671,21 @@ class SessionSerializer(serializers.ModelSerializer):
         except serializers.ValidationError as e:
             print('[SessionSerializer] Validation error:', e.detail)
             raise
+
+    def validate(self, attrs):
+        session = self.instance
+        if (
+            session
+            and attrs.get('status') == 'closed'
+            and session.status != 'closed'
+        ):
+            from take_orders.session_access import get_uncompleted_orders_for_session
+
+            if get_uncompleted_orders_for_session(session).exists():
+                raise serializers.ValidationError({
+                    'status': 'Complete or cancel all open orders before closing this session.'
+                })
+        return attrs
     
     def create(self, validated_data):
         """Create session with UUID from frontend"""

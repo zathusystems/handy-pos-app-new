@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type InventoryItem, type TakeOrder } from '@/lib/db';
 import {
@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { ArrowLeft, Plus, Minus, Send, ShoppingBasket, Trash2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Plus, Minus, Search, Send, ShoppingBasket, Trash2, Loader2, X } from 'lucide-react';
 import { useCurrency } from '@/hooks/use-currency';
 import { toast } from '@/hooks/use-toast';
 import { Textarea } from '../ui/textarea';
@@ -28,6 +28,7 @@ import {
 import { isKitchenBusinessType, type BusinessType } from '@/lib/inventory/config';
 import { PortionSaleDialog, canSellInPortions } from './portion-sale-dialog';
 import { getPortionQuantityDisplay } from '@/lib/quantity-format';
+import { KitchenTicket } from './kitchen-ticket';
 
 type TakeOrderModalProps = {
   branchId: string;
@@ -40,6 +41,8 @@ type TakeOrderModalProps = {
 };
 
 type OrderDestination = 'kitchen' | 'pos';
+
+const TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID = 'take-order-modal-kitchen-ticket-printable-area';
 
 type TakeawayConfig = {
     enabled: boolean;
@@ -330,20 +333,33 @@ export function TakeOrderModal({
     const [selectedOptionIds, setSelectedOptionIds] = useState<Record<string, string[]>>({});
     const [pendingSelectedOptions, setPendingSelectedOptions] = useState<Array<Record<string, unknown>>>([]);
     const [selectedMenuItemId, setSelectedMenuItemId] = useState<string | null>(null);
+    const [menuSearchQuery, setMenuSearchQuery] = useState('');
     const [backendMenuItems, setBackendMenuItems] = useState<MenuItemWithOptions[]>([]);
     const [takeawayConfig, setTakeawayConfig] = useState<TakeawayConfig | null>(null);
     const [takeawayPackagingItem, setTakeawayPackagingItem] = useState<InventoryItem | null>(null);
     const [isLoadingTakeawayConfig, setIsLoadingTakeawayConfig] = useState(false);
     const [isTakeaway, setIsTakeaway] = useState(false);
     const [mobilePanel, setMobilePanel] = useState<'menu' | 'order'>('menu');
+    const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
+    const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
+    const kitchenTicketPrintLockRef = React.useRef(false);
+    const menuSearchInputRef = useRef<HTMLInputElement>(null);
     const kitchenEnabled = isKitchenBusinessType(businessType);
 
     useEffect(() => {
         if (isOpen) {
             setMobilePanel('menu');
             setIsTakeaway(Boolean(existingOrder?.isTakeaway ?? existingOrder?.is_takeaway));
+            setMenuSearchQuery('');
         }
     }, [existingOrder, isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const focusTimer = window.setTimeout(() => menuSearchInputRef.current?.focus(), 100);
+        return () => window.clearTimeout(focusTimer);
+    }, [isOpen]);
     
     const localMenuItems = useLiveQuery(
         () => {
@@ -526,6 +542,14 @@ export function TakeOrderModal({
         const uniqueCategories = [...new Set(menuItems.map(item => item.category || 'Uncategorized'))];
         return ['All', ...uniqueCategories];
     }, [menuItems]);
+    const searchedMenuItems = useMemo(() => {
+        const normalizedQuery = menuSearchQuery.trim().toLowerCase();
+        if (!normalizedQuery) return menuItems;
+
+        return menuItems.filter((item) => (
+            `${item.name || ''} ${item.category || ''}`.toLowerCase().includes(normalizedQuery)
+        ));
+    }, [menuItems, menuSearchQuery]);
     const kitchenInventoryLookup = useMemo(
         () => buildKitchenInventoryLookup(menuItems),
         [menuItems]
@@ -837,6 +861,95 @@ export function TakeOrderModal({
         updatedAt: new Date().toISOString(),
     }));
 
+    const handlePrintKitchenTicket = async (order: TakeOrder) => {
+        if (kitchenTicketPrintLockRef.current) return;
+
+        const kitchenItems = getKitchenOrderItems(order, kitchenInventoryLookup);
+        if (kitchenItems.length === 0) return;
+
+        kitchenTicketPrintLockRef.current = true;
+        try {
+            const { printerService } = await import('@/lib/services/printer-service');
+            const { silentPrintService } = await import('@/lib/services/silent-print-service');
+            const [printerSettings, defaultPrinter] = await Promise.all([
+                printerService.getPrinterSettings(branchId),
+                printerService.getDefaultPrinter(branchId),
+            ]);
+
+            if (!defaultPrinter) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Kitchen Ticket Not Printed',
+                    description: 'Order was sent to the kitchen, but no default printer is configured.',
+                });
+                return;
+            }
+
+            const selectedPaperWidth: '80mm' | '58mm' =
+                printerSettings.receiptPaperWidth === '58mm' || printerSettings.receiptPaperWidth === '80mm'
+                    ? printerSettings.receiptPaperWidth
+                    : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
+            setKitchenTicketPaperWidth(selectedPaperWidth);
+            setKitchenTicketOrder(order);
+            await new Promise((resolve) => setTimeout(resolve, 150));
+
+            const kitchenTicketElement = document.getElementById(TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID);
+            const printContents = kitchenTicketElement?.innerHTML;
+            if (!printContents || printContents.trim().length === 0) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Kitchen Ticket Not Printed',
+                    description: 'The kitchen ticket was not ready. Check the printer and kitchen queue.',
+                });
+                return;
+            }
+
+            const isBluetoothPrinter =
+                defaultPrinter.connectionType === 'bluetooth' ||
+                String(defaultPrinter.id || '').toLowerCase().startsWith('bt:');
+            const printAttemptTimeoutMs = isBluetoothPrinter ? 45_000 : 20_000;
+            const result = await Promise.race([
+                silentPrintService
+                    .printSilentlyViaSystem(printContents, {
+                        printerName: defaultPrinter.name,
+                        printerId: defaultPrinter.id,
+                        copies: 1,
+                        paperSize: selectedPaperWidth,
+                        printerPaperSize: defaultPrinter.paperWidth as '80mm' | '58mm',
+                    })
+                    .then((success) => ({ success, timedOut: false })),
+                new Promise<{ success: false; timedOut: true }>((resolve) =>
+                    setTimeout(() => resolve({ success: false, timedOut: true }), printAttemptTimeoutMs)
+                ),
+            ]);
+
+            if (!result.success) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Kitchen Ticket Not Printed',
+                    description: result.timedOut
+                        ? 'Order was sent, but the printer did not respond in time.'
+                        : 'Order was sent, but the kitchen ticket could not be printed.',
+                });
+                return;
+            }
+
+            toast({
+                title: 'Kitchen Ticket Printed',
+                description: `Order ${order.orderNumber} was sent to the kitchen.`,
+            });
+        } catch (error) {
+            console.error('[Take Order Kitchen Ticket] Failed to print kitchen ticket:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Kitchen Ticket Not Printed',
+                description: 'Order was sent, but the kitchen ticket could not be printed.',
+            });
+        } finally {
+            kitchenTicketPrintLockRef.current = false;
+        }
+    };
+
     const handleSubmitOrder = async (forcedDestination?: OrderDestination) => {
         setIsSubmitting(true);
 
@@ -930,11 +1043,14 @@ export function TakeOrderModal({
                 id: createdOrder.id,
                 orderNumber: createdOrder.order_number,
                 branchId,
+                sessionId: createdOrder.session ? String(createdOrder.session) : undefined,
                 status: orderStatus,
                 tableNumber: tableNumber || undefined,
                 customerName: createdOrder.customer_name,
                 customerPhone: createdOrder.customer_phone,
                 customerNotes: createdOrder.customer_notes,
+                createdBy: createdOrder.created_by ? String(createdOrder.created_by) : undefined,
+                createdByName: createdOrder.created_by_name || undefined,
                 items: mapCartItemsToLocalOrderItems(),
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
@@ -945,6 +1061,10 @@ export function TakeOrderModal({
 
             await db.takeOrders.add(takeOrder);
             window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+
+            if (resolvedDestination === 'kitchen') {
+                void handlePrintKitchenTicket(takeOrder);
+            }
 
             toast({
                 title: resolvedDestination === 'pos' ? 'Order Ready for Sale' : 'Order Sent to Kitchen',
@@ -995,18 +1115,63 @@ export function TakeOrderModal({
             {/* Menu Items */}
             <div className={`${mobilePanel === 'menu' ? 'flex' : 'hidden'} min-h-0 h-full flex-col overflow-hidden border-r lg:flex`}>
                 <Tabs defaultValue="All" className="flex h-full min-h-0 flex-col overflow-hidden">
-                    <TabsList className="mx-3 w-[calc(100%-1.5rem)] shrink-0 justify-start overflow-x-auto">
+                    <div className="shrink-0 border-b bg-background px-3 pb-3 pt-3 sm:px-4">
+                        <div className="relative">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                                ref={menuSearchInputRef}
+                                value={menuSearchQuery}
+                                onChange={(event) => setMenuSearchQuery(event.target.value)}
+                                placeholder="Search menu items or categories"
+                                aria-label="Search menu items"
+                                className="h-11 pl-9 pr-10 text-base"
+                            />
+                            {menuSearchQuery && (
+                                <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
+                                    onClick={() => {
+                                        setMenuSearchQuery('');
+                                        menuSearchInputRef.current?.focus();
+                                    }}
+                                    aria-label="Clear menu search"
+                                    title="Clear search"
+                                >
+                                    <X className="h-4 w-4" />
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                    <TabsList className="mx-3 mt-3 h-12 w-[calc(100%-1.5rem)] shrink-0 justify-start gap-1 overflow-x-auto rounded-md p-1 sm:mx-4 sm:w-[calc(100%-2rem)]">
                         {categories.map(category => (
-                            <TabsTrigger key={category} value={category} className="shrink-0">{category}</TabsTrigger>
+                            <TabsTrigger
+                                key={category}
+                                value={category}
+                                className="h-9 shrink-0 px-4 text-sm font-medium"
+                            >
+                                {category}
+                            </TabsTrigger>
                         ))}
                     </TabsList>
                     <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-                        {categories.map(category => (
+                        {categories.map(category => {
+                            const categoryItems = searchedMenuItems.filter(
+                                item => category === 'All' || item.category === category
+                            );
+
+                            return (
                             <TabsContent key={category} value={category} className="mt-0">
+                                {categoryItems.length === 0 ? (
+                                    <div className="flex min-h-48 flex-col items-center justify-center px-4 text-center text-muted-foreground">
+                                        <Search className="mb-3 h-8 w-8" />
+                                        <p className="text-sm font-medium">No menu items found</p>
+                                        <p className="mt-1 text-xs">Try another item name or category.</p>
+                                    </div>
+                                ) : (
                                 <div className="grid min-w-0 grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-                                {menuItems
-                                    .filter(item => category === 'All' || item.category === category)
-                                    .map(item => {
+                                {categoryItems.map(item => {
                                         const optionGroups = getMenuOptionGroups(item);
                                         const isSelected = selectedMenuItemId === getMenuItemKey(item);
                                         return (
@@ -1047,8 +1212,10 @@ export function TakeOrderModal({
                                         );
                                     })}
                                 </div>
+                                )}
                             </TabsContent>
-                        ))}
+                            );
+                        })}
                     </div>
                 </Tabs>
             </div>
@@ -1391,6 +1558,27 @@ export function TakeOrderModal({
         selectedOptions={pendingSelectedOptions}
         onAddToCart={handleAddToCart}
     />
+    {kitchenTicketOrder && (
+        <div className="hidden">
+            <KitchenTicket
+                rootId={TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID}
+                orderNumber={kitchenTicketOrder.orderNumber}
+                paperWidth={kitchenTicketPaperWidth}
+                items={getKitchenOrderItems(kitchenTicketOrder, kitchenInventoryLookup).map((item) => ({
+                    id: String(item.id),
+                    name: String(item.name || 'Item'),
+                    quantity: Number(item.quantity || 0),
+                    notes: item.notes,
+                    selectedOptions: Array.isArray(item.selectedOptions ?? item.selected_options)
+                        ? item.selectedOptions ?? item.selected_options
+                        : [],
+                    selected_options: Array.isArray(item.selectedOptions ?? item.selected_options)
+                        ? item.selectedOptions ?? item.selected_options
+                        : [],
+                }))}
+            />
+        </div>
+    )}
     </>
   );
 }

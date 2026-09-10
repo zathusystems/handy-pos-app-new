@@ -39,8 +39,16 @@ import { useAuth } from '@/hooks/use-auth';
 import { db, type Business } from '@/lib/db';
 import { authFetch } from '@/lib/auth-fetch';
 import { SHOW_FUEL_FEATURES } from '@/lib/fuel-features';
-import { Loader2, RefreshCw, Clock } from 'lucide-react';
+import { Clock, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  CUSTOMER_BILL_PAYMENT_METHOD_OPTIONS,
+  getCustomerBillPaymentAccountsFromPayload,
+  hasCustomerBillPaymentAccountsInPayload,
+  normalizeCustomerBillPaymentAccounts,
+  serializeCustomerBillPaymentAccounts,
+  type CustomerBillPaymentAccount,
+} from '@/lib/customer-bill-payment-accounts';
 
 const LOCAL_STORAGE_KEYS = {
     BUSINESS_SETTINGS: 'handypos-business-settings',
@@ -87,6 +95,13 @@ const normalizePumpList = (value: unknown): string[] => {
 const toBoolean = (value: unknown, fallback = false): boolean => {
   if (value === undefined || value === null || value === '') return fallback;
   return value === true || value === 'true';
+};
+
+const createCustomerBillPaymentAccountId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `payment-account-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
 const BUSINESS_TYPE_MAP: Record<string, string> = {
@@ -138,6 +153,13 @@ const resolveBusinessTypeFormValue = (...values: Array<unknown>): string => {
 };
 
 // Schemas
+const customerBillPaymentAccountSchema = z.object({
+  id: z.string().min(1),
+  method: z.enum(['Cash', 'Card', 'Mobile Money', 'Bank Transfer']),
+  label: z.string().trim().min(1, 'Enter a clear account label.').max(100),
+  accountDetails: z.string().trim().min(1, 'Enter the payment account or instruction.').max(255),
+});
+
 const businessSettingsSchema = z.object({
   businessName: z.string().min(2, 'Business name must be at least 2 characters.'),
   businessType: z.string().min(1, 'Please select a business type.'),
@@ -161,6 +183,7 @@ const businessSettingsSchema = z.object({
   enableCustomSalesSection: z.boolean().default(false),
   customSalesSectionName: z.string().max(80, 'Section name must be 80 characters or less.').default(''),
   fuelPumps: z.array(z.string().trim().min(1)).default([]),
+  customerBillPaymentAccounts: z.array(customerBillPaymentAccountSchema).default([]),
 }).superRefine((values, context) => {
   if (values.enableCustomSalesSection && !values.customSalesSectionName.trim()) {
     context.addIssue({
@@ -216,9 +239,11 @@ export default function BusinessSettingsPage() {
       enableCustomSalesSection: false,
       customSalesSectionName: '',
       fuelPumps: [],
+      customerBillPaymentAccounts: [],
     },
   });
   const fuelPumps = businessForm.watch('fuelPumps');
+  const customerBillPaymentAccounts = businessForm.watch('customerBillPaymentAccounts');
   const enableCustomSalesSection = businessForm.watch('enableCustomSalesSection');
 
   // Load business settings from backend
@@ -228,6 +253,7 @@ export default function BusinessSettingsPage() {
             console.log('[DEBUG SETTINGS] Loading business settings for ID:', business.id);
             let cachedFiscalYearStartMonth = 1;
             let cachedFuelPumps: string[] = [];
+            let cachedCustomerBillPaymentAccounts: CustomerBillPaymentAccount[] = [];
             try {
               try {
                 const cachedSettingsRaw = localStorage.getItem(LOCAL_STORAGE_KEYS.BUSINESS_SETTINGS);
@@ -240,6 +266,7 @@ export default function BusinessSettingsPage() {
                   cachedFuelPumps = normalizePumpList(
                     cachedSettings?.fuelPumps ?? cachedSettings?.fuel_pumps
                   );
+                  cachedCustomerBillPaymentAccounts = getCustomerBillPaymentAccountsFromPayload(cachedSettings);
                 }
               } catch (cacheError) {
                 console.warn('[DEBUG SETTINGS] Failed to parse cached fiscal year start month:', cacheError);
@@ -325,6 +352,9 @@ export default function BusinessSettingsPage() {
                         backendBusiness.settings?.fuelPumps ??
                         cachedFuelPumps
                     ),
+                    customerBillPaymentAccounts: hasCustomerBillPaymentAccountsInPayload(backendBusiness)
+                      ? getCustomerBillPaymentAccountsFromPayload(backendBusiness)
+                      : cachedCustomerBillPaymentAccounts,
                 };
                 console.log('[DEBUG SETTINGS] Form data to reset:', formData);
                 businessForm.reset(formData);
@@ -365,6 +395,7 @@ export default function BusinessSettingsPage() {
                     enableCustomSalesSection: false,
                     customSalesSectionName: '',
                     fuelPumps: cachedFuelPumps,
+                    customerBillPaymentAccounts: cachedCustomerBillPaymentAccounts,
                 });
               }
             } catch (error) {
@@ -408,6 +439,7 @@ export default function BusinessSettingsPage() {
                     enableCustomSalesSection: enableCustomSalesSectionValue,
                     customSalesSectionName: customSalesSectionNameValue,
                     fuelPumps: cachedFuelPumps,
+                    customerBillPaymentAccounts: cachedCustomerBillPaymentAccounts,
                 };
                 businessForm.reset(formData);
               } else {
@@ -433,6 +465,7 @@ export default function BusinessSettingsPage() {
                     enableCustomSalesSection: false,
                     customSalesSectionName: '',
                     fuelPumps: cachedFuelPumps,
+                    customerBillPaymentAccounts: cachedCustomerBillPaymentAccounts,
                 });
               }
             }
@@ -534,6 +567,26 @@ export default function BusinessSettingsPage() {
     businessForm.setValue('fuelPumps', next, { shouldDirty: true });
   };
 
+  const handleAddCustomerBillPaymentAccount = () => {
+    businessForm.setValue('customerBillPaymentAccounts', [
+      ...(customerBillPaymentAccounts || []),
+      {
+        id: createCustomerBillPaymentAccountId(),
+        method: 'Mobile Money',
+        label: '',
+        accountDetails: '',
+      },
+    ], { shouldDirty: true });
+  };
+
+  const handleRemoveCustomerBillPaymentAccount = (id: string) => {
+    businessForm.setValue(
+      'customerBillPaymentAccounts',
+      (customerBillPaymentAccounts || []).filter((account) => account.id !== id),
+      { shouldDirty: true }
+    );
+  };
+
   async function onBusinessSubmit(data: BusinessSettingsFormValues) {
     if (!business?.id) {
       toast({
@@ -545,6 +598,9 @@ export default function BusinessSettingsPage() {
     }
 
     const resolvedFuelPumps = normalizePumpList(fuelPumps ?? data.fuelPumps);
+    const resolvedCustomerBillPaymentAccounts = normalizeCustomerBillPaymentAccounts(
+      data.customerBillPaymentAccounts
+    );
     const businessData: Business = {
         id: business.id,
         name: data.businessName,
@@ -574,6 +630,10 @@ export default function BusinessSettingsPage() {
           enable_custom_sales_section: data.enableCustomSalesSection,
           custom_sales_section_name: data.customSalesSectionName.trim(),
           fuelPumps: resolvedFuelPumps,
+          customerBillPaymentAccounts: resolvedCustomerBillPaymentAccounts,
+          customer_bill_payment_accounts: serializeCustomerBillPaymentAccounts(
+            resolvedCustomerBillPaymentAccounts
+          ),
         })
       );
       window.dispatchEvent(new CustomEvent('handypos-business-settings-changed'));
@@ -604,6 +664,9 @@ export default function BusinessSettingsPage() {
         enable_custom_sales_section: data.enableCustomSalesSection,
         custom_sales_section_name: data.customSalesSectionName.trim(),
         fuel_pumps: resolvedFuelPumps,
+        customer_bill_payment_accounts: serializeCustomerBillPaymentAccounts(
+          resolvedCustomerBillPaymentAccounts
+        ),
       };
 
       console.log('[DEBUG SETTINGS] Attempting to sync to backend:', backendPayload);
@@ -684,6 +747,9 @@ export default function BusinessSettingsPage() {
 	            fuelPumps: normalizePumpList(
               response.settings?.fuel_pumps ?? response.fuel_pumps ?? data.fuelPumps
             ),
+	            customerBillPaymentAccounts: hasCustomerBillPaymentAccountsInPayload(response)
+              ? getCustomerBillPaymentAccountsFromPayload(response)
+              : resolvedCustomerBillPaymentAccounts,
           });
           console.log('[DEBUG SETTINGS] Form reloaded with backend response values');
         }
@@ -858,6 +924,96 @@ export default function BusinessSettingsPage() {
           </CardContent>
           <CardFooter className="border-t px-6 py-4">
             <Button type="submit">Save Changes</Button>
+          </CardFooter>
+        </Card>
+
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Customer Bill Payment Details</CardTitle>
+            <CardDescription>
+              Show customers where to pay on bills printed before a sale is completed. These are payment instructions, not the payment method used to record the sale.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {customerBillPaymentAccounts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Add a mobile money number, bank account, card instruction, or cashier payment note.
+              </p>
+            ) : (
+              customerBillPaymentAccounts.map((account, index) => (
+                <div
+                  key={account.id}
+                  className="grid gap-3 rounded-md border p-3 sm:grid-cols-[minmax(140px,0.8fr)_minmax(0,1fr)_minmax(0,1.25fr)_auto] sm:items-end"
+                >
+                  <FormField
+                    control={businessForm.control}
+                    name={`customerBillPaymentAccounts.${index}.method`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Method</FormLabel>
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Choose method" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {CUSTOMER_BILL_PAYMENT_METHOD_OPTIONS.map((method) => (
+                              <SelectItem key={method} value={method}>{method}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={businessForm.control}
+                    name={`customerBillPaymentAccounts.${index}.label`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Account Label</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Airtel Money - Main Till" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={businessForm.control}
+                    name={`customerBillPaymentAccounts.${index}.accountDetails`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Account Number or Instruction</FormLabel>
+                        <FormControl>
+                          <Input placeholder="0999 000 111" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => handleRemoveCustomerBillPaymentAccount(account.id)}
+                    aria-label={`Remove ${account.label || 'payment account'}`}
+                    title="Remove payment account"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))
+            )}
+            <Button type="button" variant="outline" onClick={handleAddCustomerBillPaymentAccount}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Payment Account
+            </Button>
+          </CardContent>
+          <CardFooter className="border-t px-6 py-4">
+            <Button type="submit">Save Payment Details</Button>
           </CardFooter>
         </Card>
 

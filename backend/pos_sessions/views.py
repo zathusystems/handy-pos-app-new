@@ -587,6 +587,20 @@ class SessionViewSet(viewsets.ModelViewSet):
                 {'error': 'Session is already closed'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        from take_orders.session_access import get_uncompleted_orders_for_session
+
+        uncompleted_orders = get_uncompleted_orders_for_session(session)
+        if uncompleted_orders.exists():
+            order_numbers = list(uncompleted_orders.values_list('order_number', flat=True)[:10])
+            return Response(
+                {
+                    'error': 'Complete or cancel all open orders before closing this session.',
+                    'uncompleted_order_count': uncompleted_orders.count(),
+                    'order_numbers': order_numbers,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         # Log incoming data
         print(f'[Sessions] Close action received data: {request.data}')

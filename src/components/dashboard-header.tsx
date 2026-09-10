@@ -103,6 +103,7 @@ export function DashboardHeader({
   const [subscriptionReminder, setSubscriptionReminder] = useState<SubscriptionReminderData | null>(null);
   const [showOrdersModal, setShowOrdersModal] = useState(false);
   const [attentionOrderIds, setAttentionOrderIds] = useState<string[]>([]);
+  const [attentionOrdersReady, setAttentionOrdersReady] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -123,7 +124,14 @@ export function DashboardHeader({
     () => (subscriptionReminder ? subscriptionReminder.monthlyCharge * 0.2 : 0),
     [subscriptionReminder]
   );
-  useOrderNotificationSound(attentionOrderIds, !showOrdersModal);
+  const attentionOrderNotifications = useMemo(
+    () => attentionOrderIds.map((id) => ({ id, channel: 'attention' })),
+    [attentionOrderIds]
+  );
+  useOrderNotificationSound(attentionOrderNotifications, {
+    enabled: !showOrdersModal,
+    ready: attentionOrdersReady,
+  });
 
   const formatAmount = (value: number): string => {
     const code = subscriptionReminder?.currencyCode || 'USD';
@@ -211,6 +219,7 @@ export function DashboardHeader({
 
   useEffect(() => {
     const backendBranchId = normalizeHeaderBranchId(propBranchId);
+    setAttentionOrdersReady(false);
     if (isAuthLoading || !businessId || !backendBranchId) {
       setAttentionOrderIds([]);
       window.dispatchEvent(new CustomEvent(ORDERS_ATTENTION_COUNT_EVENT, { detail: { count: 0 } }));
@@ -238,6 +247,7 @@ export function DashboardHeader({
         );
         const nextCount = attentionOrders.length;
         window.dispatchEvent(new CustomEvent(ORDERS_ATTENTION_COUNT_EVENT, { detail: { count: nextCount } }));
+        setAttentionOrdersReady(true);
       } catch (error) {
         if (active) {
           console.warn('[DashboardHeader] Order counter fetch skipped:', error);

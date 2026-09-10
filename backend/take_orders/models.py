@@ -29,6 +29,14 @@ class TakeOrder(models.Model):
     # Relations
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='take_orders')
     branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='take_orders')
+    session = models.ForeignKey(
+        'pos_sessions.Session',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='take_orders',
+        help_text='Active staff session that created this order. Self-service orders do not use a session.',
+    )
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='take_orders_created')
     completed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='take_orders_completed')
     customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='take_orders')
@@ -60,6 +68,7 @@ class TakeOrder(models.Model):
             models.Index(fields=['branch', 'status']),
             models.Index(fields=['branch', 'created_at']),
             models.Index(fields=['branch', 'order_type']),
+            models.Index(fields=['session', 'status']),
             models.Index(fields=['created_by']),
             models.Index(fields=['completed_by']),
             models.Index(fields=['status']),

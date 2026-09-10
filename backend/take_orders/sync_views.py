@@ -6,6 +6,7 @@ from django.utils import timezone
 from .models import TakeOrder, TakeOrderItem
 from .serializers import TakeOrderSerializer
 from business.models import Branch
+from .session_access import get_active_staff_session, user_can_process_take_order_payment
 
 
 TAKE_ORDER_SYNC_ALIASES = {
@@ -33,6 +34,9 @@ TAKE_ORDER_SYNC_READ_ONLY_FIELDS = {
     'completedByName',
     'completed_by',
     'completed_by_name',
+    'session',
+    'sessionId',
+    'session_id',
 }
 
 TAKE_ORDER_ITEM_SYNC_ALIASES = {
@@ -148,6 +152,19 @@ def sync_push(request):
                     }
                     
                     take_order_data['order_number'] = TakeOrder.next_order_number_for_branch(branch)
+                    if take_order_data.get('order_type', 'staff') == 'staff':
+                        active_session = get_active_staff_session(
+                            user=request.user,
+                            business=branch.business,
+                            branch=branch,
+                        )
+                        if not active_session:
+                            errors.append({
+                                'id': change_id,
+                                'error': 'Start an active session before taking orders for this branch.',
+                            })
+                            continue
+                        take_order_data['session'] = active_session
                     
                     take_order_data.pop('completed_by', None)
                     take_order_data.pop('completedBy', None)
@@ -167,6 +184,32 @@ def sync_push(request):
                 elif op == 'update':
                     # Update existing take order, or create if it doesn't exist
                     try:
+                        existing_take_order = TakeOrder.objects.filter(
+                            id=change_id,
+                            branch_id=branch_id,
+                        ).first()
+                        existing_order_type = (
+                            existing_take_order.order_type
+                            if existing_take_order
+                            else change_data.get('order_type', 'staff')
+                        )
+                        requires_active_session = existing_order_type == 'staff' and (
+                            existing_take_order is None or 'items' in change_data
+                        )
+                        active_session = None
+                        if requires_active_session:
+                            active_session = get_active_staff_session(
+                                user=request.user,
+                                business=branch.business,
+                                branch=branch,
+                            )
+                            if not active_session:
+                                errors.append({
+                                    'id': change_id,
+                                    'error': 'Start an active session before taking orders for this branch.',
+                                })
+                                continue
+
                         take_order, created = TakeOrder.objects.get_or_create(
                             id=change_id,
                             defaults={
@@ -176,6 +219,9 @@ def sync_push(request):
                                 'order_number': 1,  # Will be updated below if provided
                             }
                         )
+
+                        if active_session and not take_order.session_id:
+                            take_order.session = active_session
                         
                         # Update fields
                         for field, value in change_data.items():
@@ -188,6 +234,16 @@ def sync_push(request):
                                 branch_id=branch_id
                             ).exclude(id=change_id).order_by('-order_number').first()
                             take_order.order_number = (last_order.order_number + 1) if last_order else 1
+
+                        if take_order.status == 'Completed' and not user_can_process_take_order_payment(
+                            user=request.user,
+                            take_order=take_order,
+                        ):
+                            errors.append({
+                                'id': change_id,
+                                'error': 'Only the staff member who took this order can process its payment.',
+                            })
+                            continue
                         
                         _apply_completion_audit(take_order, request.user)
                         take_order.save()

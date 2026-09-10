@@ -813,7 +813,7 @@ export function PrinterConfigScreen() {
           <CardHeader>
             <CardTitle>Print Settings</CardTitle>
             <CardDescription>
-              Configure default printing behavior for receipts
+              Configure printing for receipts and customer bills
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5 px-3 sm:space-y-6 sm:px-6">

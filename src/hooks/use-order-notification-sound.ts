@@ -122,37 +122,87 @@ export const playOrderNotificationSound = async () => {
   await playFallbackOrderNotificationSound();
 };
 
+export type OrderNotificationCandidate = {
+  id: string | number | null | undefined;
+  /**
+   * The attention queue the order currently belongs to. A change in this
+   * value is treated as an actionable status change for an existing order.
+   */
+  channel: string | null | undefined;
+};
+
+type OrderNotificationSoundOptions = {
+  enabled?: boolean;
+  /**
+   * Keep sound muted until the caller has finished its first order load.
+   * This prevents existing orders from sounding like new arrivals.
+   */
+  ready?: boolean;
+};
+
+type OrderNotificationInput = OrderNotificationCandidate | string | number | null | undefined;
+
 export const useOrderNotificationSound = (
-  orderIds: Array<string | number | null | undefined>,
-  enabled = true
+  candidates: OrderNotificationInput[],
+  options: OrderNotificationSoundOptions | boolean = {}
 ) => {
-  const previousIdsRef = useRef<Set<string> | null>(null);
-  const orderSignature = useMemo(
-    () => orderIds
-      .map((id) => String(id ?? '').trim())
-      .filter(Boolean)
-      .sort()
+  const { enabled = true, ready = true } = typeof options === 'boolean'
+    ? { enabled: options }
+    : options;
+  const previousCandidatesRef = useRef<Map<string, string> | null>(null);
+  const notificationSignature = useMemo(
+    () => candidates
+      .map((candidate) => {
+        if (candidate && typeof candidate === 'object') {
+          return {
+            id: String(candidate.id ?? '').trim(),
+            channel: String(candidate.channel ?? '').trim(),
+          };
+        }
+
+        return {
+          id: String(candidate ?? '').trim(),
+          channel: 'attention',
+        };
+      })
+      .filter((candidate) => candidate.id && candidate.channel)
+      .sort((left, right) => (
+        left.id === right.id
+          ? left.channel.localeCompare(right.channel)
+          : left.id.localeCompare(right.id)
+      ))
+      .map((candidate) => `${candidate.id}:${candidate.channel}`)
       .join('|'),
-    [orderIds]
+    [candidates]
   );
 
   useEffect(() => {
-    if (!enabled) {
-      previousIdsRef.current = null;
+    if (!enabled || !ready) {
+      previousCandidatesRef.current = null;
       return;
     }
 
-    const nextIds = new Set(orderSignature ? orderSignature.split('|') : []);
-    const previousIds = previousIdsRef.current;
-    previousIdsRef.current = nextIds;
+    const nextCandidates = new Map<string, string>();
+    if (notificationSignature) {
+      notificationSignature.split('|').forEach((entry) => {
+        const separatorIndex = entry.indexOf(':');
+        if (separatorIndex <= 0) return;
+        nextCandidates.set(entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1));
+      });
+    }
 
-    if (!previousIds || nextIds.size === 0) return;
+    const previousCandidates = previousCandidatesRef.current;
+    previousCandidatesRef.current = nextCandidates;
 
-    const hasNewOrder = Array.from(nextIds).some((id) => !previousIds.has(id));
-    if (hasNewOrder) {
+    if (!previousCandidates || nextCandidates.size === 0) return;
+
+    const needsAttention = Array.from(nextCandidates.entries()).some(([id, channel]) => (
+      !previousCandidates.has(id) || previousCandidates.get(id) !== channel
+    ));
+    if (needsAttention) {
       void playOrderNotificationSound();
     }
-  }, [enabled, orderSignature]);
+  }, [enabled, notificationSignature, ready]);
 
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;

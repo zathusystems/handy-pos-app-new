@@ -36,7 +36,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useForm, useFieldArray } from 'react-hook-form';
 import Papa from 'papaparse';
 
-import { useReports } from '@/hooks/use-reports';
+import { useReports, type ProductReportRow } from '@/hooks/use-reports';
 import { useAuth } from '@/hooks/use-auth';
 import {
   Card,
@@ -89,11 +89,32 @@ import { Separator } from '@/components/ui/separator';
 import { logAuditAction } from '@/lib/audit';
 import { downloadTextFile } from '@/lib/file-download';
 import { calculateZReportSummary, getOrderChargeBreakdown } from '@/lib/z-report-print';
+import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
 import SaleDetailModal from '@/app/dashboard/sessions/modals/sale-detail-modal';
 
 type RefundFormValues = {
   items: (OrderItem & { maxQuantity: number; price: number })[];
   reason?: string;
+};
+
+type ProductReportSort = 'quantity-sold' | 'revenue' | 'remaining-stock' | 'stock-value' | 'name';
+
+const formatProductReportQuantity = (product: ProductReportRow, quantity: number): string => {
+    if (product.isSoldInPortions && product.portionsPerUnit && product.portionsPerUnit > 0) {
+        const portionDisplay = getPortionQuantityDisplay({
+            quantity,
+            unitLabel: product.unitType,
+            portionName: product.portionName,
+            portionsPerUnit: product.portionsPerUnit,
+        });
+        if (portionDisplay) {
+            return portionDisplay.summaryText;
+        }
+    }
+
+    return formatQuantityWithUnit(quantity, product.unitType, {
+        maximumFractionDigits: 3,
+    });
 };
 
 const sortOrdersByMostRecent = (orders: Order[]): Order[] => {
@@ -487,8 +508,53 @@ export default function ReportsPage() {
     const [activeBranchId, setActiveBranchId] = React.useState<string | null>(null);
     const [isEisEnabled, setIsEisEnabled] = useState(false);
     const [fiscalYearStartMonth, setFiscalYearStartMonth] = useState(1);
+    const [productSearch, setProductSearch] = useState('');
+    const [productTypeFilter, setProductTypeFilter] = useState<'all' | 'sellable' | 'ingredient'>('all');
+    const [productStockFilter, setProductStockFilter] = useState<'all' | ProductReportRow['stockStatus']>('all');
+    const [productReportSort, setProductReportSort] = useState<ProductReportSort>('quantity-sold');
     const { format: formatCurrency } = useCurrency();
     const { data, loading, error } = useReports(date);
+
+    const filteredProductReport = useMemo(() => {
+        const searchTerm = productSearch.trim().toLowerCase();
+        const filtered = data.productReport.filter((product) => {
+            if (productTypeFilter !== 'all' && product.itemType !== productTypeFilter) {
+                return false;
+            }
+            if (productStockFilter !== 'all' && product.stockStatus !== productStockFilter) {
+                return false;
+            }
+            if (!searchTerm) {
+                return true;
+            }
+            return `${product.name} ${product.category}`.toLowerCase().includes(searchTerm);
+        });
+
+        return [...filtered].sort((left, right) => {
+            if (productReportSort === 'name') {
+                return left.name.localeCompare(right.name);
+            }
+            if (productReportSort === 'revenue') {
+                return right.revenueWithTax - left.revenueWithTax || left.name.localeCompare(right.name);
+            }
+            if (productReportSort === 'remaining-stock') {
+                return right.availableStock - left.availableStock || left.name.localeCompare(right.name);
+            }
+            if (productReportSort === 'stock-value') {
+                return right.stockValue - left.stockValue || left.name.localeCompare(right.name);
+            }
+            return right.quantitySold - left.quantitySold || right.revenueWithTax - left.revenueWithTax || left.name.localeCompare(right.name);
+        });
+    }, [data.productReport, productReportSort, productSearch, productStockFilter, productTypeFilter]);
+
+    const productReportSummary = useMemo(() => ({
+        totalProducts: data.productReport.length,
+        soldProducts: data.productReport.filter((product) => product.quantitySold > 0).length,
+        needsAttention: data.productReport.filter((product) => (
+            product.stockStatus === 'Low Stock' || product.stockStatus === 'Out of Stock'
+        )).length,
+        stockValue: data.productReport.reduce((total, product) => total + product.stockValue, 0),
+    }), [data.productReport]);
 
     // Get active branch from localStorage
     React.useEffect(() => {
@@ -1238,117 +1304,176 @@ export default function ReportsPage() {
                     </Card>
                 )}
                 <Card>
-                    <CardHeader>
-                        <CardTitle>Top Selling Products</CardTitle>
-                        <CardDescription>Your best performing products by revenue for the selected period.</CardDescription>
+                    <CardHeader className="gap-4">
+                        <div>
+                            <CardTitle>All Products</CardTitle>
+                            <CardDescription>
+                                Sales for the selected period with the latest stock position for every inventory item.
+                            </CardDescription>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="rounded-md border bg-muted/30 p-3">
+                                <p className="text-xs text-muted-foreground">Products</p>
+                                <p className="mt-1 text-lg font-semibold">{productReportSummary.totalProducts}</p>
+                            </div>
+                            <div className="rounded-md border bg-muted/30 p-3">
+                                <p className="text-xs text-muted-foreground">Sold This Period</p>
+                                <p className="mt-1 text-lg font-semibold">{productReportSummary.soldProducts}</p>
+                            </div>
+                            <div className="rounded-md border bg-muted/30 p-3">
+                                <p className="text-xs text-muted-foreground">Low or Out of Stock</p>
+                                <p className="mt-1 text-lg font-semibold text-amber-700">{productReportSummary.needsAttention}</p>
+                            </div>
+                            <div className="rounded-md border bg-muted/30 p-3">
+                                <p className="text-xs text-muted-foreground">Stock Value</p>
+                                <p className="mt-1 text-lg font-semibold">{formatCurrency(productReportSummary.stockValue)}</p>
+                            </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_170px_170px]">
+                            <Input
+                                value={productSearch}
+                                onChange={(event) => setProductSearch(event.target.value)}
+                                placeholder="Search products or categories"
+                                aria-label="Search products or categories"
+                            />
+                            <select
+                                value={productTypeFilter}
+                                onChange={(event) => setProductTypeFilter(event.target.value as typeof productTypeFilter)}
+                                aria-label="Filter products by type"
+                                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                            >
+                                <option value="all">All types</option>
+                                <option value="sellable">Sellable</option>
+                                <option value="ingredient">Ingredients</option>
+                            </select>
+                            <select
+                                value={productStockFilter}
+                                onChange={(event) => setProductStockFilter(event.target.value as typeof productStockFilter)}
+                                aria-label="Filter products by stock status"
+                                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                            >
+                                <option value="all">All stock states</option>
+                                <option value="In Stock">In stock</option>
+                                <option value="Low Stock">Low stock</option>
+                                <option value="Out of Stock">Out of stock</option>
+                                <option value="Ingredient Based">Ingredient based</option>
+                            </select>
+                            <select
+                                value={productReportSort}
+                                onChange={(event) => setProductReportSort(event.target.value as ProductReportSort)}
+                                aria-label="Sort product report"
+                                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                            >
+                                <option value="quantity-sold">Sort: quantity sold</option>
+                                <option value="revenue">Sort: sales value</option>
+                                <option value="remaining-stock">Sort: available stock</option>
+                                <option value="stock-value">Sort: stock value</option>
+                                <option value="name">Sort: name</option>
+                            </select>
+                        </div>
                     </CardHeader>
                     <CardContent>
-                        <Table>
-                            <TableHeader><TableRow><TableHead>Product</TableHead><TableHead className="text-right">Quantity Sold</TableHead><TableHead className="text-right">Revenue (Before Tax)</TableHead><TableHead className="text-right">Revenue (With Tax)</TableHead></TableRow></TableHeader>
-                            <TableBody>
-                                {loading ? (
-                                    [...Array(5)].map((_, i) => <TableRow key={i}><TableCell><Skeleton className="h-5 w-3/4" /></TableCell><TableCell><Skeleton className="h-5 w-1/4 ml-auto" /></TableCell><TableCell><Skeleton className="h-5 w-1/4 ml-auto" /></TableCell><TableCell><Skeleton className="h-5 w-1/4 ml-auto" /></TableCell></TableRow>)
-                                ) : data.topProducts.map(product => (
-                                    <TableRow key={product.name}><TableCell className="font-medium">{product.name}</TableCell><TableCell className="text-right">{product.quantity}</TableCell><TableCell className="text-right font-semibold">{formatCurrency(product.revenue)}</TableCell><TableCell className="text-right font-semibold text-green-600">{formatCurrency(product.revenueWithTax)}</TableCell></TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
+                        <div className="overflow-x-auto">
+                            <Table className="min-w-[1080px]">
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Product</TableHead>
+                                        <TableHead>Category</TableHead>
+                                        <TableHead className="text-right">Quantity Sold</TableHead>
+                                        <TableHead className="text-right">Sales</TableHead>
+                                        <TableHead>Stock Position</TableHead>
+                                        <TableHead className="text-right">Reserved</TableHead>
+                                        <TableHead className="text-right">Stock Value</TableHead>
+                                        <TableHead>Status</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {loading ? (
+                                        [...Array(8)].map((_, index) => (
+                                            <TableRow key={index}>
+                                                <TableCell><Skeleton className="h-5 w-40" /></TableCell>
+                                                <TableCell><Skeleton className="h-5 w-24" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+                                                <TableCell><Skeleton className="h-5 w-32" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+                                                <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+                                                <TableCell><Skeleton className="h-5 w-20" /></TableCell>
+                                            </TableRow>
+                                        ))
+                                    ) : filteredProductReport.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                                                No products match these filters.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : filteredProductReport.map((product) => (
+                                        <TableRow key={product.id}>
+                                            <TableCell>
+                                                <div className="font-medium">{product.name}</div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    {product.itemType === 'ingredient'
+                                                        ? 'Ingredient'
+                                                        : product.isRecipeBased
+                                                            ? 'Prepared item'
+                                                            : product.isProduced
+                                                                ? 'Produced item'
+                                                                : 'Sellable item'}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>{product.category}</TableCell>
+                                            <TableCell className="text-right font-medium">
+                                                {formatProductReportQuantity(product, product.quantitySold)}
+                                            </TableCell>
+                                            <TableCell className="text-right font-medium">
+                                                {formatCurrency(product.revenueWithTax)}
+                                                <div className="mt-1 text-xs font-normal text-muted-foreground">
+                                                    Net {formatCurrency(product.revenue)}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                {product.isRecipeBased ? (
+                                                    <span className="text-sm text-muted-foreground">Ingredient based</span>
+                                                ) : (
+                                                    <>
+                                                        <div className="font-medium">
+                                                            {formatProductReportQuantity(product, product.currentStock)}
+                                                        </div>
+                                                        <div className="mt-1 text-xs text-muted-foreground">
+                                                            Available {formatProductReportQuantity(product, product.availableStock)}
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                {product.isRecipeBased ? '—' : formatProductReportQuantity(product, product.reservedStock)}
+                                            </TableCell>
+                                            <TableCell className="text-right font-medium">
+                                                {product.isRecipeBased ? '—' : formatCurrency(product.stockValue)}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge
+                                                    variant="outline"
+                                                    className={
+                                                        product.stockStatus === 'Out of Stock'
+                                                            ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                                                            : product.stockStatus === 'Low Stock'
+                                                                ? 'border-amber-500/40 bg-amber-500/10 text-amber-700'
+                                                                : product.stockStatus === 'Ingredient Based'
+                                                                    ? 'border-blue-500/40 bg-blue-500/10 text-blue-700'
+                                                                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700'
+                                                    }
+                                                >
+                                                    {product.stockStatus}
+                                                </Badge>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
                     </CardContent>
                 </Card>
-
-                <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Fast-Moving Products</CardTitle>
-                            <CardDescription>Products with the highest quantity sold in the selected period.</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Product</TableHead>
-                                        <TableHead className="text-right">Qty Sold</TableHead>
-                                        <TableHead className="text-right">Avg/Day</TableHead>
-                                        <TableHead className="text-right">Remaining</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {loading ? (
-                                        [...Array(5)].map((_, i) => (
-                                            <TableRow key={i}>
-                                                <TableCell><Skeleton className="h-5 w-3/4" /></TableCell>
-                                                <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
-                                                <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
-                                                <TableCell><Skeleton className="ml-auto h-5 w-16" /></TableCell>
-                                            </TableRow>
-                                        ))
-                                    ) : data.fastMovingProducts.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={4} className="text-center text-muted-foreground">
-                                                No product movement for this period.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : data.fastMovingProducts.map((product, index) => (
-                                        <TableRow key={`fast-${product.name}-${index}`}>
-                                            <TableCell className="font-medium">{product.name}</TableCell>
-                                            <TableCell className="text-right">{product.quantity.toFixed(2)}</TableCell>
-                                            <TableCell className="text-right">{product.averagePerDay.toFixed(2)}</TableCell>
-                                            <TableCell className="text-right">
-                                                {product.currentStock.toFixed(2)} {product.unitType}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Slow-Moving Products</CardTitle>
-                            <CardDescription>Products with the least movement in the selected period.</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Product</TableHead>
-                                        <TableHead className="text-right">Qty Sold</TableHead>
-                                        <TableHead className="text-right">Avg/Day</TableHead>
-                                        <TableHead className="text-right">Remaining</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {loading ? (
-                                        [...Array(5)].map((_, i) => (
-                                            <TableRow key={i}>
-                                                <TableCell><Skeleton className="h-5 w-3/4" /></TableCell>
-                                                <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
-                                                <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
-                                                <TableCell><Skeleton className="ml-auto h-5 w-16" /></TableCell>
-                                            </TableRow>
-                                        ))
-                                    ) : data.slowMovingProducts.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={4} className="text-center text-muted-foreground">
-                                                No products available for movement analysis.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : data.slowMovingProducts.map((product, index) => (
-                                        <TableRow key={`slow-${product.name}-${index}`}>
-                                            <TableCell className="font-medium">{product.name}</TableCell>
-                                            <TableCell className="text-right">{product.quantity.toFixed(2)}</TableCell>
-                                            <TableCell className="text-right">{product.averagePerDay.toFixed(2)}</TableCell>
-                                            <TableCell className="text-right">
-                                                {product.currentStock.toFixed(2)} {product.unitType}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </CardContent>
-                    </Card>
-                </div>
             </div>
         </TabsContent>
         <TabsContent value="categories">

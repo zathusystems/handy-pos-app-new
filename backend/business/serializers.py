@@ -606,11 +606,35 @@ class BusinessChargeCreateUpdateSerializer(serializers.ModelSerializer):
 # BUSINESS SETTINGS SERIALIZERS (Enhanced for MRA EIS)
 # ============================================================================
 
+class CustomerBillPaymentAccountSerializer(serializers.Serializer):
+    """A public payment instruction displayed on unpaid customer bills."""
+    id = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    method = serializers.ChoiceField(choices=['Cash', 'Card', 'Mobile Money', 'Bank Transfer'])
+    label = serializers.CharField(max_length=100)
+    account_details = serializers.CharField(max_length=255)
+
+    def validate_label(self, value):
+        normalized = str(value or '').strip()
+        if not normalized:
+            raise serializers.ValidationError('Enter an account label.')
+        return normalized
+
+    def validate_account_details(self, value):
+        normalized = str(value or '').strip()
+        if not normalized:
+            raise serializers.ValidationError('Enter the payment account or instruction.')
+        return normalized
+
+
 class BusinessSettingsSerializer(serializers.ModelSerializer):
     """Business settings serializer with EIS controls"""
     allow_negative_stock = serializers.BooleanField(
         source='allow_negative_ingredient_stock',
         required=False
+    )
+    customer_bill_payment_accounts = CustomerBillPaymentAccountSerializer(
+        many=True,
+        required=False,
     )
 
     class Meta:
@@ -618,6 +642,7 @@ class BusinessSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'currency', 'timezone', 'enable_inventory', 'enable_invoicing',
             'enable_pos', 'enable_kitchen', 'enable_delivery', 'fuel_pumps',
+            'customer_bill_payment_accounts',
             # MRA EIS fields
             'enable_eis', 'eis_environment', 'block_sales_if_eis_down',
             'block_sales_if_tax_mapping_missing', 'allow_negative_ingredient_stock',
@@ -725,6 +750,7 @@ class BusinessSerializer(serializers.ModelSerializer):
     allow_negative_stock = serializers.SerializerMethodField()
     enable_custom_sales_section = serializers.SerializerMethodField()
     custom_sales_section_name = serializers.SerializerMethodField()
+    customer_bill_payment_accounts = serializers.SerializerMethodField()
 
     class Meta:
         model = Business
@@ -739,7 +765,7 @@ class BusinessSerializer(serializers.ModelSerializer):
             'enable_eis', 'eis_environment', 'block_sales_if_eis_down',
             'block_sales_if_tax_mapping_missing', 'allow_negative_ingredient_stock',
             'allow_negative_stock', 'enable_custom_sales_section',
-            'custom_sales_section_name',
+            'custom_sales_section_name', 'customer_bill_payment_accounts',
             # Relations
             'branches', 'settings', 'tax_rates',
             'created_at', 'updated_at'
@@ -777,6 +803,9 @@ class BusinessSerializer(serializers.ModelSerializer):
 
     def get_custom_sales_section_name(self, obj):
         return obj.settings.custom_sales_section_name if hasattr(obj, 'settings') else ''
+
+    def get_customer_bill_payment_accounts(self, obj):
+        return obj.settings.customer_bill_payment_accounts if hasattr(obj, 'settings') else []
 
     def get_tax_pin(self, obj):
         return obj.tin
@@ -931,6 +960,10 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
     allow_negative_stock = serializers.BooleanField(required=False, allow_null=True)
     enable_custom_sales_section = serializers.BooleanField(required=False, allow_null=True)
     custom_sales_section_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    customer_bill_payment_accounts = CustomerBillPaymentAccountSerializer(
+        many=True,
+        required=False,
+    )
     fuel_pumps = serializers.ListField(
         child=serializers.CharField(),
         required=False,
@@ -948,7 +981,7 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
             'enable_eis', 'eis_environment', 'block_sales_if_eis_down',
             'block_sales_if_tax_mapping_missing', 'allow_negative_ingredient_stock',
             'allow_negative_stock', 'enable_custom_sales_section',
-            'custom_sales_section_name', 'fuel_pumps',
+            'custom_sales_section_name', 'customer_bill_payment_accounts', 'fuel_pumps',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -966,6 +999,7 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
             data['allow_negative_stock'] = instance.settings.allow_negative_ingredient_stock
             data['enable_custom_sales_section'] = instance.settings.enable_custom_sales_section
             data['custom_sales_section_name'] = instance.settings.custom_sales_section_name
+            data['customer_bill_payment_accounts'] = instance.settings.customer_bill_payment_accounts
             data['fuel_pumps'] = instance.settings.fuel_pumps
         else:
             data['enable_eis'] = False
@@ -976,6 +1010,7 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
             data['allow_negative_stock'] = False
             data['enable_custom_sales_section'] = False
             data['custom_sales_section_name'] = ''
+            data['customer_bill_payment_accounts'] = []
             data['fuel_pumps'] = []
         return data
 
@@ -990,6 +1025,7 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
         allow_negative_stock = validated_data.pop('allow_negative_stock', None)
         enable_custom_sales_section = validated_data.pop('enable_custom_sales_section', None)
         custom_sales_section_name = validated_data.pop('custom_sales_section_name', None)
+        customer_bill_payment_accounts = validated_data.pop('customer_bill_payment_accounts', None)
         fuel_pumps = validated_data.pop('fuel_pumps', None)
         if allow_negative_stock is not None:
             allow_negative_ingredient_stock = allow_negative_stock
@@ -998,7 +1034,7 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
         instance = super().update(instance, validated_data)
 
         # Update BusinessSettings if provided
-        if any(v is not None for v in [enable_eis, eis_environment, block_sales_if_eis_down, block_sales_if_tax_mapping_missing, allow_negative_ingredient_stock, enable_custom_sales_section, custom_sales_section_name, fuel_pumps]):
+        if any(v is not None for v in [enable_eis, eis_environment, block_sales_if_eis_down, block_sales_if_tax_mapping_missing, allow_negative_ingredient_stock, enable_custom_sales_section, custom_sales_section_name, customer_bill_payment_accounts, fuel_pumps]):
             settings = instance.settings
             if enable_eis is not None:
                 settings.enable_eis = enable_eis
@@ -1014,6 +1050,10 @@ class BusinessUpdateSerializer(BusinessTinAliasSerializerMixin, serializers.Mode
                 settings.enable_custom_sales_section = enable_custom_sales_section
             if custom_sales_section_name is not None:
                 settings.custom_sales_section_name = str(custom_sales_section_name or '').strip()
+            if customer_bill_payment_accounts is not None:
+                settings.customer_bill_payment_accounts = [
+                    dict(account) for account in customer_bill_payment_accounts
+                ]
             if fuel_pumps is not None:
                 normalized_pumps = []
                 for pump in fuel_pumps or []:

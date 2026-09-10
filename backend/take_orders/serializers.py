@@ -5,6 +5,7 @@ from inventory.models import InventoryItem
 from django.core.exceptions import ValidationError as DjangoValidationError
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
 from .takeaway import normalise_takeaway_items
+from .session_access import get_active_staff_session
 
 
 KITCHEN_BUSINESS_TYPES = {'restaurant', 'bar_liquor'}
@@ -106,6 +107,7 @@ class TakeOrderSerializer(serializers.ModelSerializer):
         model = TakeOrder
         fields = [
             'id', 'order_number', 'status', 'order_type', 'order_type_display',
+            'session',
             'customer',
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
             'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'created_by', 'created_by_name',
@@ -114,6 +116,7 @@ class TakeOrderSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'order_number', 'created_by', 'created_by_name',
+            'session',
             'completed_by', 'completed_by_name', 'created_at', 'updated_at',
         ]
     
@@ -150,6 +153,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
         model = TakeOrder
         fields = [
             'id', 'order_number', 'status', 'order_type', 'order_type_display',
+            'session',
             'customer',
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
             'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'items_response',
@@ -158,6 +162,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'order_number', 'order_type', 'order_type_display',
+            'session',
             'created_by', 'created_by_name', 'completed_by', 'completed_by_name',
             'created_at', 'updated_at', 'completed_at',
         ]
@@ -177,6 +182,16 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
         status = validated_data.pop('status', 'Pending')
         
         branch = self.context['branch']
+        active_session = get_active_staff_session(
+            user=self.context['user'],
+            business=branch.business,
+            branch=branch,
+        )
+        if not active_session:
+            raise serializers.ValidationError({
+                'detail': 'Start an active session before taking orders for this branch.'
+            })
+
         try:
             items_data, is_takeaway = normalise_takeaway_items(
                 items_data,
@@ -213,6 +228,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             order_number=next_order_number,
             branch=branch,
             business=branch.business,
+            session=active_session,
             created_by=self.context['user'],
             status=status,
             **validated_data
@@ -254,6 +270,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'status': instance.status,
             'order_type': instance.order_type,
             'order_type_display': instance.get_order_type_display(),
+            'session': str(instance.session_id) if instance.session_id else None,
             'customer': str(instance.customer_id) if instance.customer_id else None,
             'customer_name': instance.customer_name,
             'customer_phone': instance.customer_phone,

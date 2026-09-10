@@ -37,6 +37,7 @@ import {
   CheckCircle2,
   ChefHat,
   Clock,
+  CreditCard,
   Phone,
   Printer,
   RefreshCw,
@@ -44,16 +45,31 @@ import {
   Tag,
   Utensils,
   User,
+  Users,
   X,
 } from 'lucide-react';
 import { useCurrency } from '@/hooks/use-currency';
+import { useAuth } from '@/hooks/use-auth';
 import { useOrderNotificationSound } from '@/hooks/use-order-notification-sound';
 import { useToast } from '@/hooks/use-toast';
 import { format, parseISO } from 'date-fns';
 import { TakeOrderModal } from './take-order-modal';
 import { BillReceipt } from './bill-receipt';
+import { KitchenTicket } from './kitchen-ticket';
+import { SplitBillDialog, type SplitBillShare } from './split-bill-dialog';
 import { syncService } from '@/lib/services/sync-service';
 import type { PrinterSettings } from '@/lib/services/printer-service';
+import { resolveOfflineBusinessId } from '@/lib/business-profile';
+import {
+  getCustomerBillPaymentAccountsFromPayload,
+  hasCustomerBillPaymentAccountsInPayload,
+  readCustomerBillPaymentAccounts,
+  type CustomerBillPaymentAccount,
+} from '@/lib/customer-bill-payment-accounts';
+import {
+  canProcessTakeOrderPayment,
+  TAKE_ORDER_PAYMENT_PERMISSION_MESSAGE,
+} from '@/lib/take-order-payment-access';
 
 type ViewOrdersModalProps = {
   branchId: string;
@@ -65,7 +81,7 @@ type ViewOrdersModalProps = {
   currentUserRole?: string | null;
 };
 
-type OrderFilter = 'attention' | 'kitchen' | 'ready' | 'cancelled' | 'all';
+type OrderFilter = 'attention' | 'mine' | 'kitchen' | 'ready' | 'cancelled' | 'all';
 
 const ATTENTION_STATUSES = new Set(['Pending', 'Confirmed', 'New']);
 const KITCHEN_STATUSES = new Set(['Sent to Kitchen', 'Preparing']);
@@ -73,6 +89,22 @@ const READY_STATUSES = new Set(['Ready']);
 const CANCELLED_STATUSES = new Set(['Cancelled']);
 const ORDER_MODAL_REFRESH_MS = 10_000;
 const ORDER_BILL_PRINT_ROOT_ID = 'orders-modal-bill-printable-area';
+const KITCHEN_TICKET_PRINT_ROOT_ID = 'orders-modal-kitchen-ticket-printable-area';
+const ORDER_FILTER_LABELS: Record<OrderFilter, string> = {
+  attention: 'Needs Attention',
+  mine: 'My Orders',
+  kitchen: 'Kitchen',
+  ready: 'Ready for Sale',
+  cancelled: 'Cancelled',
+  all: 'All Orders',
+};
+
+type CustomerBillPrintOptions = {
+  items?: TakeOrder['items'];
+  billNumber?: string;
+  customerName?: string | null;
+  cartTitle?: string;
+};
 
 const normalizeBranchId = (value?: string | number | null): string => {
   const normalized = String(value ?? '').trim();
@@ -134,6 +166,7 @@ const formatOptionPrice = (option: Record<string, any>, formatCurrency: (value: 
 
 export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale, onRequestProcessSale, businessType, currentUserRole }: ViewOrdersModalProps) {
   const { format: formatCurrency } = useCurrency();
+  const { user } = useAuth();
   const { toast } = useToast();
   const [selectedOrder, setSelectedOrder] = useState<TakeOrder | null>(null);
   const [orderPendingCancellation, setOrderPendingCancellation] = useState<TakeOrder | null>(null);
@@ -141,13 +174,20 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [cancellationReason, setCancellationReason] = useState('');
   const [showTakeOrderModal, setShowTakeOrderModal] = useState(false);
   const [activeFilter, setActiveFilter] = useState<OrderFilter>('attention');
+  const [ordersReadyForNotifications, setOrdersReadyForNotifications] = useState(false);
   const [billOrder, setBillOrder] = useState<TakeOrder | null>(null);
   const [billPaperWidth, setBillPaperWidth] = useState<'80mm' | '58mm'>('80mm');
   const [billPrinterSettings, setBillPrinterSettings] = useState<Partial<PrinterSettings> | null>(null);
+  const [billPaymentAccounts, setBillPaymentAccounts] = useState<CustomerBillPaymentAccount[]>([]);
   const [billNumber, setBillNumber] = useState('');
+  const [billCartTitle, setBillCartTitle] = useState<string | undefined>();
   const [isPrintingBill, setIsPrintingBill] = useState(false);
+  const [splitBillOrder, setSplitBillOrder] = useState<TakeOrder | null>(null);
+  const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
+  const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
   const [processingSaleOrderId, setProcessingSaleOrderId] = useState<string | null>(null);
   const billPrintLockRef = React.useRef(false);
+  const kitchenTicketPrintLockRef = React.useRef(false);
   const [, setRefresh] = useState(0);
   const kitchenEnabled = isKitchenBusinessType(businessType);
   const inventoryItems = useLiveQuery(
@@ -163,6 +203,25 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     [kitchenEnabled, kitchenInventoryLookup]
   );
   const canCancelOrders = !currentUserRole || currentUserRole === 'Admin';
+
+  const getCustomerBillPaymentAccounts = React.useCallback(async () => {
+    const cachedAccounts = readCustomerBillPaymentAccounts();
+    const businessId = resolveOfflineBusinessId();
+    if (!businessId) return cachedAccounts;
+
+    try {
+      const serverBusiness = await authFetch.fetch(`/business/businesses/${businessId}/`, {
+        queueOnFailure: false,
+      });
+      if (!hasCustomerBillPaymentAccountsInPayload(serverBusiness)) {
+        return cachedAccounts;
+      }
+      return getCustomerBillPaymentAccountsFromPayload(serverBusiness);
+    } catch (error) {
+      console.warn('Could not refresh customer bill payment details before printing.', error);
+      return cachedAccounts;
+    }
+  }, []);
 
   // Fetch all take orders for this branch
   const allOrders = useLiveQuery(
@@ -194,10 +253,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
 
   // Keep the orders modal fresh while staff are actively viewing it.
   React.useEffect(() => {
+    setOrdersReadyForNotifications(false);
     if (!isOpen || !branchId) return;
 
     let cancelled = false;
     let inFlight = false;
+    let initialRefreshComplete = false;
 
     const refreshOrders = async () => {
       setRefresh(prev => prev + 1);
@@ -213,6 +274,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       } finally {
         if (!cancelled) {
           inFlight = false;
+          if (!initialRefreshComplete) {
+            initialRefreshComplete = true;
+            setOrdersReadyForNotifications(true);
+          }
         }
       }
     };
@@ -288,6 +353,16 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     return counts;
   }, [allOrders]);
 
+  const isCurrentUsersOrder = React.useCallback((order: TakeOrder): boolean => {
+    const currentUserId = String(user?.uid ?? '').trim();
+    const createdBy = String(order.createdBy ?? (order as any).created_by ?? '').trim();
+    return Boolean(currentUserId && order.orderType === 'staff' && createdBy === currentUserId);
+  }, [user?.uid]);
+  const canCurrentUserProcessPayment = React.useCallback(
+    (order: TakeOrder): boolean => canProcessTakeOrderPayment(order, user?.uid, currentUserRole),
+    [currentUserRole, user?.uid]
+  );
+
   const orderStats = useMemo(() => {
     const needsAttention = allOrders.filter((order) => ATTENTION_STATUSES.has(order.status)).length;
     const inKitchen = allOrders.filter((order) => (
@@ -296,30 +371,43 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     )).length;
     const ready = allOrders.filter((order) => READY_STATUSES.has(order.status)).length;
     const cancelled = allOrders.filter((order) => CANCELLED_STATUSES.has(order.status)).length;
+    const mine = allOrders.filter(isCurrentUsersOrder).length;
 
     return {
       needsAttention,
+      mine,
       inKitchen,
       ready,
       cancelled,
       all: allOrders.length,
     };
-  }, [allOrders, hasKitchenPrepItems]);
-  const audibleOrderIds = useMemo(
-    () => allOrders
-      .filter((order) => (
-        ATTENTION_STATUSES.has(order.status) ||
-        READY_STATUSES.has(order.status) ||
-        (kitchenEnabled && KITCHEN_STATUSES.has(order.status) && hasKitchenPrepItems(order))
-      ))
-      .map((order) => order.id),
+  }, [allOrders, hasKitchenPrepItems, isCurrentUsersOrder]);
+  const audibleOrderNotifications = useMemo(
+    () => allOrders.flatMap((order) => {
+      if (ATTENTION_STATUSES.has(order.status)) {
+        return [{ id: order.id, channel: 'attention' }];
+      }
+      if (READY_STATUSES.has(order.status)) {
+        return [{ id: order.id, channel: 'ready' }];
+      }
+      if (kitchenEnabled && KITCHEN_STATUSES.has(order.status) && hasKitchenPrepItems(order)) {
+        return [{ id: order.id, channel: 'kitchen' }];
+      }
+      return [];
+    }),
     [allOrders, hasKitchenPrepItems, kitchenEnabled]
   );
-  useOrderNotificationSound(audibleOrderIds, isOpen);
+  useOrderNotificationSound(audibleOrderNotifications, {
+    enabled: isOpen,
+    ready: ordersReadyForNotifications,
+  });
 
   const filteredOrders = useMemo(() => {
     if (activeFilter === 'attention') {
       return allOrders.filter((order) => ATTENTION_STATUSES.has(order.status));
+    }
+    if (activeFilter === 'mine') {
+      return allOrders.filter(isCurrentUsersOrder);
     }
     if (activeFilter === 'kitchen') {
       if (!kitchenEnabled) return [];
@@ -336,7 +424,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     }
 
     return allOrders;
-  }, [activeFilter, allOrders, hasKitchenPrepItems, kitchenEnabled]);
+  }, [activeFilter, allOrders, hasKitchenPrepItems, isCurrentUsersOrder, kitchenEnabled]);
 
   const filterOptions: Array<{
     key: OrderFilter;
@@ -345,11 +433,27 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     icon: React.ElementType;
   }> = [
     { key: 'attention', label: 'Needs Attention', count: orderStats.needsAttention, icon: AlertCircle },
+    { key: 'mine', label: 'My Orders', count: orderStats.mine, icon: User },
     ...(kitchenEnabled ? [{ key: 'kitchen' as const, label: 'Kitchen', count: orderStats.inKitchen, icon: ChefHat }] : []),
     { key: 'ready', label: 'Ready for Sale', count: orderStats.ready, icon: CheckCircle2 },
     { key: 'cancelled', label: 'Cancelled', count: orderStats.cancelled, icon: X },
     { key: 'all', label: 'All Orders', count: orderStats.all, icon: ShoppingBasket },
   ];
+  const activeFilterLabel = ORDER_FILTER_LABELS[activeFilter];
+
+  const getDestinationFilter = (status: string, order?: TakeOrder): OrderFilter => {
+    if (ATTENTION_STATUSES.has(status)) return 'attention';
+    if (READY_STATUSES.has(status)) return 'ready';
+    if (CANCELLED_STATUSES.has(status)) return 'cancelled';
+    if (
+      KITCHEN_STATUSES.has(status)
+      && kitchenEnabled
+      && (!order || hasKitchenPrepItems(order))
+    ) {
+      return 'kitchen';
+    }
+    return 'all';
+  };
 
   const getPrimaryAction = (order: TakeOrder) => {
     const status = order.status;
@@ -369,7 +473,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       return { label: 'Mark Ready', nextStatus: 'Ready' as const };
     }
     if (status === 'Ready') {
-      return { label: 'Process Sale', processSale: true as const };
+      return { label: 'Process Payment', processSale: true as const };
     }
 
     return null;
@@ -377,6 +481,15 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
 
   const handleProcessSale = async (order: TakeOrder) => {
     if (processingSaleOrderId) {
+      return;
+    }
+
+    if (!canCurrentUserProcessPayment(order)) {
+      toast({
+        variant: 'destructive',
+        title: 'Payment restricted',
+        description: TAKE_ORDER_PAYMENT_PERMISSION_MESSAGE,
+      });
       return;
     }
 
@@ -402,16 +515,25 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     }
   };
 
-  const handlePrintBill = async (order: TakeOrder) => {
-    if (billPrintLockRef.current) return;
+  const handlePrintBill = async (
+    order: TakeOrder,
+    printOptions: CustomerBillPrintOptions = {}
+  ): Promise<boolean> => {
+    if (billPrintLockRef.current) return false;
 
-    if (!order.items || order.items.length === 0) {
+    const printableOrder: TakeOrder = {
+      ...order,
+      items: printOptions.items || order.items,
+      customerName: printOptions.customerName ?? order.customerName,
+    };
+
+    if (!printableOrder.items || printableOrder.items.length === 0) {
       toast({
         variant: 'destructive',
         title: 'Nothing to print',
         description: 'This order has no items to print.',
       });
-      return;
+      return false;
     }
 
     billPrintLockRef.current = true;
@@ -420,9 +542,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     try {
       const { printerService } = await import('@/lib/services/printer-service');
       const { silentPrintService } = await import('@/lib/services/silent-print-service');
-      const [printerSettings, defaultPrinter] = await Promise.all([
+      const [printerSettings, defaultPrinter, paymentAccounts] = await Promise.all([
         printerService.getPrinterSettings(branchId),
         printerService.getDefaultPrinter(branchId),
+        getCustomerBillPaymentAccounts(),
       ]);
 
       if (!defaultPrinter) {
@@ -431,7 +554,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           title: 'No Printer Configured',
           description: 'Configure a default printer before printing customer bills.',
         });
-        return;
+        return false;
       }
 
       const selectedPaperWidth: '80mm' | '58mm' =
@@ -440,8 +563,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
       setBillPaperWidth(selectedPaperWidth);
       setBillPrinterSettings(printerSettings);
-      setBillNumber(`Order ${order.orderNumber}`);
-      setBillOrder(order);
+      setBillPaymentAccounts(paymentAccounts);
+      setBillNumber(printOptions.billNumber || String(order.orderNumber));
+      setBillCartTitle(printOptions.cartTitle);
+      setBillOrder(printableOrder);
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       const billElement = document.getElementById(ORDER_BILL_PRINT_ROOT_ID);
@@ -452,7 +577,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           title: 'Print Failed',
           description: 'Bill content was not ready. Please try again.',
         });
-        return;
+        return false;
       }
 
       const isBluetoothPrinter =
@@ -461,7 +586,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       const printAttemptTimeoutMs = isBluetoothPrinter ? 45_000 : 20_000;
 
       toast({
-        title: 'Printing Bill',
+        title: 'Printing Customer Bill',
         description: `Sending customer bill to ${defaultPrinter.name}`,
       });
 
@@ -488,13 +613,16 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             ? 'Printer did not respond in time. Check the connection and try again.'
             : 'Failed to send the customer bill to the printer.',
         });
-        return;
+        return false;
       }
 
       toast({
-        title: 'Bill Printed',
-        description: `Order ${order.orderNumber} is still ready for sale processing.`,
+        title: 'Customer Bill Printed',
+        description: printOptions.cartTitle
+          ? `${printOptions.cartTitle} for Order ${order.orderNumber} is ready for payment.`
+          : `Order ${order.orderNumber} is still ready for sale processing.`,
       });
+      return true;
     } catch (error) {
       console.error('[Orders Bill Print] Failed to print bill:', error);
       toast({
@@ -502,9 +630,111 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         title: 'Print Error',
         description: error instanceof Error ? error.message : 'An unknown error occurred.',
       });
+      return false;
     } finally {
       setIsPrintingBill(false);
       billPrintLockRef.current = false;
+    }
+  };
+
+  const handlePrintSplitBill = async (share: SplitBillShare): Promise<boolean> => {
+    if (!splitBillOrder) return false;
+
+    return handlePrintBill(splitBillOrder, {
+      items: share.items,
+      billNumber: `${splitBillOrder.orderNumber}-${share.position}`,
+      customerName: share.label,
+      cartTitle: `SPLIT ${share.position} OF ${share.totalShares}`,
+    });
+  };
+
+  const handlePrintKitchenTicket = async (order: TakeOrder) => {
+    if (kitchenTicketPrintLockRef.current) return;
+
+    const kitchenItems = getKitchenOrderItems(order, kitchenInventoryLookup);
+    if (kitchenItems.length === 0) return;
+
+    kitchenTicketPrintLockRef.current = true;
+
+    try {
+      const { printerService } = await import('@/lib/services/printer-service');
+      const { silentPrintService } = await import('@/lib/services/silent-print-service');
+      const [printerSettings, defaultPrinter] = await Promise.all([
+        printerService.getPrinterSettings(branchId),
+        printerService.getDefaultPrinter(branchId),
+      ]);
+
+      if (!defaultPrinter) {
+        toast({
+          variant: 'destructive',
+          title: 'Kitchen Ticket Not Printed',
+          description: 'Order was sent to the kitchen, but no default printer is configured.',
+        });
+        return;
+      }
+
+      const selectedPaperWidth: '80mm' | '58mm' =
+        printerSettings.receiptPaperWidth === '58mm' || printerSettings.receiptPaperWidth === '80mm'
+          ? printerSettings.receiptPaperWidth
+          : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
+      setKitchenTicketPaperWidth(selectedPaperWidth);
+      setKitchenTicketOrder(order);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const kitchenTicketElement = document.getElementById(KITCHEN_TICKET_PRINT_ROOT_ID);
+      const printContents = kitchenTicketElement?.innerHTML;
+      if (!printContents || printContents.trim().length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'Kitchen Ticket Not Printed',
+          description: 'The kitchen ticket was not ready. Check the printer and kitchen queue.',
+        });
+        return;
+      }
+
+      const isBluetoothPrinter =
+        defaultPrinter.connectionType === 'bluetooth' ||
+        String(defaultPrinter.id || '').toLowerCase().startsWith('bt:');
+      const printAttemptTimeoutMs = isBluetoothPrinter ? 45_000 : 20_000;
+      const result = await Promise.race([
+        silentPrintService
+          .printSilentlyViaSystem(printContents, {
+            printerName: defaultPrinter.name,
+            printerId: defaultPrinter.id,
+            copies: 1,
+            paperSize: selectedPaperWidth,
+            printerPaperSize: defaultPrinter.paperWidth as '80mm' | '58mm',
+          })
+          .then((success) => ({ success, timedOut: false })),
+        new Promise<{ success: false; timedOut: true }>((resolve) =>
+          setTimeout(() => resolve({ success: false, timedOut: true }), printAttemptTimeoutMs)
+        ),
+      ]);
+
+      if (!result.success) {
+        toast({
+          variant: 'destructive',
+          title: 'Kitchen Ticket Not Printed',
+          description: result.timedOut
+            ? 'Order was sent, but the printer did not respond in time.'
+            : 'Order was sent, but the kitchen ticket could not be printed.',
+        });
+        return;
+      }
+
+      toast({
+        title: 'Kitchen Ticket Printed',
+        description: `Order ${order.orderNumber} was sent to the kitchen.`,
+      });
+    } catch (error) {
+      console.error('[Orders Kitchen Ticket] Failed to print kitchen ticket:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Kitchen Ticket Not Printed',
+        description: 'Order was sent, but the kitchen ticket could not be printed.',
+      });
+    } finally {
+      kitchenTicketPrintLockRef.current = false;
     }
   };
 
@@ -524,7 +754,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
 
   const handleUpdateStatus = async (orderId: string, newStatus: string, order?: TakeOrder, reason?: string): Promise<boolean> => {
     try {
-      const resolvedStatus = resolveStatusForOrder(order || allOrders.find((candidate) => candidate.id === orderId), newStatus);
+      const targetOrder = order || allOrders.find((candidate) => candidate.id === orderId);
+      const resolvedStatus = resolveStatusForOrder(targetOrder, newStatus);
       const trimmedReason = String(reason || '').trim();
       if (resolvedStatus === 'Cancelled' && !trimmedReason) {
         toast({
@@ -556,6 +787,14 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         cancellation_reason: resolvedStatus === 'Cancelled' ? trimmedReason : '',
         updatedAt: new Date().toISOString(),
       });
+      const destinationFilter = getDestinationFilter(resolvedStatus, targetOrder);
+      if (destinationFilter !== activeFilter) {
+        setActiveFilter(destinationFilter);
+        toast({
+          title: `Order moved to ${ORDER_FILTER_LABELS[destinationFilter]}`,
+          description: `You are now viewing ${ORDER_FILTER_LABELS[destinationFilter]}.`,
+        });
+      }
       console.log(`[ViewOrdersModal] Order ${orderId} updated to ${resolvedStatus}`);
       const { syncService } = require('@/lib/services/sync-service');
       syncService.fetchAllTakeOrdersFromBackend(branchId);
@@ -563,8 +802,21 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       return true;
     } catch (error) {
       console.error('[ViewOrdersModal] Error updating order status:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Status not changed',
+        description: error instanceof Error ? error.message : 'Could not update this order. Please try again.',
+      });
       return false;
     }
+  };
+
+  const handleSendToKitchen = async (order: TakeOrder): Promise<boolean> => {
+    const updated = await handleUpdateStatus(order.id, 'Sent to Kitchen', order);
+    if (!updated) return false;
+
+    void handlePrintKitchenTicket(order);
+    return true;
   };
 
   const handleTakeOrderOpenChange = (open: boolean) => {
@@ -580,6 +832,11 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       return sum + (item.quantity * (item.price || 0));
     }, 0);
     const primaryAction = getPrimaryAction(order);
+    const isPrimaryPaymentAction = Boolean(primaryAction && 'processSale' in primaryAction);
+    const canProcessPayment =
+      order.status !== 'Cancelled' &&
+      order.status !== 'Completed' &&
+      canCurrentUserProcessPayment(order);
     const kitchenItemCount = kitchenEnabled ? getKitchenOrderItems(order, kitchenInventoryLookup).length : 0;
     const hasNotes = Boolean(order.customerNotes || order.specialInstructions || order.items.some((item) => item.notes));
 
@@ -637,7 +894,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               <p className="text-base font-semibold text-foreground">{formatCurrency(total)}</p>
               <p className="hidden text-xs text-muted-foreground sm:block">Total</p>
             </div>
-            {primaryAction && (
+            {primaryAction && (!isPrimaryPaymentAction || canProcessPayment) && (
               <Button
                 size="sm"
                 className="w-full sm:w-auto"
@@ -645,12 +902,26 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 onClick={() => (
                   'processSale' in primaryAction
                     ? handleProcessSale(order)
-                    : handleUpdateStatus(order.id, primaryAction.nextStatus, order)
+                    : primaryAction.nextStatus === 'Sent to Kitchen'
+                      ? handleSendToKitchen(order)
+                      : handleUpdateStatus(order.id, primaryAction.nextStatus, order)
                 )}
               >
                 {'processSale' in primaryAction && processingSaleOrderId === order.id
                   ? 'Opening POS...'
                   : primaryAction.label}
+              </Button>
+            )}
+            {canProcessPayment && !isPrimaryPaymentAction && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="w-full gap-2 sm:w-auto"
+                disabled={Boolean(processingSaleOrderId)}
+                onClick={() => handleProcessSale(order)}
+              >
+                <CreditCard className="h-4 w-4" />
+                {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Payment'}
               </Button>
             )}
             <Button
@@ -677,12 +948,11 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       return sum + (item.quantity * (item.price || 0));
     }, 0);
 
-    const updateAndClose = async (status: string, nextFilter?: OrderFilter) => {
-      const updated = await handleUpdateStatus(order.id, status, order);
+    const updateAndClose = async (status: string) => {
+      const updated = status === 'Sent to Kitchen'
+        ? await handleSendToKitchen(order)
+        : await handleUpdateStatus(order.id, status, order);
       if (!updated) return;
-      if (nextFilter) {
-        setActiveFilter(nextFilter);
-      }
       setSelectedOrder(null);
     };
     const confirmCancellation = async () => {
@@ -694,12 +964,15 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         cancellationReason
       );
       if (!updated) return;
-      setActiveFilter('cancelled');
       setOrderPendingCancellation(null);
       setCancellationReason('');
       setSelectedOrder(null);
     };
     const hasKitchenItems = hasKitchenPrepItems(order);
+    const canProcessPayment =
+      order.status !== 'Cancelled' &&
+      order.status !== 'Completed' &&
+      canCurrentUserProcessPayment(order);
 
     return (
       <>
@@ -859,7 +1132,16 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                   disabled={isPrintingBill || order.items.length === 0}
                 >
                   <Printer className="h-4 w-4" />
-                  {isPrintingBill ? 'Printing...' : 'Print Bill'}
+                  {isPrintingBill ? 'Printing...' : 'Print Customer Bill'}
+                </Button>
+                <Button
+                  className="w-full gap-2 sm:w-auto"
+                  variant="outline"
+                  onClick={() => setSplitBillOrder(order)}
+                  disabled={isPrintingBill || order.items.length === 0}
+                >
+                  <Users className="h-4 w-4" />
+                  Split Bill
                 </Button>
                 {order.status !== 'Cancelled' && order.status !== 'Completed' && (
                   <Button
@@ -874,7 +1156,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               </div>
               <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
                 {order.status === 'Cancelled' && (
-                  <Button className="w-full sm:w-auto" onClick={() => updateAndClose('Pending', 'attention')}>
+                  <Button className="w-full sm:w-auto" onClick={() => updateAndClose('Pending')}>
                     Reopen Order
                   </Button>
                 )}
@@ -912,14 +1194,26 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                         Mark as Ready
                       </Button>
                     )}
-                    {order.status === 'Ready' && (
+                    {canProcessPayment && order.status === 'Ready' && (
                       <Button
-                        className="w-full sm:w-auto"
+                        className="w-full gap-2 sm:w-auto"
                         disabled={Boolean(processingSaleOrderId)}
                         onClick={() => handleProcessSale(order)}
                         variant="secondary"
                       >
-                        {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Sale'}
+                        <CreditCard className="h-4 w-4" />
+                        {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Payment'}
+                      </Button>
+                    )}
+                    {canProcessPayment && order.status !== 'Ready' && (
+                      <Button
+                        className="w-full gap-2 sm:w-auto"
+                        disabled={Boolean(processingSaleOrderId)}
+                        onClick={() => handleProcessSale(order)}
+                        variant="secondary"
+                      >
+                        <CreditCard className="h-4 w-4" />
+                        {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Payment'}
                       </Button>
                     )}
                     {canCancelOrders && (
@@ -1022,25 +1316,36 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 </div>
               </div>
 
-              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-4 sm:gap-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-5">
+              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-3 sm:gap-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-6">
                 {filterOptions.map(({ key, label, count, icon: Icon }) => (
                   <button
                     key={key}
                     type="button"
                     onClick={() => setActiveFilter(key)}
+                    aria-current={activeFilter === key ? 'page' : undefined}
                     className={`flex min-w-[112px] shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-left transition sm:block sm:min-w-0 sm:rounded-lg sm:p-3 ${
                       activeFilter === key
-                        ? 'border-primary bg-background shadow-sm'
+                        ? 'border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
                         : 'bg-background/60 hover:bg-background'
                     }`}
                   >
                     <div className="flex items-center gap-2 sm:justify-between">
-                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <Icon className={`h-4 w-4 ${activeFilter === key ? 'text-primary-foreground' : 'text-muted-foreground'}`} />
                       <span className="text-base font-semibold sm:text-lg">{count}</span>
                     </div>
-                    <p className="truncate text-xs font-medium text-muted-foreground sm:mt-1">{label}</p>
+                    <p className={`truncate text-xs font-medium sm:mt-1 ${activeFilter === key ? 'text-primary-foreground' : 'text-muted-foreground'}`}>{label}</p>
                   </button>
                 ))}
+              </div>
+              <div
+                className="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm"
+                aria-live="polite"
+              >
+                <span className="text-muted-foreground">Viewing</span>
+                <span className="ml-auto font-semibold text-foreground">{activeFilterLabel}</span>
+                <span className="rounded bg-background px-2 py-0.5 text-xs font-semibold text-foreground">
+                  {filteredOrders.length}
+                </span>
               </div>
             </div>
           </DialogHeader>
@@ -1115,6 +1420,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               sum + toFiniteNumber(item.quantity, 0) * toFiniteNumber(item.price, 0)
             ), 0)}
             taxLabel="Tax"
+            cartTitle={billCartTitle}
             billNumber={billNumber}
             customerName={billOrder.customerName}
             customerPhone={billOrder.customerPhone}
@@ -1133,9 +1439,37 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             receiptBusinessNameFontWeight={billPrinterSettings?.receiptBusinessNameFontWeight}
             receiptBusinessNameScaleX={billPrinterSettings?.receiptBusinessNameScaleX}
             receiptHeaderDetailScaleX={billPrinterSettings?.receiptHeaderDetailScaleX}
+            paymentAccounts={billPaymentAccounts}
           />
         </div>
       )}
+      {kitchenTicketOrder && (
+        <div className="hidden">
+          <KitchenTicket
+            rootId={KITCHEN_TICKET_PRINT_ROOT_ID}
+            orderNumber={kitchenTicketOrder.orderNumber}
+            paperWidth={kitchenTicketPaperWidth}
+            items={getKitchenOrderItems(kitchenTicketOrder, kitchenInventoryLookup).map((item) => ({
+              id: String(item.id),
+              name: String(item.name || 'Item'),
+              quantity: toFiniteNumber(item.quantity, 0),
+              notes: item.notes,
+              selectedOptions: getSelectedOptions(item),
+              selected_options: getSelectedOptions(item),
+            }))}
+          />
+        </div>
+      )}
+      <SplitBillDialog
+        order={splitBillOrder}
+        open={Boolean(splitBillOrder)}
+        onOpenChange={(open) => {
+          if (!open) setSplitBillOrder(null);
+        }}
+        onPrint={handlePrintSplitBill}
+        formatCurrency={formatCurrency}
+        isPrinting={isPrintingBill}
+      />
       {renderOrderDetailsDialog()}
     </>
   );

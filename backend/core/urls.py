@@ -44,6 +44,9 @@ urlpatterns = [
     path('api/staff/', include('staff.urls')),
     path('staff/', include('staff.urls')),
 
+    path('api/hr/', include('hr.urls')),
+    path('hr/', include('hr.urls')),
+
     path('api/subscription/', include('subscription.urls')),
     path('subscription/', include('subscription.urls')),
     

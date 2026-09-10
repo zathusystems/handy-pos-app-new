@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type InventoryItem } from '@/lib/db';
 import { authFetch } from '@/lib/auth-fetch';
@@ -279,6 +279,7 @@ const MenuOptionsModal = ({
     { ingredientId: 'none', quantity: '' },
   ]);
   const [resolvedMenuEntryId, setResolvedMenuEntryId] = useState('');
+  const optionsLoadRequestRef = useRef(0);
 
   const menuEntryId = String(resolvedMenuEntryId || item?.menuEntryId || item?.menuItemId || item?.menu_item_id || '').trim();
   const canManageOptions = Boolean(menuEntryId);
@@ -289,16 +290,18 @@ const MenuOptionsModal = ({
     return 'Main options';
   };
 
-  const resolveMenuEntryId = async (): Promise<string> => {
-    const existingMenuEntryId = String(item?.menuEntryId || item?.menuItemId || item?.menu_item_id || '').trim();
-    if (!item || !activeBranchId) return existingMenuEntryId;
+  const resolveMenuEntryId = async (targetItem: InventoryItem | null = item): Promise<string> => {
+    const existingMenuEntryId = String(
+      targetItem?.menuEntryId || targetItem?.menuItemId || targetItem?.menu_item_id || ''
+    ).trim();
+    if (!targetItem || !activeBranchId) return existingMenuEntryId;
 
     const branchIdInt = getBackendBranchId(activeBranchId);
     if (branchIdInt === null) return existingMenuEntryId;
 
     const response = await authFetch.fetch<any>(`/digital-menu/menu/by_branch/?branch_id=${branchIdInt}`);
     const rows: any[] = Array.isArray(response) ? response : response?.results || [];
-    const itemId = String(item.id);
+    const itemId = String(targetItem.id);
     const matchedEntry = rows.find((entry) => {
       const entryId = String(entry?.id || entry?.menu_id || '').trim();
       const inventoryItemId = getMenuEntryInventoryId(entry);
@@ -307,21 +310,20 @@ const MenuOptionsModal = ({
 
     const resolvedId = String(matchedEntry?.id || matchedEntry?.menu_id || existingMenuEntryId || '').trim();
     if (resolvedId && resolvedId !== existingMenuEntryId) {
-      setResolvedMenuEntryId(resolvedId);
-      await db.inventory.update(item.id, {
+      await db.inventory.update(targetItem.id, {
         menuEntryId: resolvedId,
         menuItemId: resolvedId,
         menu_item_id: resolvedId,
       });
-    } else {
-      setResolvedMenuEntryId(resolvedId);
     }
     return resolvedId;
   };
 
-  const loadOptions = async () => {
+  const loadOptions = async (requestedMenuEntryId?: string) => {
+    const requestId = ++optionsLoadRequestRef.current;
+    const isCurrentRequest = () => optionsLoadRequestRef.current === requestId;
     setIsLoading(true);
-    let entryId = menuEntryId;
+    let entryId = String(requestedMenuEntryId || '').trim();
     try {
       entryId = entryId || await resolveMenuEntryId();
     } catch (error) {
@@ -329,19 +331,25 @@ const MenuOptionsModal = ({
     }
 
     if (!entryId) {
-      setGroups([]);
-      toast({
-        title: 'Menu item needs to sync first',
-        description: 'Save or sync this menu item before adding sides and options.',
-        variant: 'destructive',
-      });
-      setIsLoading(false);
+      if (isCurrentRequest()) {
+        setGroups([]);
+        setSharedGroups([]);
+        toast({
+          title: 'Menu item needs to sync first',
+          description: 'Save or sync this menu item before adding sides and options.',
+          variant: 'destructive',
+        });
+        setIsLoading(false);
+      }
       return;
     }
 
     try {
       const response = await authFetch.fetch<any>(`/digital-menu/menu-option-groups/?menu_id=${encodeURIComponent(entryId)}`);
       const rows = Array.isArray(response) ? response : response?.results || [];
+      if (!isCurrentRequest()) return;
+
+      setResolvedMenuEntryId(entryId);
       setGroups(rows);
       setOptionGroupId((currentGroupId) => (
         rows.some((group: MenuOptionGroup) => group.id === currentGroupId)
@@ -358,32 +366,52 @@ const MenuOptionsModal = ({
           const sharedRows = Array.isArray(sharedResponse)
             ? sharedResponse
             : sharedResponse?.results || [];
+          if (!isCurrentRequest()) return;
           const currentGroupIds = new Set(rows.map((group: MenuOptionGroup) => group.id));
           setSharedGroups(sharedRows.filter((group: MenuOptionGroup) => !currentGroupIds.has(group.id)));
         } else {
+          if (!isCurrentRequest()) return;
           setSharedGroups([]);
         }
       } catch (error) {
         console.error('[Menu] Failed to load reusable choice sets:', error);
-        setSharedGroups([]);
+        if (isCurrentRequest()) setSharedGroups([]);
       }
     } catch (error) {
       console.error('[Menu] Failed to load menu options:', error);
-      toast({
-        title: 'Could not load sides and options',
-        description: error instanceof Error ? error.message : 'Please try again after syncing your menu.',
-        variant: 'destructive',
-      });
+      if (isCurrentRequest()) {
+        toast({
+          title: 'Could not load sides and options',
+          description: error instanceof Error ? error.message : 'Please try again after syncing your menu.',
+          variant: 'destructive',
+        });
+      }
     } finally {
-      setIsLoading(false);
+      if (isCurrentRequest()) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    if (!open || !item) return;
-    setResolvedMenuEntryId(String(item?.menuEntryId || item?.menuItemId || item?.menu_item_id || '').trim());
-    loadOptions();
-  }, [open, item?.id]);
+    if (!open || !item) {
+      optionsLoadRequestRef.current += 1;
+      return;
+    }
+
+    const itemMenuEntryId = String(
+      item.menuEntryId || item.menuItemId || item.menu_item_id || ''
+    ).trim();
+    setResolvedMenuEntryId(itemMenuEntryId);
+    setGroups([]);
+    setSharedGroups([]);
+    setOptionGroupId('');
+    setEditingGroupId(null);
+    setEditingOptionId(null);
+    void loadOptions(itemMenuEntryId);
+
+    return () => {
+      optionsLoadRequestRef.current += 1;
+    };
+  }, [open, item?.id, item?.menuEntryId, item?.menuItemId, item?.menu_item_id, activeBranchId]);
 
   useEffect(() => {
     const loadStockItems = async () => {
@@ -3423,6 +3451,7 @@ export default function MenuBuilderPage() {
 	      />
 
 	      <MenuOptionsModal
+	        key={optionsItem?.id || 'menu-options'}
 	        item={optionsItem}
 	        activeBranchId={activeBranchId}
 	        open={!!optionsItem}

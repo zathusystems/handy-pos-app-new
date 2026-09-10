@@ -414,6 +414,8 @@ export interface TakeOrder {
     orderNumber: number;
     branchId: string;
     businessId?: string;
+    sessionId?: string;
+    session?: string;
     status: 'Pending' | 'Confirmed' | 'Sent to Kitchen' | 'Preparing' | 'Ready' | 'Completed' | 'Cancelled';
     orderType: 'staff' | 'self_service';
     isTakeaway?: boolean;

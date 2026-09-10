@@ -46,6 +46,10 @@ import { logAuditAction } from '@/lib/audit';
 import { warmBranchMraMappingCache } from '@/lib/mra-mapping-cache';
 import { addTakeOrderToSaleCart } from '@/lib/take-order-sale';
 import { markTakeOrdersCompleted } from '@/lib/take-order-status';
+import {
+  canProcessTakeOrderPayment,
+  TAKE_ORDER_PAYMENT_PERMISSION_MESSAGE,
+} from '@/lib/take-order-payment-access';
 
 export type CartItem = InventoryItem & {
   quantity: number;
@@ -883,6 +887,15 @@ export default function PosPage() {
         variant: 'destructive',
         title: 'Start a session first',
         description: 'A POS session is required before sending a ready order to sale processing.',
+      });
+      return false;
+    }
+
+    if (!canProcessTakeOrderPayment(order, user?.uid, user?.role)) {
+      toast({
+        variant: 'destructive',
+        title: 'Payment restricted',
+        description: TAKE_ORDER_PAYMENT_PERMISSION_MESSAGE,
       });
       return false;
     }

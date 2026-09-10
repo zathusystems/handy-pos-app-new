@@ -693,6 +693,17 @@ def handle_update_session(session_id, data, business, branch_id):
     """Handle update of session from frontend"""
     try:
         session = Session.objects.get(id=session_id, business=business, branch_id=branch_id)
+
+        requested_status = data.get('status')
+        if requested_status == 'closed' and session.status != 'closed':
+            from take_orders.session_access import get_uncompleted_orders_for_session
+
+            uncompleted_orders = get_uncompleted_orders_for_session(session)
+            if uncompleted_orders.exists():
+                return {
+                    'success': False,
+                    'error': 'Complete or cancel all open orders before closing this session.',
+                }
         
         # Update fields
         if 'status' in data:

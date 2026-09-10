@@ -506,6 +506,14 @@ class BusinessSettings(models.Model):
     enable_kitchen = models.BooleanField(default=False)
     enable_delivery = models.BooleanField(default=False)
     fuel_pumps = models.JSONField(default=list, blank=True)
+    customer_bill_payment_accounts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Payment instructions shown on customer bills before payment, "
+            "such as mobile money numbers or bank account details."
+        ),
+    )
     
     # ========== MRA EIS CONTROLS ==========
     enable_eis = models.BooleanField(

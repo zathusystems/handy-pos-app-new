@@ -11,6 +11,7 @@ from .models import (
     Branch,
     Business,
     BusinessCharge,
+    BusinessSettings,
     Customer,
     CustomerAccountTransaction,
     Expense,
@@ -78,6 +79,48 @@ class CustomerAPITest(TestCase):
         self.assertEqual(response.data['name'], 'Updated Customer')
         self.assertIn('current_balance', response.data)
 
+
+class CustomerBillPaymentAccountSettingsAPITest(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            email='bill-payment-owner@example.com',
+            password='testpass123',
+        )
+        self.business = Business.objects.create(
+            owner=self.user,
+            name='Bill Payment Business',
+        )
+        BusinessSettings.objects.create(business=self.business)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_payment_accounts_are_saved_and_returned_with_business(self):
+        payment_accounts = [
+            {
+                'id': 'airtel-main',
+                'method': 'Mobile Money',
+                'label': 'Airtel Money - Main Till',
+                'account_details': '0999000111',
+            },
+            {
+                'id': 'bank-main',
+                'method': 'Bank Transfer',
+                'label': 'National Bank - Main Account',
+                'account_details': '1234567890',
+            },
+        ]
+
+        response = self.client.patch(
+            f'/api/business/businesses/{self.business.id}/',
+            {'customer_bill_payment_accounts': payment_accounts},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['customer_bill_payment_accounts'], payment_accounts)
+
+        self.business.settings.refresh_from_db()
+        self.assertEqual(self.business.settings.customer_bill_payment_accounts, payment_accounts)
 
 class AdminStaffBusinessScopeAPITest(TestCase):
     """Admin staff can use owner-scoped business endpoints safely."""

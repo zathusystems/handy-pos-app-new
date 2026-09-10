@@ -21,6 +21,28 @@ export type ChargeReportRow = {
   saleCount: number;
 };
 
+export type ProductReportRow = {
+  id: string;
+  name: string;
+  category: string;
+  itemType: 'ingredient' | 'sellable';
+  isProduced: boolean;
+  isRecipeBased: boolean;
+  quantitySold: number;
+  revenue: number;
+  revenueWithTax: number;
+  currentStock: number;
+  availableStock: number;
+  reservedStock: number;
+  stockValue: number;
+  reorderLevel: number;
+  stockStatus: 'In Stock' | 'Low Stock' | 'Out of Stock' | 'Ingredient Based';
+  unitType: string;
+  isSoldInPortions: boolean;
+  portionName?: string;
+  portionsPerUnit?: number;
+};
+
 export interface ReportData {
   totalRevenue: number;
   totalSubtotal: number;
@@ -38,6 +60,7 @@ export interface ReportData {
   averageOrderValue: number;
   averageOrderValueWithTax: number;
   topProducts: { name: string; quantity: number; revenue: number; revenueWithTax: number }[];
+  productReport: ProductReportRow[];
   fastMovingProducts: {
     name: string;
     quantity: number;
@@ -194,6 +217,7 @@ export const useReports = (dateRange?: DateRange) => {
     averageOrderValue: 0,
     averageOrderValueWithTax: 0,
     topProducts: [],
+    productReport: [],
     fastMovingProducts: [],
     slowMovingProducts: [],
     salesByCategory: [],
@@ -225,6 +249,7 @@ export const useReports = (dateRange?: DateRange) => {
         averageOrderValue: 0,
         averageOrderValueWithTax: 0,
         topProducts: [],
+        productReport: [],
         fastMovingProducts: [],
         slowMovingProducts: [],
         salesByCategory: [],
@@ -488,6 +513,74 @@ export const useReports = (dateRange?: DateRange) => {
             });
         });
 
+        const getStockAmounts = (item: InventoryItem) => {
+          const currentStock = toFiniteNumber(item.stockUnits ?? item.stock_units, 0);
+          const reservedStock = Math.max(
+            0,
+            toFiniteNumber(item.reservedStockUnits ?? item.reserved_stock_units, 0)
+          );
+          const explicitAvailableStock = toFiniteNumber(
+            item.availableStockUnits ?? item.available_stock_units,
+            Number.NaN
+          );
+          const availableStock = Number.isFinite(explicitAvailableStock)
+            ? explicitAvailableStock
+            : currentStock - reservedStock;
+
+          return { currentStock, reservedStock, availableStock };
+        };
+
+        const getStockStatus = (item: InventoryItem, availableStock: number): ProductReportRow['stockStatus'] => {
+          const isRecipeBased = Boolean(item.isProduced && Array.isArray(item.recipe) && item.recipe.length > 0);
+          if (isRecipeBased) {
+            return 'Ingredient Based';
+          }
+          if (availableStock <= 0) {
+            return 'Out of Stock';
+          }
+          const reorderLevel = Math.max(0, toFiniteNumber(item.reorderLevel, 0));
+          return reorderLevel > 0 && availableStock <= reorderLevel ? 'Low Stock' : 'In Stock';
+        };
+
+        const productReport = inventory
+          .map((item): ProductReportRow => {
+            const sales = productMap.get(String(item.id));
+            const { currentStock, reservedStock, availableStock } = getStockAmounts(item);
+            const isRecipeBased = Boolean(item.isProduced && Array.isArray(item.recipe) && item.recipe.length > 0);
+            const stockValue = isRecipeBased
+              ? 0
+              : Math.max(
+                0,
+                toFiniteNumber(
+                  item.value,
+                  currentStock * Math.max(0, toFiniteNumber(item.cost, 0))
+                )
+              );
+
+            return {
+              id: String(item.id),
+              name: item.name || 'Unnamed product',
+              category: item.category || 'Uncategorized',
+              itemType: item.itemType,
+              isProduced: Boolean(item.isProduced),
+              isRecipeBased,
+              quantitySold: toFiniteNumber(sales?.quantity, 0),
+              revenue: toFiniteNumber(sales?.revenue, 0),
+              revenueWithTax: toFiniteNumber(sales?.revenueWithTax, 0),
+              currentStock,
+              availableStock,
+              reservedStock,
+              stockValue,
+              reorderLevel: Math.max(0, toFiniteNumber(item.reorderLevel, 0)),
+              stockStatus: getStockStatus(item, availableStock),
+              unitType: String(item.unitType || 'unit'),
+              isSoldInPortions: Boolean(item.isSoldInPortions),
+              portionName: item.portionName,
+              portionsPerUnit: toFiniteNumber(item.portionsPerUnit, 0) || undefined,
+            };
+          })
+          .sort((left, right) => left.name.localeCompare(right.name));
+
         const topProducts = Array.from(productMap.values())
             .sort((a,b) => b.revenue - a.revenue)
             .slice(0, 10)
@@ -645,6 +738,7 @@ export const useReports = (dateRange?: DateRange) => {
             averageOrderValue: toFiniteNumber(averageOrderValue, 0),
             averageOrderValueWithTax: toFiniteNumber(averageOrderValueWithTax, 0),
             topProducts,
+            productReport,
             fastMovingProducts,
             slowMovingProducts,
             salesByCategory,

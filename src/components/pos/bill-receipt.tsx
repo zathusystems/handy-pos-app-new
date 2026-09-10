@@ -23,6 +23,11 @@ import {
   formatQuantityWithUnit,
   getPortionQuantityDisplay,
 } from '@/lib/quantity-format';
+import {
+  normalizeCustomerBillPaymentAccounts,
+  readCustomerBillPaymentAccounts,
+  type CustomerBillPaymentAccount,
+} from '@/lib/customer-bill-payment-accounts';
 
 type BillCartItem = {
   id: string;
@@ -68,6 +73,7 @@ type BillReceiptProps = {
   receiptBusinessNameFontWeight?: ReceiptFontWeight;
   receiptBusinessNameScaleX?: number;
   receiptHeaderDetailScaleX?: number;
+  paymentAccounts?: CustomerBillPaymentAccount[];
 };
 
 const toFiniteNumber = (value: unknown, fallback = 0): number => {
@@ -162,6 +168,7 @@ export function BillReceipt({
   receiptBusinessNameFontWeight,
   receiptBusinessNameScaleX,
   receiptHeaderDetailScaleX,
+  paymentAccounts,
 }: BillReceiptProps) {
   const offlineBusiness = useLiveQuery(async () => getOfflineBusinessProfile(), []);
   const resolvedBusiness = business || offlineBusiness || undefined;
@@ -200,6 +207,9 @@ export function BillReceipt({
   const ruleLength = isCompactPaper ? 32 : 42;
   const rule = '-'.repeat(ruleLength);
   const itemsTotal = cart.reduce((sum, item) => sum + resolveLineTotal(item), 0);
+  const displayedPaymentAccounts = normalizeCustomerBillPaymentAccounts(
+    paymentAccounts ?? readCustomerBillPaymentAccounts()
+  );
 
   const formatBillAmount = (value: unknown): string => new Intl.NumberFormat('en-US', {
     maximumFractionDigits: 2,
@@ -323,6 +333,20 @@ export function BillReceipt({
         .bill-total {
           font-size: ${fontSize + 1}px;
           font-weight: 800;
+        }
+        .bill-payment-details {
+          margin: 8px 0;
+          text-align: left;
+          font-size: ${Math.max(9, fontSize - 2)}px;
+        }
+        .bill-payment-details-title {
+          margin-bottom: 2px;
+          font-weight: 800;
+          text-align: center;
+        }
+        .bill-payment-account {
+          margin-top: 2px;
+          overflow-wrap: anywhere;
         }
         .bill-footer {
           margin-top: 10px;
@@ -466,6 +490,19 @@ export function BillReceipt({
           <span>TOTAL DUE</span>
           <span>{formatBillAmount(total)}</span>
         </div>
+        {displayedPaymentAccounts.length > 0 && (
+          <>
+            <div className="bill-rule">{rule}</div>
+            <div className="bill-payment-details">
+              <div className="bill-payment-details-title">PAYMENT DETAILS</div>
+              {displayedPaymentAccounts.map((account) => (
+                <div className="bill-payment-account" key={account.id}>
+                  <strong>{account.method}:</strong> {account.label} - {account.accountDetails}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
         <div className="bill-rule">{rule}</div>
         <div className="bill-footer">
           Please present this bill to the cashier for payment.

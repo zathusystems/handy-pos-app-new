@@ -33,6 +33,7 @@ from business.serializers import BusinessChargeCreateUpdateSerializer, BusinessC
 from inventory.models import InventoryItem, MRAProductMapping, PurchaseOrder, PurchaseOrderItem
 from pos_sessions.correction_views import VoidTransactionViewSet
 from pos_sessions.models import Order, OrderItem, Session
+from take_orders.models import TakeOrder
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
 from pos_sessions.sync_views import decrement_inventory_for_order
 from pos_sessions.charge_utils import calculate_configured_business_charges
@@ -1004,6 +1005,34 @@ class SyncPushOrderTests(TestCase):
             is_recipe_ingredient=True,
             unit_type='piece',
         )
+        prepared_product = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Chicken and Chips',
+            category='Meals',
+            item_type='sellable',
+            stock_units=Decimal('0.000'),
+            reorder_level=Decimal('0.000'),
+            cost=Decimal('0.00'),
+            price=Decimal('15.00'),
+            value=Decimal('0.00'),
+            is_produced=True,
+            unit_type='unit',
+        )
+        MRAProductMapping.objects.create(
+            inventory_item=prepared_product,
+            branch=self.branch,
+            mra_product_code='CHICKEN-CHIPS-001',
+            mra_product_name='Chicken and Chips',
+            mra_tax_type='standard',
+            mra_tax_rate=Decimal('0.00'),
+            mra_unit_measure='unit',
+            tax_calculation_method='inclusive',
+            is_approved=True,
+            mra_synced=True,
+            approved_at=timezone.now(),
+            last_synced_at=timezone.now(),
+        )
 
         now = timezone.now().isoformat()
         order_id = str(uuid.uuid4())
@@ -1032,7 +1061,7 @@ class SyncPushOrderTests(TestCase):
                         'items': [
                             {
                                 'id': str(uuid.uuid4()),
-                                'inventoryItemId': '',
+                                'inventoryItemId': str(prepared_product.id),
                                 'menuItemId': menu_item_id,
                                 'name': 'Chicken and Chips',
                                 'quantity': 2,
@@ -1062,7 +1091,7 @@ class SyncPushOrderTests(TestCase):
         self.assertEqual(ingredient.stock_units, Decimal('6.000'))
 
         created_item = Order.objects.get(id=order_id).items.get()
-        self.assertEqual(created_item.inventory_item_id, '')
+        self.assertEqual(created_item.inventory_item_id, str(prepared_product.id))
         self.assertEqual(created_item.menu_item_id, menu_item_id)
         self.assertTrue(created_item.is_prepared_menu_item)
         self.assertEqual(created_item.batch_consumption[0]['inventory_item_id'], str(ingredient.id))
@@ -1830,6 +1859,97 @@ class SessionVisibilityTests(TestCase):
         self.assertEqual(active_session.actual_cash, Decimal('180.00'))
         self.assertEqual(active_session.closing_float, Decimal('180.00'))
         self.assertEqual(active_session.difference, Decimal('0.00'))
+
+    def test_session_cannot_close_with_uncompleted_staff_orders(self):
+        active_session = Session.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=self.owner,
+            status='active',
+            opening_float=Decimal('0.00'),
+            expected_cash=Decimal('0.00'),
+            started_at=timezone.now(),
+        )
+        take_order = TakeOrder.objects.create(
+            business=self.business,
+            branch=self.branch,
+            session=active_session,
+            created_by=self.owner,
+            order_number=1,
+            order_type='staff',
+            status='Ready',
+        )
+        self.client.force_authenticate(user=self.owner)
+
+        response = self.client.post(
+            f'/api/sessions/sessions/{active_session.id}/close/',
+            {
+                'actual_cash': '0.00',
+                'closing_float': '0.00',
+                'difference': '0.00',
+                'closing_stock': [],
+                'closed_at': timezone.now().isoformat(),
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Complete or cancel', response.data['error'])
+        self.assertEqual(response.data['order_numbers'], [take_order.order_number])
+        active_session.refresh_from_db()
+        self.assertEqual(active_session.status, 'active')
+
+        take_order.status = 'Completed'
+        take_order.completed_at = timezone.now()
+        take_order.save(update_fields=['status', 'completed_at', 'updated_at'])
+
+        close_response = self.client.post(
+            f'/api/sessions/sessions/{active_session.id}/close/',
+            {
+                'actual_cash': '0.00',
+                'closing_float': '0.00',
+                'difference': '0.00',
+                'closing_stock': [],
+                'closed_at': timezone.now().isoformat(),
+            },
+            format='json',
+        )
+
+        self.assertEqual(close_response.status_code, 200, close_response.data)
+        active_session.refresh_from_db()
+        self.assertEqual(active_session.status, 'closed')
+
+    def test_session_status_update_cannot_bypass_open_order_guard(self):
+        active_session = Session.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=self.owner,
+            status='active',
+            opening_float=Decimal('0.00'),
+            expected_cash=Decimal('0.00'),
+            started_at=timezone.now(),
+        )
+        TakeOrder.objects.create(
+            business=self.business,
+            branch=self.branch,
+            session=active_session,
+            created_by=self.owner,
+            order_number=1,
+            order_type='staff',
+            status='Pending',
+        )
+        self.client.force_authenticate(user=self.owner)
+
+        response = self.client.patch(
+            f'/api/sessions/sessions/{active_session.id}/',
+            {'status': 'closed'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Complete or cancel', str(response.data))
+        active_session.refresh_from_db()
+        self.assertEqual(active_session.status, 'active')
 
 
 class BusinessChargeApplicationRuleTests(TestCase):
