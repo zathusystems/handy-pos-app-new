@@ -1335,12 +1335,6 @@ export default function LoginPage() {
             {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Sign in
           </Button>
-          <div className="text-center text-sm">
-            Don&apos;t have an account?{' '}
-            <Link href="/signup" className="font-medium underline underline-offset-4">
-              Sign up
-            </Link>
-          </div>
           <Link
             href="/documentation"
             className="text-center text-xs font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
