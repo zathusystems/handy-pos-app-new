@@ -867,7 +867,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     const kitchenItemCount = kitchenEnabled ? getKitchenOrderItems(order, kitchenInventoryLookup).length : 0;
     const canPrintKitchenTicket =
       kitchenItemCount > 0 &&
-      !order.kitchenTicketPrinted &&
       !['Cancelled', 'Completed'].includes(order.status);
     const hasNotes = Boolean(order.customerNotes || order.specialInstructions || order.items.some((item) => item.notes));
 
@@ -1178,7 +1177,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                   <Printer className="h-4 w-4" />
                   {isPrintingBill ? 'Printing...' : 'Bill'}
                 </Button>
-                {hasKitchenItems && !order.kitchenTicketPrinted && !['Cancelled', 'Completed'].includes(order.status) && (
+                {hasKitchenItems && !['Cancelled', 'Completed'].includes(order.status) && (
                   <Button
                     size="sm"
                     className="gap-2"
