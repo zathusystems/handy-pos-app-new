@@ -1746,15 +1746,6 @@ export function PosModal({
       return false;
     }
 
-    if (order.status !== 'Ready') {
-      toast({
-        variant: 'destructive',
-        title: 'Order is not ready',
-        description: 'Only ready kitchen orders can be sent to sale processing.',
-      });
-      return false;
-    }
-
     const result = await addTakeOrderToSaleCart({
       order,
       branchId,

@@ -736,6 +736,13 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           kitchenTicketPrinted: true,
           kitchenTicketPrintedAt: printedOrder?.kitchen_ticket_printed_at || new Date().toISOString(),
         });
+        setSelectedOrder((current) => current?.id === order.id
+          ? {
+              ...current,
+              kitchenTicketPrinted: true,
+              kitchenTicketPrintedAt: printedOrder?.kitchen_ticket_printed_at || new Date().toISOString(),
+            }
+          : current);
         window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
       } catch (markError) {
         console.warn('[Orders Kitchen Ticket] Ticket printed but print state was not saved:', markError);
@@ -1156,120 +1163,124 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             )}
           </div>
 
-          <DialogFooter className="shrink-0 gap-2 border-t bg-background p-3 sm:justify-between sm:p-4">
-              <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto">
-                <Button className="w-full sm:w-auto" variant="outline" onClick={() => setSelectedOrder(null)}>
-                  Close Details
+          <DialogFooter className="shrink-0 border-t bg-background p-3 sm:p-4">
+              <div className="flex w-full flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setSelectedOrder(null)}>
+                  Close
                 </Button>
                 <Button
-                  className="w-full gap-2 sm:w-auto"
+                  size="sm"
+                  className="gap-2"
                   variant="outline"
                   onClick={() => void handlePrintBill(order)}
                   disabled={isPrintingBill || order.items.length === 0}
                 >
                   <Printer className="h-4 w-4" />
-                  {isPrintingBill ? 'Printing...' : 'Print Customer Bill'}
+                  {isPrintingBill ? 'Printing...' : 'Bill'}
                 </Button>
                 {hasKitchenItems && !order.kitchenTicketPrinted && ['Sent to Kitchen', 'Preparing', 'Ready'].includes(order.status) && (
                   <Button
-                    className="w-full gap-2 sm:w-auto"
+                    size="sm"
+                    className="gap-2"
                     variant="outline"
                     disabled={printingKitchenTicketOrderId !== null}
                     onClick={() => void handlePrintKitchenTicket(order)}
                   >
                     <Printer className="h-4 w-4" />
-                    {printingKitchenTicketOrderId === order.id ? 'Printing…' : 'Print Kitchen Ticket'}
+                    {printingKitchenTicketOrderId === order.id ? 'Printing…' : 'Kitchen'}
                   </Button>
                 )}
                 <Button
-                  className="w-full gap-2 sm:w-auto"
+                  size="sm"
+                  className="gap-2"
                   variant="outline"
                   onClick={() => setSplitBillOrder(order)}
                   disabled={isPrintingBill || order.items.length === 0}
                 >
                   <Users className="h-4 w-4" />
-                  Split Bill
+                  Split
                 </Button>
                 {order.status !== 'Cancelled' && order.status !== 'Completed' && (
                   <Button
-                    className="w-full gap-2 sm:w-auto"
+                    size="sm"
+                    className="gap-2"
                     variant="outline"
                     onClick={() => setOrderPendingItems(order)}
                   >
                     <Utensils className="h-4 w-4" />
-                    Add Items
+                    Add
                   </Button>
                 )}
-              </div>
-              <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
                 {order.status === 'Cancelled' && (
-                  <Button className="w-full sm:w-auto" onClick={() => updateAndClose('Pending')}>
-                    Reopen Order
+                  <Button size="sm" onClick={() => updateAndClose('Pending')}>
+                    Reopen
                   </Button>
                 )}
                 {order.status !== 'Cancelled' && order.status !== 'Completed' && (
                   <>
                     {order.status === 'Pending' && (
-                      <Button className="w-full sm:w-auto" onClick={() => updateAndClose(hasKitchenItems ? 'Sent to Kitchen' : 'Ready')}>
-                        {hasKitchenItems ? 'Send to Kitchen' : 'Mark Ready'}
+                      <Button size="sm" onClick={() => updateAndClose(hasKitchenItems ? 'Sent to Kitchen' : 'Ready')}>
+                        {hasKitchenItems ? 'Send' : 'Ready'}
                       </Button>
                     )}
                     {order.status === 'Confirmed' && (
                       <>
-                        <Button className="w-full sm:w-auto" onClick={() => updateAndClose(hasKitchenItems ? 'Sent to Kitchen' : 'Ready')}>
-                          {hasKitchenItems ? 'Send to Kitchen' : 'Mark Ready'}
+                        <Button size="sm" onClick={() => updateAndClose(hasKitchenItems ? 'Sent to Kitchen' : 'Ready')}>
+                          {hasKitchenItems ? 'Send' : 'Ready'}
                         </Button>
                         {hasKitchenItems && (
-                          <Button className="w-full sm:w-auto" onClick={() => updateAndClose('Ready')} variant="outline">
-                            Skip to Ready
+                          <Button size="sm" onClick={() => updateAndClose('Ready')} variant="outline">
+                            Ready
                           </Button>
                         )}
                       </>
                     )}
                     {!kitchenEnabled && (order.status === 'Sent to Kitchen' || order.status === 'Preparing') && (
-                      <Button className="w-full sm:w-auto" onClick={() => updateAndClose('Ready')}>
-                        Mark Ready
+                      <Button size="sm" onClick={() => updateAndClose('Ready')}>
+                        Ready
                       </Button>
                     )}
                     {kitchenEnabled && order.status === 'Sent to Kitchen' && (
-                      <Button className="w-full sm:w-auto" onClick={() => updateAndClose('Preparing')}>
-                        Start Preparing
+                      <Button size="sm" onClick={() => updateAndClose('Preparing')}>
+                        Start
                       </Button>
                     )}
                     {kitchenEnabled && order.status === 'Preparing' && (
-                      <Button className="w-full sm:w-auto" onClick={() => updateAndClose('Ready')}>
-                        Mark as Ready
+                      <Button size="sm" onClick={() => updateAndClose('Ready')}>
+                        Ready
                       </Button>
                     )}
                     {canProcessPayment && order.status === 'Ready' && (
                       <Button
-                        className="w-full gap-2 sm:w-auto"
+                        size="sm"
+                        className="gap-2"
                         disabled={Boolean(processingSaleOrderId)}
                         onClick={() => handleProcessSale(order)}
                         variant="secondary"
                       >
                         <CreditCard className="h-4 w-4" />
-                        {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Payment'}
+                        {processingSaleOrderId === order.id ? 'Opening...' : 'POS'}
                       </Button>
                     )}
                     {canProcessPayment && order.status !== 'Ready' && (
                       <Button
-                        className="w-full gap-2 sm:w-auto"
+                        size="sm"
+                        className="gap-2"
                         disabled={Boolean(processingSaleOrderId)}
                         onClick={() => handleProcessSale(order)}
                         variant="secondary"
                       >
                         <CreditCard className="h-4 w-4" />
-                        {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Payment'}
+                        {processingSaleOrderId === order.id ? 'Opening...' : 'POS'}
                       </Button>
                     )}
                     {canCancelOrders && (
                       <Button
-                        className="w-full sm:w-auto"
+                        size="sm"
                         onClick={() => setOrderPendingCancellation(order)}
                         variant="destructive"
                       >
-                        Cancel Order
+                        Cancel
                       </Button>
                     )}
                   </>
