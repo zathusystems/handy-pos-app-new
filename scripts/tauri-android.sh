@@ -186,6 +186,29 @@ print(version)
 PY
 }
 
+resolve_android_release_version() {
+  local base_version="$1"
+  local requested_version="${TAURI_RELEASE_VERSION:-}"
+
+  if [[ -z "$requested_version" ]]; then
+    echo "$base_version"
+    return 0
+  fi
+
+  python3 - "$requested_version" <<'PY'
+import re
+import sys
+
+version = sys.argv[1].strip()
+if not re.match(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$", version):
+    raise SystemExit(
+        "TAURI_RELEASE_VERSION must be a semantic version such as 1.0.21"
+    )
+
+print(version)
+PY
+}
+
 compute_android_base_version_code() {
   python3 - "$1" <<'PY'
 import re
@@ -235,12 +258,43 @@ if match:
 PY
 }
 
+read_ci_android_version_code() {
+  local configured_version_code="${TAURI_ANDROID_VERSION_CODE:-}"
+
+  if [[ -n "$configured_version_code" ]]; then
+    if [[ ! "$configured_version_code" =~ ^[0-9]+$ ]]; then
+      echo "TAURI_ANDROID_VERSION_CODE must be a positive integer" >&2
+      return 1
+    fi
+    echo "$configured_version_code"
+    return 0
+  fi
+
+  if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+    return 0
+  fi
+
+  # GitHub runners begin from a clean checkout, so the tracked Android state
+  # file cannot guarantee a new install code on its own. This is independent
+  # from the visible release version and remains well below Android's signed
+  # 32-bit versionCode limit for decades.
+  python3 - <<'PY'
+from datetime import datetime, timezone
+
+origin = datetime(2020, 1, 1, tzinfo=timezone.utc)
+now = datetime.now(timezone.utc)
+elapsed_minutes = int((now - origin).total_seconds() // 60)
+print(50_000_000 + (elapsed_minutes * 100) + now.second)
+PY
+}
+
 compute_next_android_version_code() {
   local base_version="$1"
   local base_version_code
   local state_version_code
   local properties_version_code
   local current_version_code
+  local ci_version_code
   base_version_code="$(compute_android_base_version_code "$base_version")"
   current_version_code="$base_version_code"
 
@@ -255,37 +309,46 @@ compute_next_android_version_code() {
     current_version_code="$properties_version_code"
   fi
 
+  ci_version_code="$(read_ci_android_version_code || true)"
+  if [[ -n "$ci_version_code" && "$ci_version_code" =~ ^[0-9]+$ ]]; then
+    if [[ "$ci_version_code" -gt "$current_version_code" ]]; then
+      echo "$ci_version_code"
+    else
+      echo $((current_version_code + 1))
+    fi
+    return 0
+  fi
+
   echo $((current_version_code + 1))
 }
 
 generate_android_build_config() {
-  local base_version="$1"
+  local version_name="$1"
   local next_version_code="$2"
   local temp_config
   local generated_version_name
   temp_config="$(mktemp "${TMPDIR:-/tmp}/handypos-tauri-android-build-config.XXXXXX.json")"
   TEMP_ANDROID_BUILD_CONFIG="$temp_config"
 
-  generated_version_name="$(python3 - "$ANDROID_TAURI_CONFIG" "$temp_config" "$base_version" "$next_version_code" <<'PY'
+  generated_version_name="$(python3 - "$ANDROID_TAURI_CONFIG" "$temp_config" "$version_name" "$next_version_code" <<'PY'
 from pathlib import Path
 import json
 import sys
 
 source_path = Path(sys.argv[1])
 destination_path = Path(sys.argv[2])
-base_version = sys.argv[3].strip()
+version_name = sys.argv[3].strip()
 next_version_code = sys.argv[4].strip()
 
 config = json.loads(source_path.read_text()) if source_path.exists() else {}
-visible_version = f"{base_version.split('+', 1)[0]}+{next_version_code}"
-config["version"] = visible_version
+config["version"] = version_name
 config.setdefault("bundle", {})
 config["bundle"].setdefault("android", {})
 config["bundle"]["android"]["versionCode"] = int(next_version_code)
 config["bundle"]["android"]["autoIncrementVersionCode"] = False
 
 destination_path.write_text(json.dumps(config, indent=2) + "\n")
-print(visible_version)
+print(version_name)
 PY
 )"
   GENERATED_ANDROID_VERSION_NAME="$generated_version_name"
@@ -569,8 +632,14 @@ ensure_android_camera_manifest
 
 if [[ "$ANDROID_SUBCOMMAND" == "build" ]] && [[ -f "$ANDROID_TAURI_CONFIG" ]] && ! has_tauri_config_arg "${TAURI_ARGS[@]}"; then
   BASE_TAURI_VERSION="$(read_tauri_base_version)"
-  NEXT_ANDROID_VERSION_CODE="$(compute_next_android_version_code "$BASE_TAURI_VERSION")"
-  generate_android_build_config "$BASE_TAURI_VERSION" "$NEXT_ANDROID_VERSION_CODE"
+  RELEASE_VERSION="$(resolve_android_release_version "$BASE_TAURI_VERSION")"
+  NEXT_ANDROID_VERSION_CODE="$(compute_next_android_version_code "$RELEASE_VERSION")"
+  if [[ -n "${TAURI_RELEASE_VERSION:-}" ]]; then
+    ANDROID_VERSION_NAME="$RELEASE_VERSION"
+  else
+    ANDROID_VERSION_NAME="${RELEASE_VERSION%%+*}+${NEXT_ANDROID_VERSION_CODE}"
+  fi
+  generate_android_build_config "$ANDROID_VERSION_NAME" "$NEXT_ANDROID_VERSION_CODE"
   backup_android_tauri_properties_for_build
   ANDROID_BUILD_AUTOVERSION=1
 

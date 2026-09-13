@@ -17,7 +17,11 @@ export const businessTypeMap: Record<string, BusinessType> = {
     supermarket: 'Supermarket',
     grocery: 'Grocery',
     beauty_salon: 'Beauty Salon and Spa',
+    beauty_salon_and_spa: 'Beauty Salon and Spa',
+    'beauty salon': 'Beauty Salon and Spa',
     'beauty salon and spa': 'Beauty Salon and Spa',
+    salon: 'Beauty Salon and Spa',
+    spa: 'Beauty Salon and Spa',
     clothing: 'Clothing & Fashion',
     clothing_fashion: 'Clothing & Fashion',
     'clothing & fashion': 'Clothing & Fashion',
@@ -31,7 +35,7 @@ export const businessTypeMap: Record<string, BusinessType> = {
 };
 
 export const normalizeBusinessType = (value: unknown, fallback: BusinessType = 'General Retail'): BusinessType => {
-    const normalized = String(value || '').trim().toLowerCase();
+    const normalized = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
     return businessTypeMap[normalized] || fallback;
 };
 

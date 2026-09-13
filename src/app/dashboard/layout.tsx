@@ -257,7 +257,7 @@ const navSections = [
     items: [
       { href: '/dashboard/menu', icon: BookOpen, label: 'Menu', permission: 'view_menu' as Permission },
       { href: '/dashboard/kitchen', icon: ChefHat, label: 'Kitchen', permission: 'view_kitchen' as Permission },
-      { href: '/dashboard/appointments', icon: CalendarDays, label: 'Appointments', permission: 'view_orders' as Permission },
+      { href: '/dashboard/appointments', icon: CalendarDays, label: 'Appointments', permission: 'view_appointments' as Permission },
     ],
   },
   {
@@ -1847,7 +1847,11 @@ function AppSidebar({
   const sidebarSections = React.useMemo(() => navSections.map((section) => {
     return {
       ...section,
-      title: section.title === 'Restaurant' && fulfillmentQueueLabel === 'Service Queue' ? 'Service' : section.title,
+      title: section.title === 'Restaurant' && salonAppointmentsAvailable
+        ? 'Salon'
+        : section.title === 'Restaurant' && fulfillmentQueueLabel === 'Service Queue'
+        ? 'Service'
+        : section.title,
       items: section.items.map((item) => (
         item.href === '/dashboard/kitchen'
           ? { ...item, label: fulfillmentQueueLabel }
@@ -1856,7 +1860,7 @@ function AppSidebar({
           : item
       )),
     };
-  }), [customSalesSection.enabled, customSalesSection.name, fulfillmentQueueLabel]);
+  }), [customSalesSection.enabled, customSalesSection.name, fulfillmentQueueLabel, salonAppointmentsAvailable]);
 
   const filteredSections = sidebarSections
 	    .map((section) => ({
@@ -2056,7 +2060,7 @@ export default function DashboardLayout({
     () => business?.id ? db.businessSettings.get(business.id) : undefined,
     [business?.id]
   );
-  const currentBusinessType = normalizeBusinessType(businessRecord?.type ?? business?.type, 'General Retail');
+  const currentBusinessType = normalizeBusinessType(business?.type ?? businessRecord?.type, 'General Retail');
   const kitchenAvailable = isOrderFulfillmentBusinessType(currentBusinessType);
   const salonAppointmentsAvailable = isSalonServiceBusinessType(currentBusinessType);
   const orderWorkflowCopy = getOrderWorkflowCopy(currentBusinessType);

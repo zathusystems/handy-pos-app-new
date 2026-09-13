@@ -14,6 +14,7 @@ from business.models import (
     CustomerAccountTransaction,
     Invoice,
 )
+from digitalmenu.models import Menu, MenuOption, MenuOptionGroup
 from inventory.models import InventoryItem
 from pos_sessions.models import Order, Session
 from staff.models import Staff, StaffRole
@@ -73,6 +74,27 @@ class AppointmentAPITests(APITestCase):
             price=Decimal('5000.00'),
             value=Decimal('20000.00'),
         )
+        self.service_menu = Menu.objects.create(
+            business=self.business,
+            branch=self.branch,
+            inventory_item=self.service,
+            is_visible=True,
+        )
+        self.service_options = MenuOptionGroup.objects.create(
+            menu=self.service_menu,
+            name='Treatment level',
+            group_type='option',
+            is_required=True,
+            min_select=1,
+            max_select=1,
+        )
+        self.deep_conditioning = MenuOption.objects.create(
+            group=self.service_options,
+            name='Deep conditioning',
+            price_delta=Decimal('2500.00'),
+            linked_inventory_item=self.retail_item,
+            linked_inventory_quantity=Decimal('0.250'),
+        )
         self.client.force_authenticate(self.owner)
 
     def payload(self, **overrides):
@@ -114,6 +136,54 @@ class AppointmentAPITests(APITestCase):
         response = self.client.post(
             '/api/appointments/appointments/',
             self.payload(services=[{'inventory_item_id': str(self.retail_item.id), 'quantity': '1.000'}]),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('services', response.data)
+
+    def test_menu_service_snapshots_selected_choices_and_carries_them_to_service_order(self):
+        response = self.client.post(
+            '/api/appointments/appointments/',
+            self.payload(services=[{
+                'menu_item_id': str(self.service_menu.id),
+                'quantity': '1.000',
+                'selected_option_ids': {
+                    str(self.service_options.id): [str(self.deep_conditioning.id)],
+                },
+            }]),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        appointment = Appointment.objects.get(pk=response.data['id'])
+        snapshot = appointment.services[0]
+        self.assertEqual(snapshot['menu_item_id'], str(self.service_menu.id))
+        self.assertEqual(snapshot['price'], '17500.00')
+        self.assertEqual(snapshot['total'], '17500.00')
+        self.assertEqual(snapshot['selected_options'][0]['name'], 'Deep conditioning')
+        self.assertEqual(snapshot['selected_options'][0]['linked_inventory_item'], str(self.retail_item.id))
+
+        self.create_active_session()
+        check_in_response = self.client.post(
+            f'/api/appointments/appointments/{appointment.id}/check-in/',
+            format='json',
+        )
+
+        self.assertEqual(check_in_response.status_code, status.HTTP_200_OK, check_in_response.data)
+        appointment.refresh_from_db()
+        order_item = appointment.take_order.items.get()
+        self.assertEqual(order_item.menu_item_id, str(self.service_menu.id))
+        self.assertEqual(order_item.price, Decimal('17500.00'))
+        self.assertEqual(order_item.selected_options[0]['name'], 'Deep conditioning')
+
+    def test_menu_service_enforces_required_menu_choices(self):
+        response = self.client.post(
+            '/api/appointments/appointments/',
+            self.payload(services=[{
+                'menu_item_id': str(self.service_menu.id),
+                'quantity': '1.000',
+            }]),
             format='json',
         )
 

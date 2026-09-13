@@ -174,7 +174,23 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             data['scheduled_end'] = appointment.scheduled_end.isoformat()
         if 'services' not in data:
             data['services'] = [
-                {'inventory_item_id': entry['inventory_item_id'], 'quantity': entry['quantity']}
+                {
+                    **(
+                        {'menu_item_id': entry['menu_item_id']}
+                        if entry.get('menu_item_id') else
+                        {'inventory_item_id': entry['inventory_item_id']}
+                    ),
+                    'quantity': entry['quantity'],
+                    'selected_option_ids': {
+                        str(option.get('group_id')): [
+                            str(candidate.get('id'))
+                            for candidate in entry.get('selected_options', [])
+                            if str(candidate.get('group_id') or '') == str(option.get('group_id') or '')
+                        ]
+                        for option in entry.get('selected_options', [])
+                        if option.get('group_id')
+                    },
+                }
                 for entry in appointment.services
             ]
         business = appointment.business
@@ -221,6 +237,8 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 'quantity': entry.get('quantity'),
                 'price': entry.get('price'),
                 'recipe': entry.get('recipe') or [],
+                'is_prepared_menu_item': entry.get('is_prepared_menu_item', False),
+                'selected_options': entry.get('selected_options') or [],
             }
             for entry in appointment.services
         ]
@@ -251,10 +269,13 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             TakeOrderItem(
                 take_order=order,
                 inventory_item_id=str(entry.get('inventory_item_id') or ''),
+                menu_item_id=str(entry.get('menu_item_id') or ''),
                 name=str(entry.get('name') or ''),
                 quantity=Decimal(str(entry.get('quantity') or 0)),
                 price=Decimal(str(entry.get('price') or 0)),
                 recipe=entry.get('recipe') or [],
+                is_prepared_menu_item=bool(entry.get('is_prepared_menu_item', False)),
+                selected_options=entry.get('selected_options') or [],
             )
             for entry in appointment.services
         ])

@@ -24,8 +24,7 @@ import {
 } from 'lucide-react';
 
 import { authFetch } from '@/lib/auth-fetch';
-import { db, type Customer, type InventoryItem } from '@/lib/db';
-import { syncInventoryFromBackend } from '@/lib/services/inventory-sync';
+import { db, type Customer } from '@/lib/db';
 import { isSalonServiceBusinessType } from '@/lib/inventory/config';
 import { useAuth } from '@/hooks/use-auth';
 import { useCurrency } from '@/hooks/use-currency';
@@ -57,12 +56,14 @@ const ACTIVE_BRANCH_KEY = 'handypos-active-branch';
 
 type AppointmentServiceSnapshot = {
   inventory_item_id: string;
+  menu_item_id?: string;
   name: string;
   category?: string;
   quantity: string | number;
   price: string | number;
   total?: string | number;
   recipe?: unknown[];
+  selected_options?: MenuOptionSnapshot[];
 };
 
 type Appointment = {
@@ -117,8 +118,48 @@ type AppointmentSummary = {
 };
 
 type ServiceRow = {
-  inventoryItemId: string;
+  menuItemId: string;
   quantity: string;
+  selectedOptionIds: Record<string, string[]>;
+};
+
+type MenuOptionSnapshot = {
+  id: string;
+  group_id?: string;
+  group_name?: string;
+  name: string;
+  price_mode?: 'delta' | 'override' | string;
+  price_delta?: string | number;
+  price_override?: string | number | null;
+  is_visible?: boolean;
+  is_default?: boolean;
+  description?: string;
+};
+
+type MenuOptionGroup = {
+  id: string;
+  name: string;
+  is_required?: boolean;
+  min_select?: number | string;
+  max_select?: number | string;
+  options: MenuOptionSnapshot[];
+};
+
+type AppointmentMenuService = {
+  id: string;
+  inventory_item?: string;
+  item_name?: string;
+  name?: string;
+  category?: string;
+  price?: string | number;
+  is_visible?: boolean;
+  item_details?: {
+    id?: string;
+    name?: string;
+    category?: string;
+    price?: string | number;
+  };
+  option_groups?: MenuOptionGroup[];
 };
 
 const toBackendBranchId = (value: string): string => {
@@ -150,6 +191,72 @@ const asCollection = <T,>(payload: unknown): T[] => {
 const numberValue = (value: unknown): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const menuServiceName = (service: AppointmentMenuService): string => (
+  String(service.item_name || service.item_details?.name || service.name || 'Unnamed service')
+);
+
+const menuServiceCategory = (service: AppointmentMenuService): string => (
+  String(service.item_details?.category || service.category || '')
+);
+
+const menuServicePrice = (service: AppointmentMenuService): number => (
+  numberValue(service.item_details?.price ?? service.price)
+);
+
+const menuOptionGroups = (service: AppointmentMenuService | null | undefined): MenuOptionGroup[] => (
+  Array.isArray(service?.option_groups)
+    ? service.option_groups.filter((group) => Array.isArray(group.options) && group.options.some((option) => option.is_visible !== false))
+    : []
+);
+
+const defaultOptionIds = (service: AppointmentMenuService): Record<string, string[]> => Object.fromEntries(
+  menuOptionGroups(service).map((group) => {
+    const maxSelect = Math.max(1, numberValue(group.max_select) || 1);
+    return [
+      String(group.id),
+      group.options
+        .filter((option) => option.is_visible !== false && option.is_default)
+        .slice(0, maxSelect)
+        .map((option) => String(option.id)),
+    ];
+  }),
+);
+
+const optionIdsFromSnapshot = (options: MenuOptionSnapshot[] | undefined): Record<string, string[]> => {
+  const selected: Record<string, string[]> = {};
+  for (const option of options || []) {
+    const groupId = String(option.group_id || '').trim();
+    const optionId = String(option.id || '').trim();
+    if (!groupId || !optionId) continue;
+    selected[groupId] = [...(selected[groupId] || []), optionId];
+  }
+  return selected;
+};
+
+const selectedMenuOptions = (
+  service: AppointmentMenuService | null | undefined,
+  selectedOptionIds: Record<string, string[]>,
+): MenuOptionSnapshot[] => menuOptionGroups(service).flatMap((group) => {
+  const selectedIds = new Set(selectedOptionIds[String(group.id)] || []);
+  return group.options.filter((option) => selectedIds.has(String(option.id)) && option.is_visible !== false);
+});
+
+const menuServicePriceWithOptions = (
+  service: AppointmentMenuService | null | undefined,
+  selectedOptionIds: Record<string, string[]>,
+): number => {
+  if (!service) return 0;
+  let price = menuServicePrice(service);
+  for (const option of selectedMenuOptions(service, selectedOptionIds)) {
+    if (String(option.price_mode || '').toLowerCase() === 'override' && option.price_override !== null && option.price_override !== undefined) {
+      price = numberValue(option.price_override);
+    } else {
+      price += numberValue(option.price_delta);
+    }
+  }
+  return Math.max(0, price);
 };
 
 const statusMeta: Record<Appointment['status'], { label: string; className: string }> = {
@@ -195,7 +302,11 @@ export default function AppointmentsPage() {
   const [outcomeReason, setOutcomeReason] = useState('');
   const [isRecordingOutcome, setIsRecordingOutcome] = useState(false);
   const [customerId, setCustomerId] = useState('');
-  const [serviceRows, setServiceRows] = useState<ServiceRow[]>([{ inventoryItemId: '', quantity: '1' }]);
+  const [menuServices, setMenuServices] = useState<AppointmentMenuService[]>([]);
+  const [isLoadingMenuServices, setIsLoadingMenuServices] = useState(false);
+  const [serviceRows, setServiceRows] = useState<ServiceRow[]>([{ menuItemId: '', quantity: '1', selectedOptionIds: {} }]);
+  const [optionDialogRow, setOptionDialogRow] = useState<number | null>(null);
+  const [draftOptionIds, setDraftOptionIds] = useState<Record<string, string[]>>({});
   const [appointmentDate, setAppointmentDate] = useState(() => formatDate(new Date(), 'yyyy-MM-dd'));
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
@@ -219,22 +330,11 @@ export default function AppointmentsPage() {
     [activeBranchId],
   ) || [];
 
-  const branchInventory = useLiveQuery(
-    async () => {
-      const candidates = branchIdCandidates(activeBranchId);
-      if (!candidates.length) return [] as InventoryItem[];
-      return candidates.length === 1
-        ? db.inventory.where('branchId').equals(candidates[0]).toArray()
-        : db.inventory.where('branchId').anyOf(candidates).toArray();
-    },
-    [activeBranchId],
-  ) || [];
-
   const services = useMemo(
-    () => branchInventory
-      .filter((item) => item.itemType === 'sellable' && Boolean(item.isService ?? item.is_service))
-      .sort((left, right) => left.name.localeCompare(right.name)),
-    [branchInventory],
+    () => menuServices
+      .filter((item) => item.is_visible !== false)
+      .sort((left, right) => menuServiceName(left).localeCompare(menuServiceName(right))),
+    [menuServices],
   );
 
   const customers = useMemo(() => {
@@ -307,10 +407,20 @@ export default function AppointmentsPage() {
       } catch (error) {
         console.warn('[Appointments] Failed to refresh customers:', error);
       }
+      setIsLoadingMenuServices(true);
       try {
-        await syncInventoryFromBackend(activeBranchId);
+        const payload = await authFetch.fetch<unknown>(
+          `/digital-menu/menu/by_branch/?branch_id=${branchId}`,
+          { queueOnFailure: false },
+        );
+        if (!cancelled) {
+          setMenuServices(asCollection<AppointmentMenuService>(payload));
+        }
       } catch (error) {
-        console.warn('[Appointments] Failed to refresh services:', error);
+        console.warn('[Appointments] Failed to refresh menu services:', error);
+        if (!cancelled) setMenuServices([]);
+      } finally {
+        if (!cancelled) setIsLoadingMenuServices(false);
       }
     };
     void loadSupportingData();
@@ -320,8 +430,8 @@ export default function AppointmentsPage() {
   }, [activeBranchId]);
 
   const selectedServicesTotal = useMemo(() => serviceRows.reduce((total, row) => {
-    const service = services.find((item) => String(item.id) === row.inventoryItemId);
-    return total + numberValue(service?.price) * Math.max(numberValue(row.quantity), 0);
+    const service = services.find((item) => String(item.id) === row.menuItemId);
+    return total + menuServicePriceWithOptions(service, row.selectedOptionIds) * Math.max(numberValue(row.quantity), 0);
   }, 0), [serviceRows, services]);
 
   const scheduleStart = useMemo(() => startOfWeek(new Date(`${selectedDate}T12:00:00`), { weekStartsOn: 1 }), [selectedDate]);
@@ -332,13 +442,21 @@ export default function AppointmentsPage() {
     setEditingAppointment(next);
     setCustomerId(next ? String(next.customer) : '');
     setServiceRows(next?.services?.length
-      ? next.services.map((service) => ({ inventoryItemId: String(service.inventory_item_id), quantity: String(service.quantity) }))
-      : [{ inventoryItemId: '', quantity: '1' }]);
+      ? next.services.map((service) => ({
+        menuItemId: String(
+          service.menu_item_id
+          || services.find((menu) => String(menu.inventory_item || menu.item_details?.id || '') === String(service.inventory_item_id))?.id
+          || '',
+        ),
+        quantity: String(service.quantity),
+        selectedOptionIds: optionIdsFromSnapshot(service.selected_options),
+      }))
+      : [{ menuItemId: '', quantity: '1', selectedOptionIds: {} }]);
     setAppointmentDate(next ? inputDate(next.scheduled_start) : selectedDate);
     setStartTime(next ? inputTime(next.scheduled_start) : '09:00');
     setEndTime(next ? inputTime(next.scheduled_end) : '10:00');
     setNotes(next?.notes || '');
-  }, [selectedDate]);
+  }, [selectedDate, services]);
 
   const openNewAppointment = () => {
     resetForm(null);
@@ -354,8 +472,55 @@ export default function AppointmentsPage() {
     setServiceRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
   };
 
+  const selectedOptionService = optionDialogRow === null
+    ? null
+    : services.find((service) => String(service.id) === serviceRows[optionDialogRow]?.menuItemId) || null;
+
+  const openServiceOptions = (rowIndex: number) => {
+    const row = serviceRows[rowIndex];
+    if (!row) return;
+    setDraftOptionIds(row.selectedOptionIds);
+    setOptionDialogRow(rowIndex);
+  };
+
+  const toggleDraftOption = (group: MenuOptionGroup, optionId: string, checked: boolean) => {
+    const groupId = String(group.id);
+    const maxSelect = Math.max(1, numberValue(group.max_select) || 1);
+    setDraftOptionIds((current) => {
+      const selected = current[groupId] || [];
+      if (maxSelect === 1) {
+        return { ...current, [groupId]: checked ? [optionId] : [] };
+      }
+      if (!checked) return { ...current, [groupId]: selected.filter((id) => id !== optionId) };
+      if (selected.includes(optionId) || selected.length >= maxSelect) return current;
+      return { ...current, [groupId]: [...selected, optionId] };
+    });
+  };
+
+  const saveServiceOptions = () => {
+    if (optionDialogRow === null || !selectedOptionService) return;
+    const invalidGroup = menuOptionGroups(selectedOptionService).find((group) => {
+      const selected = draftOptionIds[String(group.id)] || [];
+      const minimum = group.is_required ? Math.max(1, numberValue(group.min_select) || 1) : numberValue(group.min_select);
+      const maximum = Math.max(1, numberValue(group.max_select) || 1);
+      return selected.length < minimum || selected.length > maximum;
+    });
+    if (invalidGroup) {
+      const minimum = invalidGroup.is_required ? Math.max(1, numberValue(invalidGroup.min_select) || 1) : numberValue(invalidGroup.min_select);
+      toast({
+        variant: 'destructive',
+        title: `Choose ${invalidGroup.name}`,
+        description: minimum > 0 ? `Select at least ${minimum} choice${minimum === 1 ? '' : 's'}.` : `Choose up to ${invalidGroup.max_select || 1} choices.`,
+      });
+      return;
+    }
+    updateServiceRow(optionDialogRow, { selectedOptionIds: draftOptionIds });
+    setOptionDialogRow(null);
+    setDraftOptionIds({});
+  };
+
   const submitAppointment = async () => {
-    const validServices = serviceRows.filter((row) => row.inventoryItemId && numberValue(row.quantity) > 0);
+    const validServices = serviceRows.filter((row) => row.menuItemId && numberValue(row.quantity) > 0);
     if (!customerId) {
       toast({ variant: 'destructive', title: 'Choose a customer before saving.' });
       return;
@@ -383,7 +548,11 @@ export default function AppointmentsPage() {
         customer: customerId,
         scheduled_start: scheduledStart,
         scheduled_end: scheduledEnd,
-        services: validServices.map((row) => ({ inventory_item_id: row.inventoryItemId, quantity: row.quantity })),
+        services: validServices.map((row) => ({
+          menu_item_id: row.menuItemId,
+          quantity: row.quantity,
+          selected_option_ids: row.selectedOptionIds,
+        })),
         notes,
       };
       const url = editingAppointment
@@ -725,26 +894,52 @@ export default function AppointmentsPage() {
 
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <div><Label>Services</Label><p className="mt-1 text-xs text-muted-foreground">Only services configured in Products & Stock are available here.</p></div>
-                <Button type="button" size="sm" variant="outline" onClick={() => setServiceRows((current) => [...current, { inventoryItemId: '', quantity: '1' }])}><Plus />Add service</Button>
+                <div><Label>Services</Label><p className="mt-1 text-xs text-muted-foreground">Choose from Menu Management so each service keeps its configured choices and price.</p></div>
+                <Button type="button" size="sm" variant="outline" onClick={() => setServiceRows((current) => [...current, { menuItemId: '', quantity: '1', selectedOptionIds: {} }])}><Plus />Add service</Button>
               </div>
               <div className="space-y-2">
                 {serviceRows.map((row, index) => {
-                  const selected = services.find((service) => String(service.id) === row.inventoryItemId);
+                  const selected = services.find((service) => String(service.id) === row.menuItemId);
+                  const optionGroups = menuOptionGroups(selected);
+                  const selectedOptions = selectedMenuOptions(selected, row.selectedOptionIds);
+                  const unitPrice = menuServicePriceWithOptions(selected, row.selectedOptionIds);
                   return (
-                    <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_2.25rem] items-center gap-2" key={`${row.inventoryItemId}-${index}`}>
-                      <Select value={row.inventoryItemId} onValueChange={(value) => updateServiceRow(index, { inventoryItemId: value })}>
-                        <SelectTrigger><SelectValue placeholder="Select service" /></SelectTrigger>
-                        <SelectContent>{services.map((service) => <SelectItem key={service.id} value={String(service.id)}>{service.name} · {formatCurrency(numberValue(service.price))}</SelectItem>)}</SelectContent>
-                      </Select>
-                      <Input aria-label="Service quantity" type="number" min="0.001" step="0.001" value={row.quantity} onChange={(event) => updateServiceRow(index, { quantity: event.target.value })} />
-                      <Button type="button" size="icon" variant="ghost" aria-label="Remove service" disabled={serviceRows.length === 1} onClick={() => setServiceRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}><X /></Button>
-                      {selected && <p className="col-span-3 -mt-1 text-right text-xs text-muted-foreground">{formatCurrency(numberValue(selected.price) * Math.max(numberValue(row.quantity), 0))}</p>}
+                    <div className="rounded-md border p-3" key={`${row.menuItemId}-${index}`}>
+                      <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_2.25rem] items-center gap-2">
+                        <Select value={row.menuItemId} onValueChange={(value) => updateServiceRow(index, {
+                          menuItemId: value,
+                          selectedOptionIds: defaultOptionIds(services.find((service) => String(service.id) === value) || {} as AppointmentMenuService),
+                        })}>
+                          <SelectTrigger><SelectValue placeholder="Select a menu service" /></SelectTrigger>
+                          <SelectContent>{services.map((service) => <SelectItem key={service.id} value={String(service.id)}>{menuServiceName(service)}{menuServiceCategory(service) ? ` · ${menuServiceCategory(service)}` : ''} · {formatCurrency(menuServicePrice(service))}</SelectItem>)}</SelectContent>
+                        </Select>
+                        <Input aria-label="Service quantity" type="number" min="0.001" step="0.001" value={row.quantity} onChange={(event) => updateServiceRow(index, { quantity: event.target.value })} />
+                        <Button type="button" size="icon" variant="ghost" aria-label="Remove service" disabled={serviceRows.length === 1} onClick={() => setServiceRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}><X /></Button>
+                      </div>
+                      {selected && (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+                          <div className="min-w-0">
+                            {optionGroups.length > 0 ? (
+                              <p className="text-xs text-muted-foreground">
+                                {selectedOptions.length
+                                  ? selectedOptions.map((option) => option.name).join(' · ')
+                                  : 'No choices selected'}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">No service choices configured.</p>
+                            )}
+                            <p className="mt-1 text-xs font-medium">{formatCurrency(unitPrice * Math.max(numberValue(row.quantity), 0))}</p>
+                          </div>
+                          {optionGroups.length > 0 && (
+                            <Button type="button" size="sm" variant="outline" onClick={() => openServiceOptions(index)}>Choose options</Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              {!services.length && <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No salon services are available in this branch. Create a sellable product and mark it as a service in Products & Stock.</p>}
+              {!isLoadingMenuServices && !services.length && <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No menu items are available in this branch. Add the salon service in Menu Management, then configure its choices there.</p>}
               <div className="flex justify-end border-t pt-3 text-sm font-semibold">Appointment total: {formatCurrency(selectedServicesTotal)}</div>
             </section>
 
@@ -752,10 +947,80 @@ export default function AppointmentsPage() {
           </div>
           <DialogFooter className="border-t px-5 py-4 sm:px-6">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={() => void submitAppointment()} disabled={isSaving || !services.length}>
+            <Button onClick={() => void submitAppointment()} disabled={isSaving || isLoadingMenuServices || !services.length}>
               {isSaving && <Loader2 className="animate-spin" />}
               {editingAppointment ? 'Save changes' : 'Book appointment'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={optionDialogRow !== null} onOpenChange={(open) => {
+        if (!open) {
+          setOptionDialogRow(null);
+          setDraftOptionIds({});
+        }
+      }}>
+        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Choose options{selectedOptionService ? ` for ${menuServiceName(selectedOptionService)}` : ''}</DialogTitle>
+            <DialogDescription>These choices and their prices are saved with this appointment and sent with the service docket.</DialogDescription>
+          </DialogHeader>
+          {selectedOptionService && (
+            <div className="space-y-4 py-2">
+              {menuOptionGroups(selectedOptionService).map((group) => {
+                const groupId = String(group.id);
+                const selectedIds = draftOptionIds[groupId] || [];
+                const maxSelect = Math.max(1, numberValue(group.max_select) || 1);
+                const minimum = group.is_required ? Math.max(1, numberValue(group.min_select) || 1) : numberValue(group.min_select);
+                return (
+                  <section key={groupId} className="space-y-2 rounded-md border p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{group.name}</p>
+                        <p className="text-xs text-muted-foreground">{minimum > 0 ? `Choose ${minimum}${minimum === maxSelect ? '' : `-${maxSelect}`}` : `Optional · choose up to ${maxSelect}`}</p>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{selectedIds.length}/{maxSelect}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {group.options.filter((option) => option.is_visible !== false).map((option) => {
+                        const optionId = String(option.id);
+                        const checked = selectedIds.includes(optionId);
+                        const optionPrice = String(option.price_mode || '').toLowerCase() === 'override' && option.price_override !== null && option.price_override !== undefined
+                          ? `Set to ${formatCurrency(numberValue(option.price_override))}`
+                          : numberValue(option.price_delta) === 0
+                          ? 'Included'
+                          : `${numberValue(option.price_delta) > 0 ? '+' : ''}${formatCurrency(numberValue(option.price_delta))}`;
+                        return (
+                          <label key={optionId} htmlFor={`appointment-option-${groupId}-${optionId}`} className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${checked ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                            <input
+                              id={`appointment-option-${groupId}-${optionId}`}
+                              type={maxSelect === 1 ? 'radio' : 'checkbox'}
+                              name={`appointment-option-group-${groupId}`}
+                              checked={checked}
+                              onChange={(event) => toggleDraftOption(group, optionId, event.target.checked)}
+                              className="mt-1 size-4 accent-primary"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-start justify-between gap-3 text-sm font-medium"><span>{option.name}</span><span className="shrink-0 text-muted-foreground">{optionPrice}</span></span>
+                              {option.description && <span className="mt-1 block text-xs text-muted-foreground">{option.description}</span>}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+              <div className="flex items-center justify-between rounded-md border bg-muted/30 p-3">
+                <span className="text-sm text-muted-foreground">Price after choices</span>
+                <span className="font-semibold">{formatCurrency(menuServicePriceWithOptions(selectedOptionService, draftOptionIds))}</span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOptionDialogRow(null)}>Cancel</Button>
+            <Button type="button" onClick={saveServiceOptions}>Save choices</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

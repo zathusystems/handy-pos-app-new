@@ -2,6 +2,14 @@ name: Android Tauri Build
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Optional Handy POS release version to match (for example 1.0.21). Defaults to the latest Windows desktop release.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   build-android:
@@ -18,6 +26,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve matching desktop release version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          version="${REQUESTED_RELEASE_VERSION//[[:space:]]/}"
+
+          if [ -z "$version" ]; then
+            tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName' 2>/dev/null || true)"
+            case "$tag" in
+              desktop-v*) version="${tag#desktop-v}" ;;
+              *)
+                echo "No Windows desktop release was found. Start with the Windows build, or provide release_version when dispatching this workflow."
+                exit 1
+                ;;
+            esac
+          fi
+
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release_version must be a semantic version such as 1.0.21; received: $version"
+            exit 1
+          fi
+
+          echo "TAURI_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Android visible app version: $version"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -63,6 +98,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Sync Android launcher icon
+        run: bash scripts/sync-android-icons.sh
 
       - name: Initialize Android project
         run: npm run tauri:android:init

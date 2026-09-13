@@ -25,6 +25,7 @@ export type Permission =
   | 'manage_expenses'
   | 'view_customers'
   | 'manage_customers'
+  | 'view_appointments'
   | 'view_invoices'
   | 'manage_invoices'
   
@@ -62,6 +63,7 @@ export const rolePermissions: Record<Staff['role'], Permission[]> = {
     'manage_expenses',
     'view_customers',
     'manage_customers',
+    'view_appointments',
     'view_invoices',
     'manage_invoices',
     
@@ -99,6 +101,7 @@ export const rolePermissions: Record<Staff['role'], Permission[]> = {
     'manage_expenses',
     'view_customers',
     'manage_customers',
+    'view_appointments',
     'view_invoices',
     'manage_invoices',
     
@@ -114,6 +117,7 @@ export const rolePermissions: Record<Staff['role'], Permission[]> = {
 
     // POS
     'access_pos',
+    'view_appointments',
     'view_sessions',
     'view_kitchen',
   ],
