@@ -4,7 +4,7 @@
 import React, { useEffect } from 'react';
 import { useForm, FormProvider, useFieldArray, useWatch } from 'react-hook-form';
 import { format } from 'date-fns';
-import { Utensils, Beef, BookOpen, Plus, X, Barcode as BarcodeIcon } from 'lucide-react';
+import { Utensils, Beef, BookOpen, Plus, X, Scissors, Barcode as BarcodeIcon } from 'lucide-react';
 
 import { db, type InventoryItem, type Supplier, type RecipeIngredient } from '@/lib/db';
 import {
@@ -171,6 +171,8 @@ export const AddProductForm = ({
         [user?.businessId]
     );
     const isRestaurantOrBar = businessType === 'Restaurant' || businessType === 'Bar & Liquor';
+    const isSalonBusiness = businessType === 'Beauty Salon and Spa';
+    const supportsIngredientItems = isRestaurantOrBar || isSalonBusiness;
     const supportsVariablePrice = VARIABLE_PRICE_BUSINESS_TYPES.has(businessType);
     const isMobile = useIsMobile();
     const [isBarcodeScannerOpen, setIsBarcodeScannerOpen] = React.useState(false);
@@ -196,6 +198,7 @@ export const AddProductForm = ({
           isVariablePrice: false,
           isFuel: false,
           showInCustomSalesSection: false,
+          isService: false,
           portionPrice: undefined,
       }
     });
@@ -214,6 +217,7 @@ export const AddProductForm = ({
     const itemType = useWatch({ control, name: 'itemType' });
     const isVariablePrice = useWatch({ control, name: 'isVariablePrice' });
     const isProduced = useWatch({ control, name: 'isProduced' });
+    const isService = useWatch({ control, name: 'isService' });
     const isSoldInPortions = useWatch({ control, name: 'isSoldInPortions' });
     const showInCustomSalesSection = useWatch({ control, name: 'showInCustomSalesSection' });
     const portionName = useWatch({ control, name: 'portionName' });
@@ -227,7 +231,7 @@ export const AddProductForm = ({
         name: '',
     });
     const hasSelectedUnit = Boolean((unitType || '').trim());
-    const canConfigurePortions = isRestaurantOrBar && itemType === 'sellable' && !isProduced;
+    const canConfigurePortions = isRestaurantOrBar && itemType === 'sellable' && !isProduced && !isService;
     const categoryOptions = React.useMemo(() => {
         if (itemType === 'ingredient') {
             return ingredientCategories[businessType] || [];
@@ -307,10 +311,24 @@ export const AddProductForm = ({
     }, [customSalesSectionSettings.enabled, setValue, showInCustomSalesSection]);
 
     React.useEffect(() => {
-        if (isProduced && isVariablePrice) {
+        if ((isProduced || isService) && isVariablePrice) {
             setValue('isVariablePrice', false);
         }
-    }, [isProduced, isVariablePrice, setValue]);
+    }, [isProduced, isService, isVariablePrice, setValue]);
+
+    React.useEffect(() => {
+        if (!isService) {
+            return;
+        }
+
+        setValue('itemType', 'sellable');
+        setValue('isProduced', false);
+        setValue('isVariablePrice', false);
+        setValue('isFuel', false);
+        setValue('unitType', 'service');
+        setValue('reorderLevel', 0);
+        resetPortionFields();
+    }, [isService, resetPortionFields, setValue]);
 
     // Log suppliers for debugging
     React.useEffect(() => {
@@ -381,7 +399,7 @@ export const AddProductForm = ({
             );
             const resetData = {
                 ...defaultValues,
-                itemType: defaultValues.itemType ?? (isRestaurantOrBar ? 'ingredient' : 'sellable'),
+                itemType: defaultValues.itemType ?? (supportsIngredientItems ? 'ingredient' : 'sellable'),
                 // Ensure all fields are present
                 stockUnits: defaultValues.stockUnits ?? 0,
                 price: defaultValues.price ?? 0,
@@ -391,6 +409,7 @@ export const AddProductForm = ({
                 isFuel: defaultValues.isFuel ?? false,
                 showInCustomSalesSection: defaultValues.showInCustomSalesSection ?? false,
                 isProduced: defaultValues.isProduced ?? false,
+                isService: defaultValues.isService ?? defaultValues.is_service ?? false,
                 isSoldInPortions: defaultValues.isSoldInPortions ?? false,
                 portionPrice: defaultValues.portionPrice ?? undefined,
                 recipe: defaultValues.recipe ?? [],
@@ -414,11 +433,12 @@ export const AddProductForm = ({
                 isFuel: false,
                 showInCustomSalesSection: false,
                 isProduced: false,
+                isService: false,
                 isSoldInPortions: false,
                 portionPrice: undefined,
             });
         }
-    }, [defaultValues?.id, isRestaurantOrBar, branchId, reset]);
+    }, [defaultValues?.id, supportsIngredientItems, branchId, reset]);
 
     const handleProductBarcodeDetected = React.useCallback(async (barcode: string): Promise<BarcodeDetectionOutcome> => {
         const trimmedBarcode = normalizeBarcodeValue(barcode);
@@ -461,8 +481,8 @@ export const AddProductForm = ({
             
             // Determine final item type - ensure it's always set correctly
             let finalItemType: InventoryItem['itemType'] = data.itemType === 'ingredient' ? 'ingredient' : 'sellable';
-            if (!isRestaurantOrBar) {
-                // For non-restaurant businesses, always force sellable
+            if (!supportsIngredientItems) {
+                // Businesses without consumable recipes only create sellable products.
                 finalItemType = 'sellable';
             }
             
@@ -471,6 +491,8 @@ export const AddProductForm = ({
             const isEditing = !!defaultValues?.id;
             const supportsProducedItems = isRestaurantOrBar && finalItemType === 'sellable';
             const normalizedIsProduced = supportsProducedItems ? Boolean(data.isProduced) : false;
+            const supportsServiceItems = isSalonBusiness && finalItemType === 'sellable';
+            const normalizedIsService = supportsServiceItems ? Boolean(data.isService) : false;
             const supportsPortions =
                 isRestaurantOrBar &&
                 finalItemType === 'sellable' &&
@@ -511,7 +533,7 @@ export const AddProductForm = ({
                         : calculatedPortionPrice
                 )
                 : undefined;
-            const normalizedRecipe = supportsProducedItems && normalizedIsProduced
+            const normalizedRecipe = (supportsProducedItems && normalizedIsProduced) || normalizedIsService
                 ? data.recipe
                     ?.map((recipeItem) => ({
                         ...recipeItem,
@@ -528,10 +550,11 @@ export const AddProductForm = ({
                 supportsVariablePrice &&
                 finalItemType === 'sellable' &&
                 !normalizedIsProduced &&
+                !normalizedIsService &&
                 Boolean(data.isVariablePrice);
 
             const normalizedCategory = String(data.category || '').trim();
-            const normalizedStatus: InventoryItem['status'] = normalizedIsProduced
+            const normalizedStatus: InventoryItem['status'] = normalizedIsProduced || normalizedIsService
                 ? 'In Stock'
                 : stockUnitsValue > reorderLevelValue
                     ? 'In Stock'
@@ -548,21 +571,22 @@ export const AddProductForm = ({
                 itemType: finalItemType!,
                 category: normalizedCategory,
                 status: normalizedStatus,
-                supplier: data.supplier || 'N/A',
+                supplier: normalizedIsService ? undefined : (data.supplier || 'N/A'),
                 manufacturer: data.manufacturer || '',
                 batch: data.batch || '',
-                unitType: data.unitType || 'unit',
-                reorderLevel: reorderLevelValue,
+                unitType: normalizedIsService ? 'service' : (data.unitType || 'unit'),
+                reorderLevel: normalizedIsService ? 0 : reorderLevelValue,
                 expiry: data.expiry ? format(new Date(data.expiry), 'yyyy-MM-dd') : undefined,
-                stockUnits: stockUnitsValue,
-                cost: costValue > 0 ? costValue : undefined,
-                value: stockUnitsValue * costValue,
+                stockUnits: normalizedIsService ? 0 : stockUnitsValue,
+                cost: normalizedIsService ? undefined : (costValue > 0 ? costValue : undefined),
+                value: normalizedIsService ? 0 : stockUnitsValue * costValue,
                 price: finalItemType === 'sellable' ? (priceValue > 0 ? priceValue : undefined) : undefined,
                 recipe: normalizedRecipe,
                 isVariablePrice: normalizedIsVariablePrice,
                 isFuel: normalizedIsFuel,
                 showInCustomSalesSection: normalizedShowInCustomSalesSection,
                 isProduced: normalizedIsProduced,
+                isService: normalizedIsService,
                 isSoldInPortions: normalizedIsSoldInPortions,
                 portionName: normalizedPortionName || undefined,
                 portionsPerUnit: normalizedPortionsPerUnit,
@@ -626,7 +650,7 @@ export const AddProductForm = ({
         <FormProvider {...form}>
             <>
             <form onSubmit={handleSubmit(onSubmit)} className="grid gap-6">
-                {isRestaurantOrBar && (
+                {supportsIngredientItems && (
                     <>
                         <FormField
                             control={control}
@@ -651,7 +675,7 @@ export const AddProductForm = ({
                                                     }`}
                                                 >
                                                     <Beef className="mb-3 h-6 w-6" />
-                                                    Ingredient
+                                                    {isSalonBusiness ? 'Salon Supply' : 'Ingredient'}
                                                 </Label>
                                             </FormItem>
                                             <FormItem>
@@ -664,8 +688,8 @@ export const AddProductForm = ({
                                                             : 'border-muted'
                                                     }`}
                                                 >
-                                                    <Utensils className="mb-3 h-6 w-6" />
-                                                    Sellable Product
+                                                    {isSalonBusiness ? <Scissors className="mb-3 h-6 w-6" /> : <Utensils className="mb-3 h-6 w-6" />}
+                                                    {isSalonBusiness ? 'Service or Product' : 'Sellable Product'}
                                                 </Label>
                                             </FormItem>
                                         </RadioGroup>
@@ -712,6 +736,28 @@ export const AddProductForm = ({
                     />
                     </>
                 )}
+
+                {isSalonBusiness && itemType === 'sellable' && (
+                    <FormField
+                        control={form.control}
+                        name="isService"
+                        render={({ field }) => (
+                            <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                                <div className="space-y-0.5">
+                                    <FormLabel className="flex items-center gap-2">
+                                        <Scissors className="h-4 w-4" /> This is a service
+                                    </FormLabel>
+                                    <FormDescription>
+                                        Services are available in Take Order and POS without their own stock count. Add a recipe below only when supplies should be deducted for each service.
+                                    </FormDescription>
+                                </div>
+                                <FormControl>
+                                    <Switch checked={Boolean(field.value)} onCheckedChange={field.onChange} />
+                                </FormControl>
+                            </FormItem>
+                        )}
+                    />
+                )}
                 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                      <FormField
@@ -720,9 +766,12 @@ export const AddProductForm = ({
                         rules={{ required: "Item name is required" }}
                         render={({ field }) => (
                             <FormItem>
-                                <FormLabel>Item Name</FormLabel>
+                                <FormLabel>{isService ? 'Service Name' : 'Item Name'}</FormLabel>
                                 <FormControl>
-                                    <Input placeholder={getProductNamePlaceholder(businessType, itemType || 'sellable')} {...field} />
+                                    <Input
+                                        placeholder={isService ? 'e.g., Wash, blow dry & treatment' : getProductNamePlaceholder(businessType, itemType || 'sellable')}
+                                        {...field}
+                                    />
                                 </FormControl>
                                 <FormMessage />
                             </FormItem>
@@ -795,7 +844,7 @@ export const AddProductForm = ({
                     />
                 )}
 
-                {!isRestaurantOrBar && (
+                {!isRestaurantOrBar && !isService && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <FormField
                             control={control}
@@ -879,7 +928,7 @@ export const AddProductForm = ({
                     />
                 </div>
 
-                {supportsVariablePrice && itemType === 'sellable' && !isProduced && (
+                {supportsVariablePrice && itemType === 'sellable' && !isProduced && !isService && (
                      <FormField
                         control={form.control}
                         name="isVariablePrice"
@@ -925,7 +974,7 @@ export const AddProductForm = ({
                     />
                 )}
 
-                {(itemType === 'ingredient' || !isRestaurantOrBar) && (
+                {(itemType === 'ingredient' || (!isRestaurantOrBar && !isService)) && (
                      <div className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                              <FormField
@@ -1055,7 +1104,7 @@ export const AddProductForm = ({
                     </div>
                 )}
                 
-                {itemType === 'sellable' && isRestaurantOrBar && (
+                {itemType === 'sellable' && (isRestaurantOrBar || (isSalonBusiness && isService)) && (
                     <div className="space-y-4">
                         <FormField
                             control={control}
@@ -1070,6 +1119,7 @@ export const AddProductForm = ({
                                             placeholder="Type or select a unit"
                                             value={field.value || ''}
                                             onChange={(event) => field.onChange(event.target.value)}
+                                            disabled={isService}
                                         />
                                     </FormControl>
                                     <datalist id={unitOptionsListId}>
@@ -1078,14 +1128,14 @@ export const AddProductForm = ({
                                         ))}
                                     </datalist>
                                     <FormDescription>
-                                        Type to search units, then enter prices.
+                                        {isService ? 'Services are recorded per service.' : 'Type to search units, then enter prices.'}
                                     </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
                         />
 
-                        {!isProduced ? (
+                        {!isProduced && !isService ? (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <FormField
                                     control={control}
@@ -1154,12 +1204,14 @@ export const AddProductForm = ({
 
                         <Separator />
 
-                        {isRestaurantOrBar && isProduced && (
+                        {((isRestaurantOrBar && isProduced) || (isSalonBusiness && isService)) && (
                             <>
                             <div>
-                                <h3 className="text-lg font-medium flex items-center gap-2"><BookOpen className="h-5 w-5"/> Recipe / Bill of Materials</h3>
+                                <h3 className="text-lg font-medium flex items-center gap-2"><BookOpen className="h-5 w-5"/>{isService ? 'Consumables used' : 'Recipe / Bill of Materials'}</h3>
                                 <p className="text-sm text-muted-foreground mb-4">
-                                    Select ingredients or purchased sellable drinks used to make one unit of this product.
+                                    {isService
+                                        ? 'Optional: add the products used for one service so stock is deducted only from those supplies when the service is sold.'
+                                        : 'Select ingredients or purchased sellable drinks used to make one unit of this product.'}
                                 </p>
                                 <div className="space-y-4">
                                     {fields.map((field, index) => (

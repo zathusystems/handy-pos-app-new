@@ -23,9 +23,13 @@ import { Input } from '../ui/input';
 import { authFetch } from '@/lib/auth-fetch';
 import {
     buildKitchenInventoryLookup,
-    getKitchenOrderItems,
+    getOrderFulfillmentItems,
 } from '@/lib/kitchen-order-routing';
-import { isKitchenBusinessType, type BusinessType } from '@/lib/inventory/config';
+import {
+    getOrderWorkflowCopy,
+    isOrderFulfillmentBusinessType,
+    type BusinessType,
+} from '@/lib/inventory/config';
 import { PortionSaleDialog, canSellInPortions } from './portion-sale-dialog';
 import { getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { KitchenTicket } from './kitchen-ticket';
@@ -350,7 +354,8 @@ export function TakeOrderModal({
     const kitchenTicketPrintLockRef = React.useRef(false);
     const menuSearchInputRef = useRef<HTMLInputElement>(null);
     const categoryTabsRef = useRef<HTMLDivElement>(null);
-    const kitchenEnabled = isKitchenBusinessType(businessType);
+    const orderFulfillmentEnabled = isOrderFulfillmentBusinessType(businessType);
+    const workflowCopy = getOrderWorkflowCopy(businessType);
 
     useEffect(() => {
         if (isOpen) {
@@ -764,11 +769,13 @@ export function TakeOrderModal({
     const [customerNotes, setCustomerNotes] = useState('');
     const [tableNumber, setTableNumber] = useState('');
     const [orderDestination, setOrderDestination] = useState<OrderDestination>('kitchen');
-    const kitchenCartItemCount = useMemo(
-        () => kitchenEnabled ? getKitchenOrderItems({ items: cart }, kitchenInventoryLookup).length : 0,
-        [cart, kitchenEnabled, kitchenInventoryLookup]
+    const fulfillmentCartItemCount = useMemo(
+        () => orderFulfillmentEnabled
+            ? getOrderFulfillmentItems({ items: cart }, kitchenInventoryLookup, businessType).length
+            : 0,
+        [businessType, cart, kitchenInventoryLookup, orderFulfillmentEnabled]
     );
-    const hasKitchenCartItems = kitchenEnabled && kitchenCartItemCount > 0;
+    const hasFulfillmentCartItems = orderFulfillmentEnabled && fulfillmentCartItemCount > 0;
 
     const isAddingToExistingOrder = mode === 'add-items' && Boolean(existingOrder);
 
@@ -816,13 +823,13 @@ export function TakeOrderModal({
             void handleSubmitOrder(destination);
             return;
         }
-        const resolvedDestination = destination === 'kitchen' && (!kitchenEnabled || !hasKitchenCartItems) ? 'pos' : destination;
+        const resolvedDestination = destination === 'kitchen' && (!orderFulfillmentEnabled || !hasFulfillmentCartItems) ? 'pos' : destination;
         if (destination === 'kitchen' && resolvedDestination === 'pos') {
             toast({
-                title: kitchenEnabled ? 'No kitchen prep needed' : 'Order queue selected',
-                description: kitchenEnabled
+                title: orderFulfillmentEnabled ? workflowCopy.noPrepLabel : 'Order queue selected',
+                description: orderFulfillmentEnabled
                     ? 'This order only has purchased/no-recipe items, so it will be ready for sale processing.'
-                    : 'Kitchen is only used for restaurant and bar businesses, so this order will be ready for sale processing.',
+                    : 'Order fulfilment is only used for restaurant, bar, and salon businesses, so this order will be ready for sale processing.',
             });
         }
         setOrderDestination(resolvedDestination);
@@ -885,8 +892,8 @@ export function TakeOrderModal({
     const handlePrintKitchenTicket = async (order: TakeOrder) => {
         if (kitchenTicketPrintLockRef.current) return;
 
-        const kitchenItems = getKitchenOrderItems(order, kitchenInventoryLookup);
-        if (kitchenItems.length === 0) return;
+        const fulfillmentItems = getOrderFulfillmentItems(order, kitchenInventoryLookup, businessType);
+        if (fulfillmentItems.length === 0) return;
 
         kitchenTicketPrintLockRef.current = true;
         try {
@@ -901,8 +908,8 @@ export function TakeOrderModal({
             if (!defaultPrinter) {
                 toast({
                     variant: 'destructive',
-                    title: 'Kitchen Ticket Not Printed',
-                    description: 'Order was sent to the kitchen, but no default printer is configured.',
+                    title: `${workflowCopy.ticketLabel} Not Printed`,
+                    description: `Order was sent to ${workflowCopy.queueLabel.toLowerCase()}, but no default printer is configured.`,
                 });
                 return;
             }
@@ -921,8 +928,8 @@ export function TakeOrderModal({
             if (!printContents || printContents.trim().length === 0) {
                 toast({
                     variant: 'destructive',
-                    title: 'Kitchen Ticket Not Printed',
-                    description: 'The kitchen ticket was not ready. Check the printer and kitchen queue.',
+                    title: `${workflowCopy.ticketLabel} Not Printed`,
+                    description: `The ${workflowCopy.ticketLabel.toLowerCase()} was not ready. Check the printer and ${workflowCopy.queueLabel.toLowerCase()}.`,
                 });
                 return;
             }
@@ -949,10 +956,10 @@ export function TakeOrderModal({
             if (!result.success) {
                 toast({
                     variant: 'destructive',
-                    title: 'Kitchen Ticket Not Printed',
+                    title: `${workflowCopy.ticketLabel} Not Printed`,
                     description: result.timedOut
                         ? 'Order was sent, but the printer did not respond in time.'
-                        : 'Order was sent, but the kitchen ticket could not be printed.',
+                        : `Order was sent, but the ${workflowCopy.ticketLabel.toLowerCase()} could not be printed.`,
                 });
                 return;
             }
@@ -972,15 +979,15 @@ export function TakeOrderModal({
             }
 
             toast({
-                title: 'Kitchen Ticket Printed',
-                description: `Order ${order.orderNumber} was sent to the kitchen.`,
+                title: `${workflowCopy.ticketLabel} Printed`,
+                description: `Order ${order.orderNumber} was sent to ${workflowCopy.queueLabel.toLowerCase()}.`,
             });
         } catch (error) {
             console.error('[Take Order Kitchen Ticket] Failed to print kitchen ticket:', error);
             toast({
                 variant: 'destructive',
-                title: 'Kitchen Ticket Not Printed',
-                description: 'Order was sent, but the kitchen ticket could not be printed.',
+                title: `${workflowCopy.ticketLabel} Not Printed`,
+                description: `Order was sent, but the ${workflowCopy.ticketLabel.toLowerCase()} could not be printed.`,
             });
         } finally {
             kitchenTicketPrintLockRef.current = false;
@@ -992,7 +999,7 @@ export function TakeOrderModal({
 
         try {
             const selectedDestination = forcedDestination || orderDestination;
-            const resolvedDestination = selectedDestination === 'kitchen' && kitchenEnabled && hasKitchenCartItems ? 'kitchen' : 'pos';
+            const resolvedDestination = selectedDestination === 'kitchen' && orderFulfillmentEnabled && hasFulfillmentCartItems ? 'kitchen' : 'pos';
             const orderStatus: TakeOrder['status'] = resolvedDestination === 'pos' ? 'Ready' : 'Sent to Kitchen';
             const itemsPayload = buildOrderItemsPayload();
 
@@ -1106,7 +1113,7 @@ export function TakeOrderModal({
             }
 
             toast({
-                title: resolvedDestination === 'pos' ? 'Order Ready for Sale' : 'Order Sent to Kitchen',
+                title: resolvedDestination === 'pos' ? 'Order Ready for Sale' : `Order ${workflowCopy.sentLabel}`,
                 description: resolvedDestination === 'pos'
                     ? `Order ${createdOrder.order_number} is ready for sale processing from Orders.`
                     : `Order ${createdOrder.order_number} has been created successfully.`,
@@ -1388,19 +1395,19 @@ export function TakeOrderModal({
                         <span>Subtotal</span>
                         <span>{formatCurrency(subtotal)}</span>
                     </div>
-                    <div className={`grid gap-2 ${kitchenEnabled ? 'sm:grid-cols-2' : ''}`}>
-                        {kitchenEnabled && (
+                    <div className={`grid gap-2 ${orderFulfillmentEnabled ? 'sm:grid-cols-2' : ''}`}>
+                        {orderFulfillmentEnabled && (
                             <Button size="lg" disabled={cart.length === 0} onClick={() => handleSendOrderClick('kitchen')}>
-                                <Send className="mr-2 h-5 w-5"/> {hasKitchenCartItems ? 'Send to Kitchen' : 'Ready for Sale'}
+                                <Send className="mr-2 h-5 w-5"/> {hasFulfillmentCartItems ? workflowCopy.sendLabel : workflowCopy.readyLabel}
                             </Button>
                         )}
                         <Button
                             size="lg"
-                            variant={kitchenEnabled ? 'secondary' : 'default'}
+                            variant={orderFulfillmentEnabled ? 'secondary' : 'default'}
                             disabled={cart.length === 0}
                             onClick={() => handleSendOrderClick('pos')}
                         >
-                            <ShoppingBasket className="mr-2 h-5 w-5"/> {kitchenEnabled ? 'Ready for Sale' : 'Send to Orders'}
+                            <ShoppingBasket className="mr-2 h-5 w-5"/> {orderFulfillmentEnabled ? workflowCopy.readyLabel : 'Send to Orders'}
                         </Button>
                     </div>
                 </div>
@@ -1438,8 +1445,8 @@ export function TakeOrderModal({
                 <CardDescription>
                   {orderDestination === 'pos'
                     ? 'Send this order to the ready-for-sale queue. A cashier can process it from Orders.'
-                    : kitchenEnabled
-                      ? 'Send this order to the kitchen screen.'
+                    : orderFulfillmentEnabled
+                      ? `Send this order to the ${workflowCopy.queueLabel.toLowerCase()}.`
                       : 'Send this order to the ready-for-sale queue.'}
                 </CardDescription>
               </CardHeader>
@@ -1522,8 +1529,8 @@ export function TakeOrderModal({
                   {isSubmitting
                     ? 'Sending...'
                     : orderDestination === 'pos'
-                      ? kitchenEnabled ? 'Mark Ready for Sale' : 'Send to Orders'
-                      : kitchenEnabled ? 'Send to Kitchen' : 'Send to Orders'}
+                      ? orderFulfillmentEnabled ? workflowCopy.readyLabel : 'Send to Orders'
+                      : orderFulfillmentEnabled ? workflowCopy.sendLabel : 'Send to Orders'}
                 </Button>
               </CardFooter>
             </Card>
@@ -1660,7 +1667,9 @@ export function TakeOrderModal({
                 isTakeaway={Boolean(kitchenTicketOrder.isTakeaway ?? kitchenTicketOrder.is_takeaway)}
                 isSelfService={kitchenTicketOrder.orderType === 'self_service'}
                 paperWidth={kitchenTicketPaperWidth}
-                items={getKitchenOrderItems(kitchenTicketOrder, kitchenInventoryLookup).map((item) => ({
+                ticketTitle={workflowCopy.ticketTitle}
+                locationLabel={workflowCopy.locationLabel}
+                items={getOrderFulfillmentItems(kitchenTicketOrder, kitchenInventoryLookup, businessType).map((item) => ({
                     id: String(item.id),
                     name: String(item.name || 'Item'),
                     quantity: Number(item.quantity || 0),

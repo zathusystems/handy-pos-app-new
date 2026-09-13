@@ -172,6 +172,8 @@ export interface InventoryItem {
     showInCustomSalesSection?: boolean; // Internal reporting/section flag, hidden from customer menu categories
     show_in_custom_sales_section?: boolean;
     isProduced?: boolean; // For restaurant/bar: true if made in-house, false if purchased
+    isService?: boolean; // Salon/spa service: sold as a sellable but not directly stock tracked
+    is_service?: boolean;
     onMenu?: boolean;
     menuEntryId?: string;
     menuIsVisible?: boolean;
@@ -293,7 +295,11 @@ export interface Order {
     total: number;
     tax?: number; // Tax amount for this order (legacy field)
     tip?: number; // Tip amount for this order
-    paymentMethod: 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'On Account' | 'Laybuy' | 'Other';
+    paymentMethod: 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Appointment Settlement' | 'On Account' | 'Laybuy' | 'Other';
+    paymentBreakdown?: Array<Record<string, unknown>>;
+    payment_breakdown?: Array<Record<string, unknown>>;
+    appointmentSettlement?: Record<string, unknown>;
+    appointment_settlement?: Record<string, unknown>;
     laybuyDeposit?: number;
     laybuy_deposit?: number;
     depositAmount?: number;
@@ -437,6 +443,34 @@ export interface TakeOrder {
     completedAt?: string; // ISO string
     kitchenTicketPrinted?: boolean;
     kitchenTicketPrintedAt?: string;
+    appointmentSettlement?: {
+        appointmentId?: string;
+        appointment_id?: string;
+        takeOrderId?: string;
+        take_order_id?: string;
+        customerId?: string;
+        customer_id?: string;
+        customerName?: string;
+        customer_name?: string;
+        customerPhone?: string;
+        customer_phone?: string;
+        depositTotal?: number | string;
+        deposit_total?: number | string;
+    } | null;
+    appointment_settlement?: {
+        appointmentId?: string;
+        appointment_id?: string;
+        takeOrderId?: string;
+        take_order_id?: string;
+        customerId?: string;
+        customer_id?: string;
+        customerName?: string;
+        customer_name?: string;
+        customerPhone?: string;
+        customer_phone?: string;
+        depositTotal?: number | string;
+        deposit_total?: number | string;
+    } | null;
     // Sync fields
     _dirty?: boolean;
     _operation?: 'create' | 'update' | 'delete';
@@ -554,6 +588,10 @@ export interface Customer {
     customer_tin?: string;
     vatRegistered?: boolean;
     vat_registered?: boolean;
+    salonPreferences?: string;
+    salon_preferences?: string;
+    salonCareNotes?: string;
+    salon_care_notes?: string;
     createdAt: string; // ISO string
     updatedAt?: string;
     _dirty?: boolean;

@@ -41,6 +41,71 @@ export const isKitchenBusinessType = (value: unknown): boolean => (
     KITCHEN_BUSINESS_TYPES.has(normalizeBusinessType(value, 'General Retail'))
 );
 
+// Restaurants and bars prepare food/drinks in a kitchen. Salons use the same
+// order lifecycle, but route services to a service queue and print a docket.
+export const ORDER_FULFILLMENT_BUSINESS_TYPES = new Set<BusinessType>([
+    'Restaurant',
+    'Bar & Liquor',
+    'Beauty Salon and Spa',
+]);
+
+export const isOrderFulfillmentBusinessType = (value: unknown): boolean => (
+    ORDER_FULFILLMENT_BUSINESS_TYPES.has(normalizeBusinessType(value, 'General Retail'))
+);
+
+export const isSalonServiceBusinessType = (value: unknown): boolean => (
+    normalizeBusinessType(value, 'General Retail') === 'Beauty Salon and Spa'
+);
+
+export type OrderWorkflowCopy = {
+    queueLabel: string;
+    screenTitle: string;
+    ticketLabel: string;
+    ticketTitle: string;
+    sendLabel: string;
+    sentLabel: string;
+    startLabel: string;
+    preparingLabel: string;
+    readyLabel: string;
+    prepItemLabel: string;
+    noPrepLabel: string;
+    locationLabel: string;
+};
+
+export const getOrderWorkflowCopy = (value: unknown): OrderWorkflowCopy => {
+    if (isSalonServiceBusinessType(value)) {
+        return {
+            queueLabel: 'Service Queue',
+            screenTitle: 'Service Queue',
+            ticketLabel: 'Service Docket',
+            ticketTitle: 'SERVICE DOCKET',
+            sendLabel: 'Send to Service',
+            sentLabel: 'Sent to Service',
+            startLabel: 'Start Service',
+            preparingLabel: 'In Service',
+            readyLabel: 'Ready for Payment',
+            prepItemLabel: 'service',
+            noPrepLabel: 'No service items',
+            locationLabel: 'SERVICE LOCATION',
+        };
+    }
+
+    return {
+        queueLabel: 'Kitchen',
+        screenTitle: 'Kitchen Screen',
+        ticketLabel: 'Kitchen Ticket',
+        ticketTitle: 'KITCHEN TICKET',
+        sendLabel: 'Send to Kitchen',
+        sentLabel: 'Sent to Kitchen',
+        startLabel: 'Start',
+        preparingLabel: 'Preparing',
+        readyLabel: 'Ready for Sale',
+        prepItemLabel: 'kitchen prep',
+        noPrepLabel: 'No kitchen prep',
+        locationLabel: 'TABLE / ADDRESS',
+    };
+};
+
 export const businessConfig: Record<BusinessType, { title: string; description: string; addText: string }> = {
     Pharmacy: { title: "Pharmaceutical Inventory", description: "Manage drug stocks with mandatory batch and expiry tracking.", addText: "Add Drug" },
     Restaurant: { title: "Ingredient Inventory", description: "Manage raw materials, recipes, and prep batches.", addText: "Add Ingredient" },

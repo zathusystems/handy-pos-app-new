@@ -1299,7 +1299,10 @@ export default function PosPage() {
             }
 
             const isTakeawayPackaging = Boolean((cartItem as any).isTakeawayPackaging ?? (cartItem as any).is_takeaway_packaging);
-            const itemsToDecrement = (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
+            const isStocklessService = Boolean(originalItem.isService ?? originalItem.is_service);
+            const itemsToDecrement = isStocklessService
+                ? []
+                : (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
                 ? originalItem.recipe
                     .map(ri => {
                       const ingredientId = String(

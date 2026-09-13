@@ -229,6 +229,9 @@ def _build_order_sync_payload(order):
         'is_invoice_sale': order.is_invoice_sale,
         'invoice_id': order.invoice_id,
         'is_paid': order.is_paid,
+        'payment_method': order.payment_method,
+        'payment_breakdown': order.payment_breakdown or [],
+        'appointment_settlement': order.appointment_settlement or {},
         'fiscal_invoice_number': order.fiscal_invoice_number,
         'eis_status': order.eis_status,
         'eis_uuid': order.eis_uuid,
@@ -825,6 +828,17 @@ def handle_create_order(
                         f"[Sync Sessions] Warning: could not ensure customer account entry "
                         f"for existing order {order_id}: {account_exc}"
                     )
+            if str(existing.payment_method or '').strip().lower() == 'appointment settlement':
+                try:
+                    from appointments.services import settle_appointment_order
+
+                    settle_appointment_order(existing, created_by=user)
+                    existing.refresh_from_db()
+                except Exception as settlement_exc:
+                    return {
+                        'success': False,
+                        'error': _validation_error_message(settlement_exc),
+                    }
             if str(existing.payment_method or '').strip().lower() == 'laybuy':
                 try:
                     laybuy_deposit = _extract_laybuy_deposit(data)
@@ -895,6 +909,7 @@ def handle_create_order(
                     'success': False,
                     'error': error_msg
                 }
+
 
         if requires_approved_mra_mapping:
             print(f"[Sync Sessions] ✓ All products have approved+synced MRA mappings - proceeding with order creation")
@@ -1153,16 +1168,77 @@ def handle_create_order(
         charges_amount = _quantize_money(
             configured_charges['amount'] + mra_levy_amount
         )
-        total = float(_quantize_money(
+        gross_amount = _quantize_money(
             _to_decimal(total, Decimal('0'))
             + configured_charges['exclusive_amount']
             + mra_levy_amount
-        ))
+        )
+        tip_amount = _quantize_money(_to_decimal(data.get('tip'), Decimal('0')))
+        total = float(_quantize_money(gross_amount + tip_amount))
         
         normalized_payment_method = str(payment_method or '').strip().lower()
         payment_method_is_credit = normalized_payment_method == 'on account'
         payment_method_is_laybuy = normalized_payment_method == 'laybuy'
-        customer_required_payment = payment_method_is_credit or payment_method_is_laybuy
+        payment_method_is_appointment_settlement = normalized_payment_method == 'appointment settlement'
+        customer_required_payment = (
+            payment_method_is_credit or payment_method_is_laybuy or payment_method_is_appointment_settlement
+        )
+        appointment_settlement = {}
+        if payment_method_is_appointment_settlement:
+            raw_appointment_settlement = data.get('appointment_settlement') or data.get('appointmentSettlement')
+            if not isinstance(raw_appointment_settlement, dict):
+                return {
+                    'success': False,
+                    'error': 'Appointment settlement details are required for this sale.',
+                }
+            appointment_id = str(
+                raw_appointment_settlement.get('appointment_id') or raw_appointment_settlement.get('appointmentId') or ''
+            ).strip()
+            take_order_id = str(
+                raw_appointment_settlement.get('take_order_id') or raw_appointment_settlement.get('takeOrderId') or ''
+            ).strip()
+            final_payment_method = str(
+                raw_appointment_settlement.get('final_payment_method') or raw_appointment_settlement.get('finalPaymentMethod') or ''
+            ).strip()
+            if not appointment_id or not take_order_id or final_payment_method not in {
+                'Cash', 'Card', 'Mobile Money', 'Bank Transfer', 'Other'
+            }:
+                return {
+                    'success': False,
+                    'error': 'Appointment settlement details are invalid.',
+                }
+            try:
+                from appointments.models import Appointment
+
+                appointment = Appointment.objects.select_related('customer', 'take_order').filter(
+                    id=appointment_id,
+                    business=business,
+                    branch=branch,
+                ).first()
+            except Exception:
+                appointment = None
+            if not appointment:
+                return {'success': False, 'error': 'Appointment was not found for this branch.'}
+            if str(appointment.take_order_id or '') != take_order_id:
+                return {'success': False, 'error': 'Appointment service order does not match this checkout.'}
+            if appointment.status in {'cancelled', 'no_show'}:
+                return {'success': False, 'error': 'Cancelled or no-show appointments cannot be settled.'}
+            if not appointment.deposits.exists():
+                return {'success': False, 'error': 'This appointment has no recorded deposit to settle.'}
+            appointment_settlement = {
+                'appointment_id': str(appointment.id),
+                'take_order_id': str(appointment.take_order_id),
+                'final_payment_method': final_payment_method,
+            }
+            data = {
+                **data,
+                'customer': str(appointment.customer_id),
+                'customer_id': str(appointment.customer_id),
+                'customerId': str(appointment.customer_id),
+                'customer_name': appointment.customer.name,
+                'customer_phone': appointment.customer.phone,
+                'customer_tin': appointment.customer.customer_tin,
+            }
         has_customer_details = any(
             str(data.get(field) or '').strip()
             for field in (
@@ -1201,7 +1277,11 @@ def handle_create_order(
                 }
 
             if customer_required_payment and not customer_for_order:
-                required_label = 'On Account' if payment_method_is_credit else 'Laybuy'
+                required_label = (
+                    'On Account' if payment_method_is_credit
+                    else 'Laybuy' if payment_method_is_laybuy
+                    else 'Appointment settlement'
+                )
                 return {
                     'success': False,
                     'error': f'{required_label} sales require a customer account or customer name/phone.',
@@ -1238,6 +1318,7 @@ def handle_create_order(
             'order_type': data.get('orderType', 'sale'),
             'status': data.get('status', 'New'),
             'payment_method': payment_method,
+            'appointment_settlement': appointment_settlement,
             'is_takeaway': bool(data.get('is_takeaway') or data.get('isTakeaway')),
             'pump_name': data.get('pump_name') or data.get('pumpName'),
             'customer_name': data.get('customer_name') or data.get('customerName') or getattr(customer_for_order, 'name', None),
@@ -1283,7 +1364,7 @@ def handle_create_order(
         # This ensures accurate tax when items have different tax rates (mixed tax scenario)
         order_data['vat_amount'] = _quantize_money(vat_amount)
         order_data['net_amount'] = _quantize_money(subtotal)
-        order_data['gross_amount'] = _quantize_money(total)
+        order_data['gross_amount'] = gross_amount
         order_data['charges_amount'] = charges_amount
         order_data['charges_snapshot'] = charges_snapshot
         
@@ -1603,6 +1684,20 @@ def handle_create_order(
                     'error': _validation_error_message(account_exc),
                 }
 
+        if str(order.payment_method or '').strip().lower() == 'appointment settlement':
+            try:
+                from appointments.services import settle_appointment_order
+
+                settle_appointment_order(order, created_by=user)
+                order.refresh_from_db()
+            except Exception as settlement_exc:
+                print(f"[Sync Sessions] Appointment settlement failed for order {order_id}: {settlement_exc}")
+                order.delete()
+                return {
+                    'success': False,
+                    'error': _validation_error_message(settlement_exc),
+                }
+
         if str(order.payment_method or '').strip().lower() == 'laybuy':
             try:
                 laybuy_deposit = _extract_laybuy_deposit(data)
@@ -1627,14 +1722,9 @@ def handle_create_order(
                     'error': _validation_error_message(laybuy_exc),
                 }
 
-        tip_amount = _quantize_money(_to_decimal(data.get('tip'), Decimal('0')))
         if tip_amount > 0 and order.session_id:
             order.session.total_tips = (order.session.total_tips or Decimal('0.00')) + tip_amount
-            if str(order.payment_method or '').strip().lower() == 'cash':
-                order.session.expected_cash = (order.session.expected_cash or Decimal('0.00')) + tip_amount
-                order.session.save(update_fields=['total_tips', 'expected_cash', 'updated_at'])
-            else:
-                order.session.save(update_fields=['total_tips', 'updated_at'])
+            order.session.save(update_fields=['total_tips', 'updated_at'])
 
         # Decrement inventory stock for completed sales using FIFO. Laybuy is
         # reserved now and consumed when the customer collects the goods.
@@ -2069,7 +2159,7 @@ def decrement_inventory_for_order(order, branch, business):
                     f"[Sync Sessions] Recipe target {ingredient_id}: +{decrement_amount} "
                     f"(sold {sold_quantity} x {ingredient_per_unit})"
                 )
-        else:
+        elif not getattr(sold_inventory_item, 'is_service', False):
             register_target(
                 target_reference=sold_item_id,
                 target_name=order_item.name,

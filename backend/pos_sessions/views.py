@@ -296,6 +296,15 @@ class OrderViewSet(viewsets.ModelViewSet):
                     except DjangoValidationError as account_err:
                         raise ValidationError({'error': _django_validation_message(account_err)})
 
+                if str(order.payment_method or '').strip().lower() == 'appointment settlement':
+                    try:
+                        from appointments.services import settle_appointment_order
+
+                        settle_appointment_order(order, created_by=request.user)
+                        order.refresh_from_db()
+                    except DjangoValidationError as settlement_err:
+                        raise ValidationError({'error': _django_validation_message(settlement_err)})
+
                 if str(order.payment_method or '').strip().lower() == 'laybuy':
                     try:
                         from business.customer_accounts import create_laybuy_for_order

@@ -1,4 +1,5 @@
 import type { InventoryItem } from '@/lib/db';
+import { isSalonServiceBusinessType, type BusinessType } from '@/lib/inventory/config';
 
 export type KitchenInventoryLookup = {
   byId: Map<string, InventoryItem>;
@@ -75,6 +76,7 @@ export const normalizeKitchenInventoryItem = (item: any): InventoryItem => ({
   itemType: item?.itemType ?? item?.item_type ?? 'sellable',
   branchId: String(item?.branchId ?? item?.branch_id ?? item?.branch ?? '').trim(),
   isProduced: toBoolean(item?.isProduced ?? item?.is_produced),
+  isService: toBoolean(item?.isService ?? item?.is_service),
   showInCustomSalesSection: toBoolean(item?.showInCustomSalesSection ?? item?.show_in_custom_sales_section),
   show_in_custom_sales_section: toBoolean(item?.showInCustomSalesSection ?? item?.show_in_custom_sales_section),
   recipe: normalizeRecipe(item?.recipe),
@@ -133,11 +135,13 @@ export const isKitchenPrepOrderItem = (
   if (inventoryItem) {
     return inventoryItem.itemType === 'sellable' && (
       Boolean(inventoryItem.isProduced) ||
+      Boolean(inventoryItem.isService) ||
       normalizeRecipe(inventoryItem.recipe).length > 0
     );
   }
 
-  return toBoolean(orderItem?.isProduced ?? orderItem?.is_produced) ||
+  return toBoolean(orderItem?.isService ?? orderItem?.is_service) ||
+    toBoolean(orderItem?.isProduced ?? orderItem?.is_produced) ||
     normalizeRecipe(orderItem?.recipe).length > 0;
 };
 
@@ -145,6 +149,23 @@ export const getKitchenOrderItems = <T extends { items?: any[] }>(
   order: T,
   lookup: KitchenInventoryLookup
 ): any[] => (order.items || []).filter((item) => isKitchenPrepOrderItem(item, lookup));
+
+/**
+ * Salons use the established restaurant order lifecycle, but every sale line
+ * belongs on the service docket. Takeaway packaging is an internal charge,
+ * not work for the stylist, so it remains off the docket.
+ */
+export const getOrderFulfillmentItems = <T extends { items?: any[] }>(
+  order: T,
+  lookup: KitchenInventoryLookup,
+  businessType?: BusinessType | string | null,
+): any[] => {
+  if (isSalonServiceBusinessType(businessType)) {
+    return (order.items || []).filter((item) => !toBoolean(item?.isTakeawayPackaging ?? item?.is_takeaway_packaging));
+  }
+
+  return getKitchenOrderItems(order, lookup);
+};
 
 export const getNonKitchenOrderItems = <T extends { items?: any[] }>(
   order: T,
@@ -177,6 +198,12 @@ export const orderHasKitchenPrepItems = <T extends { items?: any[] }>(
   order: T,
   lookup: KitchenInventoryLookup
 ): boolean => getKitchenOrderItems(order, lookup).length > 0;
+
+export const orderHasFulfillmentItems = <T extends { items?: any[] }>(
+  order: T,
+  lookup: KitchenInventoryLookup,
+  businessType?: BusinessType | string | null,
+): boolean => getOrderFulfillmentItems(order, lookup, businessType).length > 0;
 
 export const getKitchenRouteStatus = <T extends { items?: any[] }>(
   order: T,

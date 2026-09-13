@@ -596,6 +596,26 @@ export const Receipt2 = ({
     (order as any).total ?? (order as any).grossAmount ?? (order as any).gross_amount,
     normalizedOrderNet + normalizedOrderVat
   );
+  const paymentMethodDisplay = toTrimmedString((order as any).paymentMethod ?? (order as any).payment_method);
+  const isAppointmentSettlement = paymentMethodDisplay.toLowerCase() === 'appointment settlement';
+  const rawPaymentBreakdown = (order as any).paymentBreakdown ?? (order as any).payment_breakdown;
+  const paymentBreakdown = Array.isArray(rawPaymentBreakdown) ? rawPaymentBreakdown : [];
+  const appointmentDepositPaid = paymentBreakdown
+    .filter((entry: any) => toTrimmedString(entry?.source).toLowerCase() === 'appointment_deposit')
+    .reduce((sum: number, entry: any) => sum + toFiniteNumber(entry?.amount, 0), 0);
+  const appointmentCheckoutPayment = paymentBreakdown.find(
+    (entry: any) => toTrimmedString(entry?.source).toLowerCase() === 'checkout'
+  ) as Record<string, unknown> | undefined;
+  const appointmentFinalPaymentMethod = toTrimmedString(
+    appointmentCheckoutPayment?.payment_method ??
+    appointmentCheckoutPayment?.paymentMethod ??
+    (order as any).appointmentSettlement?.finalPaymentMethod ??
+    (order as any).appointment_settlement?.final_payment_method
+  );
+  const appointmentBalanceCollected = toFiniteNumber(
+    appointmentCheckoutPayment?.amount,
+    Math.max(0, normalizedOrderTotal - appointmentDepositPaid)
+  );
   const tipAmount = Math.max(0, toFiniteNumber((order as any).tip, 0));
   const fallbackTaxRate = toFiniteNumber(
     (order as any).taxRateValue ?? (order as any).tax_rate_value,
@@ -994,12 +1014,24 @@ export const Receipt2 = ({
        
 
         <div className="receipt2-rule">{dotRule}</div>
-        <LegalRow left="TOTAL" right={formatAmount(normalizedOrderTotal)} strong />
+        <LegalRow left={isAppointmentSettlement ? 'SERVICE TOTAL' : 'TOTAL'} right={formatAmount(normalizedOrderTotal)} strong />
         {tipAmount > 0 && (
           <LegalRow left="TIP" right={formatAmount(tipAmount)} />
         )}
-        <LegalRow left="AMOUNT TENDERED" right={formatAmount(amountTendered)} />
-        <LegalRow left="CHANGE" right={formatAmount(changeAmount)} />
+        {isAppointmentSettlement ? (
+          <>
+            <LegalRow left="DEPOSIT ALREADY PAID" right={`-${formatAmount(appointmentDepositPaid)}`} />
+            <LegalRow left="BALANCE COLLECTED" right={formatAmount(appointmentBalanceCollected)} strong />
+            <LegalRow left="FINAL PAYMENT METHOD" right={appointmentFinalPaymentMethod || 'N/A'} />
+            {changeAmount > 0 && <LegalRow left="CHANGE" right={formatAmount(changeAmount)} />}
+          </>
+        ) : (
+          <>
+            <LegalRow left="PAYMENT METHOD" right={paymentMethodDisplay || 'N/A'} />
+            <LegalRow left="AMOUNT TENDERED" right={formatAmount(amountTendered)} />
+            <LegalRow left="CHANGE" right={formatAmount(changeAmount)} />
+          </>
+        )}
       
      
 

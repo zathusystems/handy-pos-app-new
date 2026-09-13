@@ -20,6 +20,7 @@ import {
   GlassWater,
   Apple,
   Beef,
+  Scissors,
   Sparkles,
   Eye,
   Hammer,
@@ -72,10 +73,13 @@ const statusBadgeVariant = {
   'Out of Stock': 'destructive',
 } as const;
 
-const isProducedInHouseSellable = (item: InventoryItem): boolean =>
-    item.itemType === 'sellable' && Boolean(item.isProduced);
+const isServiceItem = (item: InventoryItem): boolean =>
+    item.itemType === 'sellable' && Boolean(item.isService ?? item.is_service);
 
-type InventoryKindFilter = 'all' | 'produced' | 'ingredients' | 'sellables';
+const isNonStockTrackedSellable = (item: InventoryItem): boolean =>
+    item.itemType === 'sellable' && (Boolean(item.isProduced) || isServiceItem(item));
+
+type InventoryKindFilter = 'all' | 'produced' | 'ingredients' | 'sellables' | 'services';
 
 const toCsvBoolean = (value: boolean | undefined): string => (value ? 'true' : 'false');
 const toSafeNumber = (value: unknown): number => {
@@ -215,15 +219,29 @@ export function InventoryTab({
             all: items.length,
             produced: items.filter((item) => item.itemType === 'sellable' && Boolean(item.isProduced)).length,
             ingredients: items.filter((item) => item.itemType === 'ingredient').length,
-            sellables: items.filter((item) => item.itemType === 'sellable' && !item.isProduced).length,
+            services: items.filter(isServiceItem).length,
+            sellables: items.filter((item) => item.itemType === 'sellable' && !item.isProduced && !isServiceItem(item)).length,
         };
 
-        return [
+        const filters = [
             { value: 'all' as const, label: 'All', count: counts.all },
-            { value: 'produced' as const, label: currentBusinessType === 'Bar & Liquor' ? 'Cocktails/Produced' : 'Meals/Produced', count: counts.produced },
-            { value: 'ingredients' as const, label: 'Ingredients', count: counts.ingredients },
+            ...(currentBusinessType === 'Beauty Salon and Spa'
+                ? [{ value: 'services' as const, label: 'Services', count: counts.services }]
+                : []),
+            ...(currentBusinessType === 'Restaurant' || currentBusinessType === 'Bar & Liquor'
+                ? [
+                    {
+                        value: 'produced' as const,
+                        label: currentBusinessType === 'Bar & Liquor' ? 'Cocktails/Produced' : 'Meals/Produced',
+                        count: counts.produced,
+                    },
+                    { value: 'ingredients' as const, label: 'Ingredients', count: counts.ingredients },
+                ]
+                : []),
             { value: 'sellables' as const, label: 'Sellables', count: counts.sellables },
         ];
+
+        return filters;
     }, [currentBusinessType, inventoryData]);
     const filteredInventoryData = React.useMemo(() => {
         const byKind = (inventoryData || []).filter((item) => {
@@ -233,8 +251,11 @@ export function InventoryTab({
             if (kindFilter === 'ingredients') {
                 return item.itemType === 'ingredient';
             }
+            if (kindFilter === 'services') {
+                return isServiceItem(item);
+            }
             if (kindFilter === 'sellables') {
-                return item.itemType === 'sellable' && !item.isProduced;
+                return item.itemType === 'sellable' && !item.isProduced && !isServiceItem(item);
             }
             return true;
         });
@@ -381,6 +402,9 @@ export function InventoryTab({
     const renderIcon = (item: InventoryItem) => {
         // For sellable items, use business-type-specific icons
         if (item.itemType === 'sellable') {
+            if (isServiceItem(item)) {
+                return <Scissors className="h-6 w-6 text-muted-foreground" data-ai-hint="salon service" />;
+            }
             switch (currentBusinessType) {
             case 'Pharmacy': return <Pill className="h-6 w-6 text-muted-foreground" data-ai-hint="pharmacy medicine" />;
             case 'Restaurant': return <Utensils className="h-6 w-6 text-muted-foreground" data-ai-hint="restaurant food" />;
@@ -445,7 +469,7 @@ export function InventoryTab({
         const cost = isSellable && estimatedRecipeCost > 0
             ? estimatedRecipeCost
             : toSafeNumber(item.cost);
-        const isRecipeManaged = isProducedInHouseSellable(item);
+        const isRecipeManaged = isNonStockTrackedSellable(item);
         const displayStatus = isRecipeManaged ? undefined : item.status;
         const displayValue = getDisplayValue(item);
         const formattedStockUnits = formatInventoryQuantity(item.stockUnits, {
@@ -482,7 +506,7 @@ export function InventoryTab({
                 </TableCell>
                 <TableCell>
                     {isRecipeManaged ? (
-                        <Badge variant="outline">Recipe managed</Badge>
+                        <Badge variant="outline">{isServiceItem(item) ? 'Service' : 'Recipe managed'}</Badge>
                     ) : (
                         displayStatus && (
                             <Badge variant={statusBadgeVariant[displayStatus]}>
@@ -496,9 +520,11 @@ export function InventoryTab({
                     {isSellable ? `${currencySymbol}${(Number(item.price) || 0).toFixed(2)}` : formattedStockUnits}
                 </TableCell>
                 <TableCell className="text-muted-foreground">{item.unitType || 'N/A'}</TableCell>
-                <TableCell>{item.isProduced ? 'In-house' : (item.supplier || 'N/A')}</TableCell>
+                <TableCell>{isServiceItem(item) ? 'Service' : (item.isProduced ? 'In-house' : (item.supplier || 'N/A'))}</TableCell>
                 <TableCell className="text-right">
-                    {portionQuantityDisplay ? (
+                    {isServiceItem(item) ? (
+                        <span className="text-sm text-muted-foreground">Not stock tracked</span>
+                    ) : portionQuantityDisplay ? (
                         <div className="text-sm">
                             <div className="font-semibold">{portionQuantityDisplay.wholeUnitsText}</div>
                             <div className="text-xs text-muted-foreground">
@@ -538,7 +564,7 @@ export function InventoryTab({
         const cost = isSellable && estimatedRecipeCost > 0
             ? estimatedRecipeCost
             : toSafeNumber(item.cost);
-        const isRecipeManaged = isProducedInHouseSellable(item);
+        const isRecipeManaged = isNonStockTrackedSellable(item);
         const displayStatus = isRecipeManaged ? undefined : item.status;
         const displayValue = getDisplayValue(item);
         const formattedStockUnits = formatInventoryQuantity(item.stockUnits, {
@@ -577,7 +603,7 @@ export function InventoryTab({
                                 )}
                                 {isRecipeManaged ? (
                                     <Badge variant="outline" className="w-fit">
-                                        Recipe managed
+                                        {isServiceItem(item) ? 'Service' : 'Recipe managed'}
                                     </Badge>
                                 ) : displayStatus && (
                                     <Badge variant={statusBadgeVariant[displayStatus]} className="w-fit">
@@ -616,7 +642,9 @@ export function InventoryTab({
                                 </div>
                                 <div>
                                     <p className="text-muted-foreground">Remaining</p>
-                                    {portionQuantityDisplay ? (
+                                    {isServiceItem(item) ? (
+                                        <p className="font-medium">Not stock tracked</p>
+                                    ) : portionQuantityDisplay ? (
                                         <>
                                             <p className="font-medium">{portionQuantityDisplay.wholeUnitsText}</p>
                                             <p className="text-xs text-muted-foreground mt-1">
@@ -667,7 +695,7 @@ export function InventoryTab({
         const cost = isSellable && estimatedRecipeCost > 0
             ? estimatedRecipeCost
             : toSafeNumber(item.cost);
-        const isRecipeManaged = isProducedInHouseSellable(item);
+        const isRecipeManaged = isNonStockTrackedSellable(item);
         const displayStatus = isRecipeManaged ? undefined : item.status;
         const displayValue = getDisplayValue(item);
         const formattedStockUnits = formatInventoryQuantity(item.stockUnits, {
@@ -686,7 +714,9 @@ export function InventoryTab({
             ? `${currencySymbol}${(Number(item.price) || 0).toFixed(2)}`
             : `${formattedStockUnits} ${item.unitType || 'unit'}`;
         const secondaryAmount = isSellable
-            ? portionQuantityDisplay
+            ? isServiceItem(item)
+                ? 'Service'
+                : portionQuantityDisplay
                 ? portionQuantityDisplay.wholeUnitsText
                 : `${formattedStockUnits} ${item.unitType || 'unit'}`
             : `${currencySymbol}${toSafeNumber(displayValue).toFixed(2)}`;
@@ -731,7 +761,7 @@ export function InventoryTab({
                             )}
                             {isRecipeManaged ? (
                                 <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                                    Recipe managed
+                                    {isServiceItem(item) ? 'Service' : 'Recipe managed'}
                                 </Badge>
                             ) : displayStatus && (
                                 <Badge variant={statusBadgeVariant[displayStatus]} className="h-5 px-1.5 text-[10px]">

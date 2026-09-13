@@ -6,7 +6,6 @@ Handles synchronization of stock transfers between frontend and backend
 from .models import InventoryItem, StockTransfer
 from business.models import Business, Branch
 
-
 # ============================================================================
 # STOCK TRANSFER HANDLERS
 # ============================================================================
@@ -98,6 +97,7 @@ def handle_create_stock_transfer(transfer_id, data, business, branch_id):
                     'barcode': inventory_item.barcode,
                     'is_recipe_ingredient': inventory_item.is_recipe_ingredient,
                     'is_produced': inventory_item.is_produced,
+                    'is_service': inventory_item.is_service,
                     'is_sold_in_portions': inventory_item.is_sold_in_portions,
                     'show_in_custom_sales_section': inventory_item.show_in_custom_sales_section,
                     'portion_name': inventory_item.portion_name,

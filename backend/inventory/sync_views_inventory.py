@@ -48,13 +48,15 @@ def _parse_bool(value, default=False):
             return False
     return default
 
+def _is_recipe_managed_item(item_type, is_produced, is_service=False):
+    return (
+        str(item_type or '').strip().lower() == 'sellable'
+        and (bool(is_produced) or bool(is_service))
+    )
 
-def _is_recipe_managed_item(item_type, is_produced):
-    return str(item_type or '').strip().lower() == 'sellable' and bool(is_produced)
 
-
-def _normalize_stock_status(status, item_type, is_produced):
-    if _is_recipe_managed_item(item_type, is_produced):
+def _normalize_stock_status(status, item_type, is_produced, is_service=False):
+    if _is_recipe_managed_item(item_type, is_produced, is_service):
         return 'In Stock'
     return status if status in VALID_STOCK_STATUSES else 'In Stock'
 
@@ -62,9 +64,11 @@ def _normalize_stock_status(status, item_type, is_produced):
 def _normalize_inventory_flags(item_data):
     item_type = str(item_data.get('item_type') or '').strip().lower()
     is_produced = bool(item_data.get('is_produced'))
+    is_service = bool(item_data.get('is_service'))
 
     if item_type != 'sellable':
         item_data['is_produced'] = False
+        item_data['is_service'] = False
         item_data['is_variable_price'] = False
         item_data['is_sold_in_portions'] = False
         item_data['portion_name'] = None
@@ -73,7 +77,9 @@ def _normalize_inventory_flags(item_data):
         item_data['show_in_custom_sales_section'] = False
         return item_data
 
-    if is_produced:
+    if is_produced or is_service:
+        if is_service:
+            item_data['is_produced'] = False
         item_data['is_variable_price'] = False
         item_data['is_sold_in_portions'] = False
         item_data['portion_name'] = None
@@ -165,6 +171,10 @@ def handle_create_inventory_item(item_id, data, business, branch_id):
         if is_produced_raw is None:
             is_produced_raw = data.get('isProduced', False)
 
+        is_service_raw = data.get('is_service')
+        if is_service_raw is None:
+            is_service_raw = data.get('isService', False)
+
         on_menu_raw = data.get('on_menu')
         if on_menu_raw is None:
             on_menu_raw = data.get('onMenu', False)
@@ -215,6 +225,7 @@ def handle_create_inventory_item(item_id, data, business, branch_id):
             'is_variable_price': _parse_bool(is_variable_price_raw, False),
             'is_fuel': _parse_bool(is_fuel_raw, False),
             'is_produced': _parse_bool(is_produced_raw, False),
+            'is_service': _parse_bool(is_service_raw, False),
             'on_menu': _parse_bool(on_menu_raw, False),
             'is_sold_in_portions': _parse_bool(is_sold_in_portions_raw, False),
             'show_in_custom_sales_section': _parse_bool(show_in_custom_sales_section_raw, False),
@@ -233,6 +244,7 @@ def handle_create_inventory_item(item_id, data, business, branch_id):
             item_data.get('status'),
             item_data.get('item_type'),
             item_data.get('is_produced'),
+            item_data.get('is_service'),
         )
 
         product_code = item_data.get('product_code')
@@ -384,6 +396,11 @@ def handle_update_inventory_item(item_id, data, business, branch_id):
                 data.get('is_produced', data.get('isProduced')),
                 item.is_produced
             )
+        if 'is_service' in data or 'isService' in data:
+            item.is_service = _parse_bool(
+                data.get('is_service', data.get('isService')),
+                item.is_service
+            )
         if 'on_menu' in data or 'onMenu' in data:
             item.on_menu = _parse_bool(
                 data.get('on_menu', data.get('onMenu')),
@@ -437,20 +454,28 @@ def handle_update_inventory_item(item_id, data, business, branch_id):
 
         if item.item_type != 'sellable':
             item.is_produced = False
+            item.is_service = False
             item.is_variable_price = False
             item.is_sold_in_portions = False
             item.portion_name = None
             item.portions_per_unit = None
             item.portion_price = None
             item.show_in_custom_sales_section = False
-        elif item.is_produced:
+        elif item.is_produced or item.is_service:
+            if item.is_service:
+                item.is_produced = False
             item.is_variable_price = False
             item.is_sold_in_portions = False
             item.portion_name = None
             item.portions_per_unit = None
             item.portion_price = None
 
-        item.status = _normalize_stock_status(item.status, item.item_type, item.is_produced)
+        item.status = _normalize_stock_status(
+            item.status,
+            item.item_type,
+            item.is_produced,
+            item.is_service,
+        )
         
         try:
             item.save()

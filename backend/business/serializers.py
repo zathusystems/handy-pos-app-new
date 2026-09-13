@@ -37,7 +37,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             'id', 'business', 'branch', 'branch_name', 'name', 'email', 'phone', 'address',
             'notes', 'is_active', 'account_enabled', 'credit_limit', 'current_balance',
             'available_credit', 'has_credit_limit',
-            'customer_tin', 'vat_registered', 'created_at', 'updated_at'
+            'customer_tin', 'vat_registered', 'salon_preferences', 'salon_care_notes',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'business', 'current_balance', 'available_credit', 'has_credit_limit',
@@ -59,7 +60,7 @@ class CustomerCreateSerializer(serializers.ModelSerializer):
         fields = [
             'branch', 'name', 'email', 'phone', 'address', 'notes',
             'is_active', 'account_enabled', 'credit_limit',
-            'customer_tin', 'vat_registered'
+            'customer_tin', 'vat_registered', 'salon_preferences', 'salon_care_notes'
         ]
 
 
@@ -600,7 +601,6 @@ class BusinessChargeCreateUpdateSerializer(serializers.ModelSerializer):
                 'minimum_sale_amount': 'Enter an amount greater than zero for this rule.'
             })
         return attrs
-
 
 # ============================================================================
 # BUSINESS SETTINGS SERIALIZERS (Enhanced for MRA EIS)

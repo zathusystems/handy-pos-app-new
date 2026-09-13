@@ -348,6 +348,7 @@ class DashboardViewSet(viewsets.ViewSet):
         laybuy_by_order_id = self._build_laybuy_by_order_id(
             orders.filter(payment_method='Laybuy').values_list('id', flat=True)
         )
+        appointment_settlement_order_ids = []
         
         for order in orders:
             total_sales += order.total
@@ -363,6 +364,8 @@ class DashboardViewSet(viewsets.ViewSet):
             payment_method = (order.payment_method or '').strip()
             if payment_method == 'Laybuy':
                 self._apply_laybuy_to_payment_totals(payment_totals, order, laybuy_by_order_id)
+            elif payment_method == 'Appointment Settlement':
+                appointment_settlement_order_ids.append(str(order.id))
             elif payment_method in payment_totals:
                 payment_totals[payment_method] += order.total
             else:
@@ -391,10 +394,28 @@ class DashboardViewSet(viewsets.ViewSet):
                         'revenue': Decimal('0.00'),
                         'profit': Decimal('0.00'),
                     }
-                
+
                 product_sales[item.inventory_item_id]['unitsSold'] += int(item.quantity)
                 product_sales[item.inventory_item_id]['revenue'] += price * item.quantity
                 product_sales[item.inventory_item_id]['profit'] += (price - cost) * item.quantity
+
+        if appointment_settlement_order_ids:
+            appointment_payment_totals = (
+                CustomerAccountTransaction.objects
+                .filter(
+                    order_id__in=appointment_settlement_order_ids,
+                    entry_type='payment',
+                    direction='credit',
+                )
+                .values('payment_method')
+                .annotate(total=Sum('amount'))
+            )
+            for payment_total in appointment_payment_totals:
+                self._add_collection_amount(
+                    payment_totals,
+                    payment_total.get('payment_method'),
+                    payment_total.get('total') or Decimal('0.00'),
+                )
         
         gross_profit = total_sales_before_tax - total_cogs
         avg_sale_value = total_sales / total_transactions if total_transactions > 0 else Decimal('0.00')
@@ -620,7 +641,7 @@ class DashboardViewSet(viewsets.ViewSet):
                 # Normalize payment method (strip whitespace, handle case sensitivity)
                 pm = str(order.payment_method).strip() if order.payment_method else 'Cash'
                 
-                if pm == 'Laybuy':
+                if pm in {'Laybuy', 'Appointment Settlement'}:
                     continue
                 if pm in session_payment_totals:
                     session_payment_totals[pm] += order.total

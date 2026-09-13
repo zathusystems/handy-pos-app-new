@@ -322,6 +322,7 @@ def apply_available_prepaid_credit(customer, created_by=None):
                 direction='credit',
                 invoice_id__isnull=True,
                 order_id__isnull=True,
+                appointment_deposit__isnull=True,
             )
             .order_by('created_at', 'id')
         )
@@ -416,12 +417,21 @@ def _update_account_invoice_link(order, invoice, account_tx=None):
         account_tx.save(update_fields=['invoice_id', 'updated_at'])
 
 
-def ensure_invoice_for_account_order(order, account_tx=None, created_by=None):
+def ensure_invoice_for_account_order(
+    order,
+    account_tx=None,
+    created_by=None,
+    *,
+    allow_appointment_settlement=False,
+):
     """
     Ensure an on-account POS order has a matching customer invoice.
     Idempotent across live saves, offline sync retries, and invoice-origin orders.
     """
-    if _clean_text(getattr(order, 'payment_method', '')).lower() != 'on account':
+    payment_method = _clean_text(getattr(order, 'payment_method', '')).lower()
+    if payment_method != 'on account' and not (
+        allow_appointment_settlement and payment_method == 'appointment settlement'
+    ):
         return None
 
     existing_invoice = None
@@ -489,7 +499,11 @@ def ensure_invoice_for_account_order(order, account_tx=None, created_by=None):
             total=_money(getattr(order, 'total', None) or getattr(order, 'gross_amount', None)),
             issue_date=issue_date,
             due_date=due_date,
-            notes=f"POS on-account sale for order #{order.order_number}",
+            notes=(
+                f"Appointment settlement for order #{order.order_number}"
+                if payment_method == 'appointment settlement'
+                else f"POS on-account sale for order #{order.order_number}"
+            ),
             related_order_id=str(order.id),
         )
 
@@ -515,7 +529,7 @@ def ensure_invoice_for_account_order(order, account_tx=None, created_by=None):
                 mra_product_code=_clean_text(getattr(item, 'mra_product_code', '')),
             )
 
-        if order_items:
+        if order_items and payment_method != 'appointment settlement':
             subtotal = sum(
                 (
                     _money(getattr(item, 'subtotal', None))
@@ -559,9 +573,18 @@ def ensure_invoice_for_account_order(order, account_tx=None, created_by=None):
     return invoice
 
 
-def record_credit_sale_for_order(order, created_by=None):
+def record_credit_sale_for_order(
+    order,
+    created_by=None,
+    *,
+    allow_appointment_settlement=False,
+    apply_prepaid_credit=True,
+):
     payment_method = _clean_text(getattr(order, 'payment_method', ''))
-    if payment_method.lower() != 'on account':
+    is_appointment_settlement = (
+        allow_appointment_settlement and payment_method.lower() == 'appointment settlement'
+    )
+    if payment_method.lower() != 'on account' and not is_appointment_settlement:
         return None
 
     existing = CustomerAccountTransaction.objects.filter(
@@ -570,8 +593,14 @@ def record_credit_sale_for_order(order, created_by=None):
         entry_type='credit_sale',
     ).first()
     if existing:
-        ensure_invoice_for_account_order(order, account_tx=existing, created_by=created_by)
-        apply_available_prepaid_credit(existing.customer, created_by=created_by)
+        ensure_invoice_for_account_order(
+            order,
+            account_tx=existing,
+            created_by=created_by,
+            allow_appointment_settlement=is_appointment_settlement,
+        )
+        if apply_prepaid_credit:
+            apply_available_prepaid_credit(existing.customer, created_by=created_by)
         return existing
 
     customer = getattr(order, 'customer', None)
@@ -622,13 +651,23 @@ def record_credit_sale_for_order(order, created_by=None):
         branch=order.branch,
         session=order.session,
         order_id=str(order.id),
-        payment_method='On Account',
-        notes=f"Credit sale for order #{order.order_number}",
+        payment_method='Appointment Settlement' if is_appointment_settlement else 'On Account',
+        notes=(
+            f"Appointment settlement for order #{order.order_number}"
+            if is_appointment_settlement
+            else f"Credit sale for order #{order.order_number}"
+        ),
         created_by=created_by,
     )
 
-    ensure_invoice_for_account_order(order, account_tx=account_tx, created_by=created_by)
-    apply_available_prepaid_credit(customer, created_by=created_by)
+    ensure_invoice_for_account_order(
+        order,
+        account_tx=account_tx,
+        created_by=created_by,
+        allow_appointment_settlement=is_appointment_settlement,
+    )
+    if apply_prepaid_credit:
+        apply_available_prepaid_credit(customer, created_by=created_by)
     return account_tx
 
 

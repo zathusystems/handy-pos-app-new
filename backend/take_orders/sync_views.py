@@ -6,7 +6,11 @@ from django.utils import timezone
 from .models import TakeOrder, TakeOrderItem
 from .serializers import TakeOrderSerializer
 from business.models import Branch
-from .session_access import get_active_staff_session, user_can_process_take_order_payment
+from .session_access import (
+    get_active_staff_session,
+    user_can_cancel_take_order,
+    user_can_process_take_order_payment,
+)
 
 
 TAKE_ORDER_SYNC_ALIASES = {
@@ -18,6 +22,7 @@ TAKE_ORDER_SYNC_ALIASES = {
     'tableNumber': 'table_number',
     'specialInstructions': 'special_instructions',
     'cancellationReason': 'cancellation_reason',
+    'cancelledAt': 'cancelled_at',
     'isTakeaway': 'is_takeaway',
     'createdAt': 'created_at',
     'updatedAt': 'updated_at',
@@ -36,6 +41,12 @@ TAKE_ORDER_SYNC_READ_ONLY_FIELDS = {
     'completedByName',
     'completed_by',
     'completed_by_name',
+    'cancelledBy',
+    'cancelledByName',
+    'cancelled_by',
+    'cancelled_by_name',
+    'cancelledAt',
+    'cancelled_at',
     'session',
     'sessionId',
     'session_id',
@@ -101,6 +112,15 @@ def _apply_completion_audit(take_order, user):
         take_order.completed_by = None
 
 
+def _apply_cancellation_audit(take_order, user):
+    if take_order.status == 'Cancelled':
+        take_order.cancelled_at = take_order.cancelled_at or timezone.now()
+        take_order.cancelled_by = user
+    else:
+        take_order.cancelled_at = None
+        take_order.cancelled_by = None
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def sync_push(request):
@@ -144,6 +164,12 @@ def sync_push(request):
                 
                 if op == 'create':
                     # Create new take order
+                    if change_data.get('status') == 'Cancelled':
+                        errors.append({
+                            'id': change_id,
+                            'error': 'Orders cannot be created as cancelled. Cancel an existing order with an admin user.',
+                        })
+                        continue
                     items_data = change_data.pop('items', [])
                     take_order_data = {
                         'id': change_id,
@@ -172,7 +198,8 @@ def sync_push(request):
                     take_order_data.pop('completedBy', None)
                     take_order = TakeOrder.objects.create(**take_order_data)
                     _apply_completion_audit(take_order, request.user)
-                    take_order.save(update_fields=['completed_at', 'completed_by', 'updated_at'])
+                    _apply_cancellation_audit(take_order, request.user)
+                    take_order.save(update_fields=['completed_at', 'completed_by', 'cancelled_at', 'cancelled_by', 'updated_at'])
                     
                     # Create items if provided
                     for item_data in items_data:
@@ -190,6 +217,13 @@ def sync_push(request):
                             id=change_id,
                             branch_id=branch_id,
                         ).first()
+                        if change_data.get('status') == 'Cancelled' and not existing_take_order:
+                            errors.append({
+                                'id': change_id,
+                                'error': 'Orders cannot be created as cancelled. Cancel an existing order with an admin user.',
+                            })
+                            continue
+
                         existing_order_type = (
                             existing_take_order.order_type
                             if existing_take_order
@@ -225,10 +259,28 @@ def sync_push(request):
                         if active_session and not take_order.session_id:
                             take_order.session = active_session
                         
+                        requested_status = change_data.get('status', take_order.status)
+                        if requested_status == 'Cancelled':
+                            if not user_can_cancel_take_order(user=request.user, take_order=take_order):
+                                errors.append({
+                                    'id': change_id,
+                                    'error': 'Only admin users can cancel orders.',
+                                })
+                                continue
+                            if not str(change_data.get('cancellation_reason') or '').strip():
+                                errors.append({
+                                    'id': change_id,
+                                    'error': 'Cancellation reason is required.',
+                                })
+                                continue
+
                         # Update fields
                         for field, value in change_data.items():
-                            if field not in {'items', 'completed_by', 'completedBy'} and hasattr(take_order, field):
+                            if field not in {'items', 'completed_by', 'completedBy', 'cancelled_by', 'cancelledBy'} and hasattr(take_order, field):
                                 setattr(take_order, field, value)
+
+                        if take_order.status != 'Cancelled':
+                            take_order.cancellation_reason = ''
                         
                         # If order_number wasn't provided and this is a new order, generate it
                         if created and 'order_number' not in change_data:
@@ -248,7 +300,10 @@ def sync_push(request):
                             continue
                         
                         _apply_completion_audit(take_order, request.user)
+                        _apply_cancellation_audit(take_order, request.user)
                         take_order.save()
+                        from appointments.services import sync_appointment_from_take_order
+                        sync_appointment_from_take_order(take_order)
                         
                         # Update items if provided
                         if 'items' in change_data:

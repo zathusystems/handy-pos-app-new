@@ -5,6 +5,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useForm } from 'react-hook-form';
 import {
   BookUser,
+  CalendarDays,
   CheckCircle2,
   CreditCard,
   Edit,
@@ -14,6 +15,8 @@ import {
   PlusCircle,
   ReceiptText,
   ShoppingBasket,
+  Scissors,
+  ShieldAlert,
   Trash2,
   Wallet,
 } from 'lucide-react';
@@ -23,7 +26,9 @@ import * as z from 'zod';
 import { db, type Customer, type Invoice, type Session } from '@/lib/db';
 import { authFetch } from '@/lib/auth-fetch';
 import { useCurrency } from '@/hooks/use-currency';
+import { useAuth } from '@/hooks/use-auth';
 import { toast } from '@/hooks/use-toast';
+import { isSalonServiceBusinessType } from '@/lib/inventory/config';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -80,6 +85,8 @@ const customerSchema = z.object({
   phone: z.string().optional(),
   address: z.string().optional(),
   notes: z.string().optional(),
+  salonPreferences: z.string().max(5000, 'Keep preferences under 5,000 characters.').optional(),
+  salonCareNotes: z.string().max(5000, 'Keep care notes under 5,000 characters.').optional(),
   accountEnabled: z.boolean().default(true),
   creditLimit: z.coerce.number().min(0, 'Credit limit cannot be negative').default(0),
 });
@@ -161,6 +168,28 @@ type CustomerAccountSummary = {
   laybuyBalanceDue?: number | string;
 };
 
+type SalonHistoryAppointment = {
+  id: string;
+  scheduled_start: string;
+  scheduled_end: string;
+  status: string;
+  services: Array<{ name: string; quantity: string | number }>;
+  total: string | number;
+  take_order_number?: number | null;
+};
+
+type SalonHistory = {
+  profile: {
+    salon_preferences?: string;
+    salon_care_notes?: string;
+  };
+  summary: {
+    appointment_count: number;
+    completed_count: number;
+  };
+  appointments: SalonHistoryAppointment[];
+};
+
 const normalizeBackendBranchId = (value?: string | number | null): string => {
   const normalized = String(value ?? '').trim();
   if (!normalized) return '';
@@ -210,6 +239,10 @@ const normalizeCustomerFromApi = (raw: any, fallbackBranchId: string): Customer 
     customer_tin: customerTin,
     vatRegistered,
     vat_registered: vatRegistered,
+    salonPreferences: String(raw?.salonPreferences ?? raw?.salon_preferences ?? '').trim(),
+    salon_preferences: String(raw?.salonPreferences ?? raw?.salon_preferences ?? '').trim(),
+    salonCareNotes: String(raw?.salonCareNotes ?? raw?.salon_care_notes ?? '').trim(),
+    salon_care_notes: String(raw?.salonCareNotes ?? raw?.salon_care_notes ?? '').trim(),
     createdAt: String(raw?.createdAt ?? raw?.created_at ?? new Date().toISOString()),
     updatedAt: String(raw?.updatedAt ?? raw?.updated_at ?? new Date().toISOString()),
     _dirty: false,
@@ -344,6 +377,8 @@ const customerPayload = (data: CustomerFormValues, branchId: string) => ({
   phone: data.phone || '',
   address: data.address || '',
   notes: data.notes || '',
+  salon_preferences: data.salonPreferences || '',
+  salon_care_notes: data.salonCareNotes || '',
   account_enabled: data.accountEnabled,
   credit_limit: data.creditLimit || 0,
 });
@@ -355,6 +390,8 @@ const CustomerForm = ({
   onFormSubmit: () => void;
   defaultValues?: Partial<Customer>;
 }) => {
+  const { business } = useAuth();
+  const isSalonBusiness = isSalonServiceBusinessType(business?.type);
   const [activeBranchId, setActiveBranchId] = useState('main');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -371,6 +408,8 @@ const CustomerForm = ({
       phone: defaultValues?.phone || '',
       address: defaultValues?.address || '',
       notes: defaultValues?.notes || '',
+      salonPreferences: defaultValues?.salonPreferences ?? defaultValues?.salon_preferences ?? '',
+      salonCareNotes: defaultValues?.salonCareNotes ?? defaultValues?.salon_care_notes ?? '',
       accountEnabled: defaultValues?.accountEnabled ?? true,
       creditLimit: toNumber(defaultValues?.creditLimit, 0),
     },
@@ -480,6 +519,30 @@ const CustomerForm = ({
           </FormItem>
         )} />
 
+        {isSalonBusiness && (
+          <section className="space-y-4 border-t pt-4">
+            <div>
+              <p className="text-sm font-semibold">Salon client profile</p>
+              <p className="mt-1 text-xs text-muted-foreground">Keep the details staff need before recommending or providing a service.</p>
+            </div>
+            <FormField control={form.control} name="salonPreferences" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Service preferences</FormLabel>
+                <FormControl><Textarea placeholder="Preferred treatments, colours, styles, or products" {...field} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="salonCareNotes" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Care notes</FormLabel>
+                <FormDescription>Record any reported sensitivities, allergies, or products staff should avoid.</FormDescription>
+                <FormControl><Textarea placeholder="For example: sensitive scalp; avoid strongly fragranced products" {...field} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+          </section>
+        )}
+
         <DialogFooter>
           <Button type="submit" disabled={isLoading}>
             {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -493,6 +556,8 @@ const CustomerForm = ({
 
 export default function CustomersPage() {
   const { format } = useCurrency();
+  const { business } = useAuth();
+  const isSalonBusiness = isSalonServiceBusinessType(business?.type);
   const [isFormOpen, setFormOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | undefined>(undefined);
   const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
@@ -509,6 +574,9 @@ export default function CustomersPage() {
   const [activityCustomer, setActivityCustomer] = useState<Customer | null>(null);
   const [transactions, setTransactions] = useState<CustomerAccountTransaction[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+  const [salonProfileCustomer, setSalonProfileCustomer] = useState<Customer | null>(null);
+  const [salonHistory, setSalonHistory] = useState<SalonHistory | null>(null);
+  const [isLoadingSalonHistory, setIsLoadingSalonHistory] = useState(false);
   const [accountSummary, setAccountSummary] = useState<CustomerAccountSummary | null>(null);
   const [laybuyCustomer, setLaybuyCustomer] = useState<Customer | null>(null);
   const [laybuys, setLaybuys] = useState<CustomerLaybuy[]>([]);
@@ -963,6 +1031,29 @@ export default function CustomersPage() {
     }
   };
 
+  const openSalonProfile = async (customer: Customer) => {
+    if (!isServerCustomerId(customer.id)) {
+      await removeLocalOnlyCustomer(customer);
+      return;
+    }
+    setSalonProfileCustomer(customer);
+    setSalonHistory(null);
+    setIsLoadingSalonHistory(true);
+    try {
+      const response = await authFetch.fetch<SalonHistory>(`/customers/${customer.id}/salon-history/?limit=20`);
+      setSalonHistory(response);
+    } catch (error) {
+      console.error('[Customers] Failed to load salon profile:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Could not load client profile',
+        description: error instanceof Error ? error.message : 'Please try again.',
+      });
+    } finally {
+      setIsLoadingSalonHistory(false);
+    }
+  };
+
   const resetLaybuyForm = () => {
     setNewLaybuyTotal('');
     setNewLaybuyDeposit('');
@@ -1140,24 +1231,34 @@ export default function CustomersPage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-normal">Customer Accounts</h1>
+          <h1 className="text-2xl font-bold tracking-normal">
+            {isSalonBusiness ? 'Clients' : 'Customer Accounts'}
+          </h1>
           <p className="text-muted-foreground">
-            Manage customer profiles, credit limits, balances, and account payments.
+            {isSalonBusiness
+              ? 'Manage client profiles, service preferences, and appointment history.'
+              : 'Manage customer profiles, credit limits, balances, and account payments.'}
           </p>
         </div>
         <Dialog open={isFormOpen} onOpenChange={handleFormOpenChange}>
           <DialogTrigger asChild>
             <Button>
-              <PlusCircle className="mr-2 h-4 w-4" /> Add Customer
+              <PlusCircle className="mr-2 h-4 w-4" /> {isSalonBusiness ? 'Add Client' : 'Add Customer'}
             </Button>
           </DialogTrigger>
           <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-xl">
             <DialogHeader>
-              <DialogTitle>{editingCustomer ? 'Edit Customer' : 'Add New Customer'}</DialogTitle>
+              <DialogTitle>
+                {editingCustomer
+                  ? `Edit ${isSalonBusiness ? 'Client' : 'Customer'}`
+                  : `Add New ${isSalonBusiness ? 'Client' : 'Customer'}`}
+              </DialogTitle>
               <DialogDescription>
                 {editingCustomer
-                  ? 'Update the customer profile and account settings.'
-                  : 'Create a customer account for credit sales, payments, and history.'}
+                  ? `Update the ${isSalonBusiness ? 'client' : 'customer'} profile and account settings.`
+                  : isSalonBusiness
+                    ? 'Create a client profile for appointments, service history, and payments.'
+                    : 'Create a customer account for credit sales, payments, and history.'}
               </DialogDescription>
             </DialogHeader>
             <CustomerForm
@@ -1212,9 +1313,13 @@ export default function CustomersPage() {
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <CardTitle>Customer List</CardTitle>
+              <CardTitle>{isSalonBusiness ? 'Client List' : 'Customer List'}</CardTitle>
               <CardDescription>
-                {isSyncingCustomers ? 'Refreshing customer accounts...' : 'Balances update from sales on account and payments.'}
+                {isSyncingCustomers
+                  ? `Refreshing ${isSalonBusiness ? 'clients' : 'customer accounts'}...`
+                  : isSalonBusiness
+                    ? 'Client details stay connected to appointments, service orders, and payments.'
+                    : 'Balances update from sales on account and payments.'}
               </CardDescription>
             </div>
             {isSyncingCustomers && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
@@ -1270,6 +1375,11 @@ export default function CustomersPage() {
                               <DropdownMenuItem onClick={() => void openActivityDialog(customer)}>
                                 <Eye className="mr-2 h-4 w-4" /> View Activity
                               </DropdownMenuItem>
+                              {isSalonBusiness && (
+                                <DropdownMenuItem onClick={() => void openSalonProfile(customer)}>
+                                  <Scissors className="mr-2 h-4 w-4" /> Salon Profile
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem onClick={() => void openLaybuyDialog(customer)}>
                                 <ShoppingBasket className="mr-2 h-4 w-4" /> Laybuys
                               </DropdownMenuItem>
@@ -1293,7 +1403,11 @@ export default function CustomersPage() {
                     <TableCell colSpan={6} className="h-28 text-center">
                       <div className="flex flex-col items-center justify-center space-y-3">
                         <BookUser className="h-12 w-12 text-muted-foreground/30" />
-                        <p>No customers found. Add a customer account to get started.</p>
+                        <p>
+                          {isSalonBusiness
+                            ? 'No clients found. Add a client to get started.'
+                            : 'No customers found. Add a customer account to get started.'}
+                        </p>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1737,6 +1851,115 @@ export default function CustomersPage() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(salonProfileCustomer)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSalonProfileCustomer(null);
+            setSalonHistory(null);
+            setIsLoadingSalonHistory(false);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Salon Client Profile</DialogTitle>
+            <DialogDescription>
+              {salonProfileCustomer
+                ? `${salonProfileCustomer.name}'s preferences, care notes, and recent service appointments.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingSalonHistory ? (
+            <div className="flex h-40 items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <section className="border p-4">
+                  <div className="flex items-center gap-2">
+                    <Scissors className="h-4 w-4 text-primary" />
+                    <h3 className="text-sm font-semibold">Service Preferences</h3>
+                  </div>
+                  <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+                    {salonHistory?.profile.salon_preferences || 'No service preferences recorded.'}
+                  </p>
+                </section>
+                <section className="border p-4">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="h-4 w-4 text-amber-600" />
+                    <h3 className="text-sm font-semibold">Care Notes</h3>
+                  </div>
+                  <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+                    {salonHistory?.profile.salon_care_notes || 'No care notes recorded.'}
+                  </p>
+                </section>
+              </div>
+
+              <section className="border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="h-4 w-4 text-primary" />
+                    <div>
+                      <h3 className="text-sm font-semibold">Service History</h3>
+                      <p className="text-xs text-muted-foreground">
+                        {salonHistory
+                          ? `${salonHistory.summary.completed_count} completed of ${salonHistory.summary.appointment_count} recent appointments`
+                          : 'Recent appointments'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {(salonHistory?.appointments || []).length > 0 ? (
+                    salonHistory?.appointments.map((appointment) => {
+                      const services = appointment.services || [];
+                      const statusLabel = String(appointment.status || 'booked').replace(/_/g, ' ');
+                      return (
+                        <div key={appointment.id} className="border-t pt-3 first:border-t-0 first:pt-0">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="text-sm font-medium">
+                                {new Date(appointment.scheduled_start).toLocaleDateString(undefined, {
+                                  weekday: 'short',
+                                  day: 'numeric',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(appointment.scheduled_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {appointment.take_order_number ? ` - Order ${appointment.take_order_number}` : ''}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3 sm:text-right">
+                              <Badge variant="outline" className="capitalize">{statusLabel}</Badge>
+                              <span className="text-sm font-semibold">{format(toNumber(appointment.total, 0))}</span>
+                            </div>
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {services.length > 0
+                              ? services.map((service) => `${service.name} x${service.quantity}`).join(', ')
+                              : 'No services recorded.'}
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      No appointments have been recorded for this client yet.
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

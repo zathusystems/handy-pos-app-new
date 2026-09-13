@@ -19,6 +19,8 @@ CUSTOMER_FIELD_ALIASES = {
     'isActive': 'is_active',
     'accountEnabled': 'account_enabled',
     'creditLimit': 'credit_limit',
+    'salonPreferences': 'salon_preferences',
+    'salonCareNotes': 'salon_care_notes',
 }
 
 CUSTOMER_SYNC_READ_ONLY_FIELDS = {

@@ -38,13 +38,18 @@ import {
 } from 'lucide-react';
 import { SubscriptionFeatureDisabledCard } from '@/components/subscription-feature-disabled-card';
 import { cn } from '@/lib/utils';
-import { isKitchenBusinessType, normalizeBusinessType } from '@/lib/inventory/config';
+import {
+  getOrderWorkflowCopy,
+  isOrderFulfillmentBusinessType,
+  isSalonServiceBusinessType,
+  normalizeBusinessType,
+  type BusinessType,
+} from '@/lib/inventory/config';
 import { formatQuantityWithUnit } from '@/lib/quantity-format';
 import {
   buildKitchenInventoryLookup,
-  getKitchenOrderItems,
+  getOrderFulfillmentItems,
   getKitchenRecipeForOrderItem,
-  getNonKitchenOrderItems,
   getRecipeIngredientOrderQuantity,
   type KitchenInventoryLookup,
 } from '@/lib/kitchen-order-routing';
@@ -239,7 +244,7 @@ export default function KitchenPage() {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'Failed to fetch take orders from kitchen',
+        description: 'Failed to fetch queued orders.',
       });
     } finally {
       setIsLoading(false);
@@ -293,7 +298,10 @@ export default function KitchenPage() {
       window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
       toast({
         title: 'Success',
-        description: `Order status updated to ${newStatus}`,
+        description: `Order status updated to ${getWorkflowStatusLabel(
+          newStatus as TakeOrder['status'],
+          isSalonServiceBusinessType(businessRecord?.type ?? business?.type)
+        )}`,
       });
     } catch (error: any) {
       console.error('Error updating order status:', error);
@@ -335,7 +343,10 @@ export default function KitchenPage() {
             window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
             toast({
               title: 'Success',
-              description: `Order status updated to ${newStatus}`,
+              description: `Order status updated to ${getWorkflowStatusLabel(
+                newStatus as TakeOrder['status'],
+                isSalonServiceBusinessType(businessRecord?.type ?? business?.type)
+              )}`,
             });
           }
         } catch (syncError) {
@@ -374,9 +385,14 @@ export default function KitchenPage() {
     () => buildKitchenInventoryLookup(inventoryItems),
     [inventoryItems]
   );
+  const currentBusinessType = normalizeBusinessType(businessRecord?.type ?? business?.type, 'General Retail');
+  const workflowCopy = getOrderWorkflowCopy(currentBusinessType);
+  const isSalonServiceWorkflow = isSalonServiceBusinessType(currentBusinessType);
   const kitchenOrders = React.useMemo(
-    () => takeOrders.filter((order) => getKitchenOrderItems(order, kitchenInventoryLookup).length > 0),
-    [takeOrders, kitchenInventoryLookup]
+    () => takeOrders.filter((order) => (
+      getOrderFulfillmentItems(order, kitchenInventoryLookup, currentBusinessType).length > 0
+    )),
+    [currentBusinessType, takeOrders, kitchenInventoryLookup]
   );
   const ordersByStatus = {
     'New': kitchenOrders.filter(o => o.status === 'Confirmed' || o.status === 'Sent to Kitchen'),
@@ -389,32 +405,31 @@ export default function KitchenPage() {
   const kitchenColumns = [
     {
       key: 'New' as KitchenLaneKey,
-      title: 'New Orders',
+      title: isSalonServiceWorkflow ? 'New Services' : 'New Orders',
       description: 'Waiting to be started',
       icon: ChefHat,
       iconClassName: 'text-orange-600',
-      emptyText: 'No new kitchen orders',
+      emptyText: isSalonServiceWorkflow ? 'No new services' : 'No new kitchen orders',
     },
     {
       key: 'Preparing' as KitchenLaneKey,
-      title: 'Preparing',
+      title: workflowCopy.preparingLabel,
       description: 'Currently in progress',
       icon: Clock,
       iconClassName: 'text-yellow-600',
-      emptyText: 'No orders being prepared',
+      emptyText: isSalonServiceWorkflow ? 'No services in progress' : 'No orders being prepared',
     },
     {
       key: 'Ready' as KitchenLaneKey,
-      title: 'Ready',
-      description: 'Waiting for pickup or checkout',
+      title: isSalonServiceWorkflow ? 'For Payment' : 'Ready',
+      description: isSalonServiceWorkflow ? 'Waiting for payment' : 'Waiting for pickup or checkout',
       icon: CheckCircle2,
       iconClassName: 'text-green-600',
-      emptyText: 'No ready orders',
+      emptyText: isSalonServiceWorkflow ? 'No services ready for payment' : 'No ready orders',
     },
   ];
-  const currentBusinessType = normalizeBusinessType(businessRecord?.type ?? business?.type, 'General Retail');
   const hasResolvedBusinessType = Boolean(businessRecord?.type || business?.type);
-  const kitchenBusinessAvailable = isKitchenBusinessType(currentBusinessType);
+  const kitchenBusinessAvailable = isOrderFulfillmentBusinessType(currentBusinessType);
   useOrderNotificationSound(
     ordersByStatus.New.map((order) => order.id),
     kitchenBusinessAvailable && kitchenAccess.allowed
@@ -435,9 +450,9 @@ export default function KitchenPage() {
           <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
             <ChefHat className="h-10 w-10 text-muted-foreground" />
             <div>
-              <p className="font-semibold">Kitchen is not available for this business type</p>
+              <p className="font-semibold">Order fulfilment is not available for this business type</p>
               <p className="text-sm text-muted-foreground">
-                Kitchen workflow is only available for Restaurant and Bar & Liquor businesses. Use Orders to manage customer requests.
+                This workflow is available for restaurant, bar, and salon businesses. Use Orders to manage customer requests.
               </p>
             </div>
           </CardContent>
@@ -449,7 +464,7 @@ export default function KitchenPage() {
   if (!kitchenAccess.allowed) {
     return (
       <SubscriptionFeatureDisabledCard
-        featureName="kitchen"
+        featureName={isSalonServiceWorkflow ? 'service queue' : 'kitchen'}
         accessCheck={kitchenAccess}
       />
     );
@@ -463,7 +478,7 @@ export default function KitchenPage() {
             <ChefHat className="h-10 w-10 text-muted-foreground" />
             <div>
               <p className="font-semibold">No branch selected</p>
-              <p className="text-sm text-muted-foreground">Select a branch to view kitchen orders.</p>
+              <p className="text-sm text-muted-foreground">Select a branch to view queued orders.</p>
             </div>
           </CardContent>
         </Card>
@@ -480,7 +495,7 @@ export default function KitchenPage() {
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Kitchen Screen</h1>
+              <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{workflowCopy.screenTitle}</h1>
               {autoRefresh && (
                 <Badge variant="secondary" className="gap-1">
                   <span className="h-2 w-2 rounded-full bg-green-500" />
@@ -489,7 +504,9 @@ export default function KitchenPage() {
               )}
             </div>
             <p className="text-sm text-muted-foreground">
-              Track kitchen tickets from received order to ready for service.
+              {isSalonServiceWorkflow
+                ? 'Track service dockets from new order to ready for payment.'
+                : 'Track kitchen tickets from received order to ready for service.'}
             </p>
           </div>
         </div>
@@ -515,10 +532,10 @@ export default function KitchenPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
-        <KitchenStatCard title="Active Tickets" value={totalKitchenOrders} icon={Utensils} />
+        <KitchenStatCard title={isSalonServiceWorkflow ? 'Active Dockets' : 'Active Tickets'} value={totalKitchenOrders} icon={Utensils} />
         <KitchenStatCard title="New" value={ordersByStatus.New.length} icon={ChefHat} />
-        <KitchenStatCard title="Preparing" value={ordersByStatus.Preparing.length} icon={Clock} />
-        <KitchenStatCard title="Ready" value={ordersByStatus.Ready.length} icon={CheckCircle2} />
+        <KitchenStatCard title={workflowCopy.preparingLabel} value={ordersByStatus.Preparing.length} icon={Clock} />
+        <KitchenStatCard title={isSalonServiceWorkflow ? 'For Payment' : 'Ready'} value={ordersByStatus.Ready.length} icon={CheckCircle2} />
       </div>
 
       <div className="grid grid-cols-3 gap-2 xl:hidden">
@@ -577,6 +594,8 @@ export default function KitchenPage() {
                       key={order.id}
                       order={order}
                       inventoryLookup={kitchenInventoryLookup}
+                      businessType={currentBusinessType}
+                      workflowCopy={workflowCopy}
                       onStatusChange={updateOrderStatus}
                       onCancel={requestCancelOrder}
                       canCancel={canCancelOrders}
@@ -592,6 +611,8 @@ export default function KitchenPage() {
       <OrderDetailsDialog
         order={selectedOrder}
         inventoryLookup={kitchenInventoryLookup}
+        businessType={currentBusinessType}
+        workflowCopy={workflowCopy}
         onOpenChange={(open) => {
           if (!open) {
             setSelectedOrder(null);
@@ -676,15 +697,30 @@ const getNextKitchenStatus = (currentStatus: string): string => {
   return statusFlow[currentStatus] || currentStatus;
 };
 
-const getKitchenActionLabel = (nextStatus: string): string => {
-  if (nextStatus === 'Preparing') return 'Start';
-  if (nextStatus === 'Ready') return 'Mark Ready';
+const getKitchenActionLabel = (nextStatus: string, workflowCopy: ReturnType<typeof getOrderWorkflowCopy>): string => {
+  if (nextStatus === 'Preparing') return workflowCopy.startLabel;
+  if (nextStatus === 'Ready') return workflowCopy.readyLabel;
   return 'Update';
+};
+
+const getWorkflowStatusLabel = (
+  status: TakeOrder['status'],
+  isSalonServiceWorkflow: boolean
+): string => {
+  if (!isSalonServiceWorkflow) return status;
+
+  if (status === 'Confirmed') return 'New Service';
+  if (status === 'Sent to Kitchen') return 'Sent to Service';
+  if (status === 'Preparing') return 'In Service';
+  if (status === 'Ready') return 'Ready for Payment';
+  return status;
 };
 
 function OrderCard({
   order,
   inventoryLookup,
+  businessType,
+  workflowCopy,
   onStatusChange,
   onCancel,
   canCancel,
@@ -692,16 +728,19 @@ function OrderCard({
 }: {
   order: TakeOrder;
   inventoryLookup: KitchenInventoryLookup;
+  businessType: BusinessType;
+  workflowCopy: ReturnType<typeof getOrderWorkflowCopy>;
   onStatusChange: (orderId: string, status: string) => void;
   onCancel: (order: TakeOrder) => void;
   canCancel: boolean;
   onViewDetails: (order: TakeOrder) => void;
 }) {
+  const isSalonServiceWorkflow = isSalonServiceBusinessType(businessType);
   const nextStatus = getNextKitchenStatus(order.status);
-  const primaryLabel = getKitchenActionLabel(nextStatus);
+  const primaryLabel = getKitchenActionLabel(nextStatus, workflowCopy);
   const canAdvanceStatus = nextStatus !== order.status && order.status !== 'Completed' && order.status !== 'Cancelled';
-  const kitchenItems = getKitchenOrderItems(order, inventoryLookup);
-  const nonKitchenItems = getNonKitchenOrderItems(order, inventoryLookup);
+  const kitchenItems = getOrderFulfillmentItems(order, inventoryLookup, businessType);
+  const nonKitchenItems = order.items.filter((item) => !kitchenItems.includes(item));
   const hasNotes = Boolean(order.special_instructions || order.customer_notes || kitchenItems.some((item) => item.notes));
   const optionSummary = kitchenItems
     .flatMap(getSelectedOptionNames)
@@ -720,7 +759,7 @@ function OrderCard({
           </div>
           <Badge className={cn('shrink-0 gap-1 text-[11px] sm:text-xs', statusColors[order.status])}>
             <span className="mr-1">{statusIcons[order.status]}</span>
-            {order.status}
+            {getWorkflowStatusLabel(order.status, isSalonServiceWorkflow)}
           </Badge>
         </div>
 
@@ -729,7 +768,9 @@ function OrderCard({
             {order.table_number && (
               <div className="flex items-center gap-2 rounded-md bg-muted px-2 py-1.5">
                 <Hash className="h-3.5 w-3.5" />
-                <span className="truncate">Table {order.table_number}</span>
+                <span className="truncate">
+                  {isSalonServiceWorkflow ? workflowCopy.locationLabel : 'Table'} {order.table_number}
+                </span>
               </div>
             )}
             {order.customer_name && (
@@ -751,15 +792,15 @@ function OrderCard({
       <CardContent className="space-y-3 p-3 pt-0 sm:space-y-4 sm:p-4 sm:pt-0">
         <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-2.5 sm:p-3">
           <div className="min-w-0">
-            <p className="text-sm font-medium">{kitchenItems.length} kitchen item{kitchenItems.length === 1 ? '' : 's'}</p>
+            <p className="text-sm font-medium">{kitchenItems.length} {workflowCopy.prepItemLabel}{kitchenItems.length === 1 ? '' : 's'}</p>
             <p className="truncate text-xs text-muted-foreground">
               {optionSummary.length > 0
                 ? optionSummary.join(', ')
                 : nonKitchenItems.length > 0
-                ? `${nonKitchenItems.length} non-kitchen item${nonKitchenItems.length === 1 ? '' : 's'} hidden`
+                ? `${nonKitchenItems.length} item${nonKitchenItems.length === 1 ? '' : 's'} not routed`
                 : hasNotes
                   ? 'Includes notes or instructions'
-                  : 'Open details to review the prep ticket'}
+                  : `Open details to review the ${workflowCopy.ticketLabel.toLowerCase()}`}
             </p>
           </div>
           <Button variant="outline" size="sm" className="shrink-0" onClick={() => onViewDetails(order)}>
@@ -782,7 +823,7 @@ function OrderCard({
           {order.status === 'Ready' && (
             <Button className="gap-2" variant="secondary" disabled>
               <CheckCircle2 className="h-4 w-4" />
-              Ready for Sale
+              {workflowCopy.readyLabel}
             </Button>
           )}
           {canCancel && order.status !== 'Completed' && (
@@ -804,6 +845,8 @@ function OrderCard({
 function OrderDetailsDialog({
   order,
   inventoryLookup,
+  businessType,
+  workflowCopy,
   onOpenChange,
   onStatusChange,
   onCancel,
@@ -811,6 +854,8 @@ function OrderDetailsDialog({
 }: {
   order: TakeOrder | null;
   inventoryLookup: KitchenInventoryLookup;
+  businessType: BusinessType;
+  workflowCopy: ReturnType<typeof getOrderWorkflowCopy>;
   onOpenChange: (open: boolean) => void;
   onStatusChange: (orderId: string, status: string) => void;
   onCancel: (order: TakeOrder) => void;
@@ -821,10 +866,11 @@ function OrderDetailsDialog({
   }
 
   const nextStatus = getNextKitchenStatus(order.status);
-  const primaryLabel = getKitchenActionLabel(nextStatus);
+  const isSalonServiceWorkflow = isSalonServiceBusinessType(businessType);
+  const primaryLabel = getKitchenActionLabel(nextStatus, workflowCopy);
   const canAdvanceStatus = nextStatus !== order.status && order.status !== 'Completed' && order.status !== 'Cancelled';
-  const kitchenItems = getKitchenOrderItems(order, inventoryLookup);
-  const nonKitchenItems = getNonKitchenOrderItems(order, inventoryLookup);
+  const kitchenItems = getOrderFulfillmentItems(order, inventoryLookup, businessType);
+  const nonKitchenItems = order.items.filter((item) => !kitchenItems.includes(item));
 
   return (
     <Dialog open={Boolean(order)} onOpenChange={onOpenChange}>
@@ -834,7 +880,7 @@ function OrderDetailsDialog({
             <DialogTitle>Order {order.order_number}</DialogTitle>
             <Badge className={cn('gap-1 text-[11px] sm:text-xs', statusColors[order.status])}>
               {statusIcons[order.status]}
-              {order.status}
+              {getWorkflowStatusLabel(order.status, isSalonServiceWorkflow)}
             </Badge>
           </div>
           <DialogDescription>
@@ -888,7 +934,7 @@ function OrderDetailsDialog({
           <div className="space-y-2">
             <p className="flex items-center gap-2 text-sm font-semibold">
               <Utensils className="h-4 w-4 text-muted-foreground" />
-              Kitchen Items
+              {workflowCopy.prepItemLabel === 'service' ? 'Services' : 'Kitchen Items'}
             </p>
             <div className="overflow-hidden rounded-lg border">
               {kitchenItems.map(item => {
@@ -955,18 +1001,18 @@ function OrderDetailsDialog({
                           ))}
                         </div>
                       </div>
-                    ) : (
+                    ) : !isSalonServiceWorkflow ? (
                       <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                         No recipe configured for this prepared item.
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}
             </div>
             {nonKitchenItems.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                {nonKitchenItems.length} purchased or no-prep item{nonKitchenItems.length === 1 ? '' : 's'} hidden from kitchen.
+                {nonKitchenItems.length} item{nonKitchenItems.length === 1 ? '' : 's'} not routed to {workflowCopy.queueLabel.toLowerCase()}.
               </p>
             )}
           </div>
@@ -1000,7 +1046,7 @@ function OrderDetailsDialog({
             {order.status === 'Ready' && (
               <Button className="gap-2" variant="secondary" disabled>
                 <CheckCircle2 className="h-4 w-4" />
-                Ready for Sale
+                {workflowCopy.readyLabel}
               </Button>
             )}
             {canCancel && order.status !== 'Completed' && (

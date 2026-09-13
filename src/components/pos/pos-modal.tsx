@@ -12,7 +12,7 @@ import { BarLiquorPos } from './bar-liquor-pos';
 import { SupermarketPos } from './supermarket-pos';
 import { GroceryPos } from './grocery-pos';
 import { BeautySalonPos } from './beauty-salon-pos';
-import type { BuyerDetails } from './generic-pos';
+import type { AppointmentSettlementContext, BuyerDetails } from './generic-pos';
 import { ViewOrdersModal } from './view-orders-modal';
 import { ScannerConfigModal } from './scanner-config-modal';
 import { PrinterConfigModal } from './printer-config-modal';
@@ -369,6 +369,7 @@ export function PosModal({
   const [carts, setCarts] = useState<PosCart[]>([]);
   const [activeCartId, setActiveCartId] = useState<string | null>(null);
   const [takeOrderIdsInCart, setTakeOrderIdsInCart] = useState<string[]>([]);
+  const [appointmentSettlementContext, setAppointmentSettlementContext] = useState<AppointmentSettlementContext | null>(null);
   const [isCartStateReady, setIsCartStateReady] = useState(false);
   const [isCreateCartOpen, setIsCreateCartOpen] = useState(false);
   const [newCartTitle, setNewCartTitle] = useState('');
@@ -1388,7 +1389,11 @@ export function PosModal({
   const getSearchResultStockState = useCallback((item: InventoryItem) => {
     const isRecipeManagedSaleItem =
       item.itemType === 'sellable' &&
-      (Boolean(item.isProduced) || (Array.isArray(item.recipe) && item.recipe.length > 0));
+      (
+        Boolean(item.isService ?? item.is_service) ||
+        Boolean(item.isProduced) ||
+        (Array.isArray(item.recipe) && item.recipe.length > 0)
+      );
 
     if (isRecipeManagedSaleItem) {
       return {
@@ -1431,6 +1436,17 @@ export function PosModal({
     options?: { selectedOptions?: Array<Record<string, unknown>> }
   ) => {
     console.log('[POS Modal] handleAddToCart called:', item.name, 'quantity:', quantity, 'eisEnabled:', eisEnabled);
+    if (
+      appointmentSettlementContext &&
+      String(takeOrderId || '').trim() !== appointmentSettlementContext.takeOrderId
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Appointment checkout in progress',
+        description: 'Finish or clear this appointment sale before adding other products.',
+      });
+      return false;
+    }
     const normalizedItemId = String(item.id || '').trim();
     const normalizedNotes = notes?.trim() || undefined;
     const selectedOptions = Array.isArray(options?.selectedOptions)
@@ -1630,7 +1646,12 @@ export function PosModal({
 
     const isRecipeManagedSaleItem =
       item.itemType === 'sellable' &&
-      (isPreparedMenuItem || Boolean(item.isProduced) || (Array.isArray(item.recipe) && item.recipe.length > 0));
+      (
+        isPreparedMenuItem ||
+        Boolean(item.isService ?? item.is_service) ||
+        Boolean(item.isProduced) ||
+        (Array.isArray(item.recipe) && item.recipe.length > 0)
+      );
 
     if (!isRecipeManagedSaleItem) {
       const currentCartQuantity = cart.reduce((acc, cartItem) =>
@@ -1725,7 +1746,7 @@ export function PosModal({
     }
 
     return true;
-  }, [branchId, blockSalesIfTaxMappingMissing, cart, eisEnabled, toast, toPositiveNumber, updateActiveCartItems]);
+  }, [appointmentSettlementContext, branchId, blockSalesIfTaxMappingMissing, cart, eisEnabled, toast, toPositiveNumber, updateActiveCartItems]);
 
   const handleProcessTakeOrderForSale = useCallback(async (order: TakeOrder): Promise<boolean> => {
     if (!activeSession || !isSessionActive(activeSession) || !isSessionOwnedByCurrentUser(activeSession)) {
@@ -1733,6 +1754,35 @@ export function PosModal({
         variant: 'destructive',
         title: 'Start a session first',
         description: 'A POS session is required before sending a ready order to sale processing.',
+      });
+      return false;
+    }
+
+    const rawAppointmentSettlement = order.appointmentSettlement ?? order.appointment_settlement;
+    const appointmentDepositTotal = Number(
+      rawAppointmentSettlement?.depositTotal ?? rawAppointmentSettlement?.deposit_total ?? 0
+    );
+    const appointmentContext: AppointmentSettlementContext | null = (
+      rawAppointmentSettlement &&
+      Number.isFinite(appointmentDepositTotal) &&
+      appointmentDepositTotal > 0 &&
+      String(rawAppointmentSettlement.appointmentId ?? rawAppointmentSettlement.appointment_id ?? '').trim() &&
+      String(rawAppointmentSettlement.takeOrderId ?? rawAppointmentSettlement.take_order_id ?? '').trim() &&
+      String(rawAppointmentSettlement.customerId ?? rawAppointmentSettlement.customer_id ?? '').trim()
+    ) ? {
+      appointmentId: String(rawAppointmentSettlement.appointmentId ?? rawAppointmentSettlement.appointment_id).trim(),
+      takeOrderId: String(rawAppointmentSettlement.takeOrderId ?? rawAppointmentSettlement.take_order_id).trim(),
+      customerId: String(rawAppointmentSettlement.customerId ?? rawAppointmentSettlement.customer_id).trim(),
+      customerName: String(rawAppointmentSettlement.customerName ?? rawAppointmentSettlement.customer_name ?? '').trim() || undefined,
+      customerPhone: String(rawAppointmentSettlement.customerPhone ?? rawAppointmentSettlement.customer_phone ?? '').trim() || undefined,
+      depositTotal: appointmentDepositTotal,
+    } : null;
+
+    if (appointmentContext && cart.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Finish the current sale first',
+        description: 'An appointment deposit can only be applied to its own service order.',
       });
       return false;
     }
@@ -1761,6 +1811,7 @@ export function PosModal({
       return false;
     }
 
+    setAppointmentSettlementContext(appointmentContext);
     setShowViewOrdersModal(false);
     setIsMobileCartOpen(true);
     toast({
@@ -1768,7 +1819,7 @@ export function PosModal({
       description: `Order #${order.orderNumber} has been added to the sale cart.`,
     });
     return true;
-  }, [activeSession, branchId, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast, user?.role, user?.uid]);
+  }, [activeSession, branchId, cart.length, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast, user?.role, user?.uid]);
 
   useEffect(() => {
     if (!processTakeOrderId) {
@@ -1881,6 +1932,14 @@ export function PosModal({
   }, [handleAddToCart]);
   
   const handleUpdateQuantity = (itemId: string, newQuantity: number) => {
+    if (appointmentSettlementContext) {
+      toast({
+        variant: 'destructive',
+        title: 'Appointment order is locked for checkout',
+        description: 'Update the service order before applying its recorded deposit.',
+      });
+      return;
+    }
     const normalizedItemId = String(itemId || '').trim();
     if (newQuantity <= 0) {
       updateActiveCartItems((prevCart) =>
@@ -1900,6 +1959,7 @@ export function PosModal({
   const handleClearCart = useCallback(() => {
     clearCartById(activeCartId);
     setTakeOrderIdsInCart([]);
+    setAppointmentSettlementContext(null);
   }, [activeCartId, clearCartById]);
 
   const handleCameraBarcodeDetected = useCallback(async (barcode: string): Promise<BarcodeDetectionOutcome> => {
@@ -2107,6 +2167,15 @@ export function PosModal({
     const buyerPhone = buyerDetails?.phone?.trim();
     const buyerTin = buyerDetails?.tin?.trim();
     const buyerCustomerId = buyerDetails?.customerId?.trim();
+    const appointmentCheckout = buyerDetails?.appointmentSettlement;
+    const isAppointmentCheckout = Boolean(
+      appointmentCheckout?.appointmentId &&
+      appointmentCheckout?.takeOrderId &&
+      appointmentCheckout?.finalPaymentMethod
+    );
+    const orderPaymentMethod: PaymentMethod = isAppointmentCheckout
+      ? 'Appointment Settlement'
+      : paymentMethod;
     const laybuyDepositAmount = Number(buyerDetails?.laybuyDeposit ?? 0);
     const laybuyPaymentMethod = buyerDetails?.laybuyPaymentMethod?.trim() || 'Cash';
     const buyerFields: Partial<Order> = {};
@@ -2341,6 +2410,12 @@ export function PosModal({
     );
     const chargesTotal = sumAppliedCharges(appliedCharges);
     const total = subtotal + tax + exclusiveChargesTotal + appliedTip;
+    const appointmentDepositApplied = isAppointmentCheckout
+      ? Math.min(Math.max(0, Number(appointmentCheckout?.depositTotal || 0)), total)
+      : 0;
+    const appointmentFinalPaymentAmount = isAppointmentCheckout
+      ? Math.max(0, total - appointmentDepositApplied)
+      : total;
     let orderCogs = 0;
     let finalOrder: Order | null = null;
     const shouldMoveStockImmediately = paymentMethod !== 'Laybuy';
@@ -2424,7 +2499,10 @@ export function PosModal({
 
             // Recipe-backed sellables consume their ingredients; other items consume their own stock.
             const isTakeawayPackaging = Boolean((cartItem as any).isTakeawayPackaging ?? (cartItem as any).is_takeaway_packaging);
-            const baseItemsToDecrement = (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
+            const isStocklessService = Boolean(originalItem.isService ?? originalItem.is_service);
+            const baseItemsToDecrement = isStocklessService
+                ? []
+                : (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
                 ? originalItem.recipe
                     .map(ri => {
                       const ingredientId = String(
@@ -2647,7 +2725,10 @@ export function PosModal({
             }
 
             const isTakeawayPackaging = Boolean((cartItem as any).isTakeawayPackaging ?? (cartItem as any).is_takeaway_packaging);
-            const baseItemsToReserve = (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
+            const isStocklessService = Boolean(originalItem.isService ?? originalItem.is_service);
+            const baseItemsToReserve = isStocklessService
+              ? []
+              : (!isTakeawayPackaging && originalItem.itemType === 'sellable' && originalItem.recipe?.length)
               ? originalItem.recipe
                   .map(ri => {
                     const ingredientId = String(
@@ -2823,7 +2904,43 @@ export function PosModal({
             };
           }),
           status: isKitchenOrder ? 'New' : 'Completed',
-          paymentMethod: paymentMethod,
+          paymentMethod: orderPaymentMethod,
+          paymentBreakdown: isAppointmentCheckout ? [
+            {
+              source: 'appointment_deposit',
+              amount: appointmentDepositApplied,
+              payment_method: 'Appointment Deposit',
+            },
+            {
+              source: 'checkout',
+              amount: appointmentFinalPaymentAmount,
+              payment_method: appointmentCheckout?.finalPaymentMethod,
+            },
+          ] : undefined,
+          payment_breakdown: isAppointmentCheckout ? [
+            {
+              source: 'appointment_deposit',
+              amount: appointmentDepositApplied,
+              payment_method: 'Appointment Deposit',
+            },
+            {
+              source: 'checkout',
+              amount: appointmentFinalPaymentAmount,
+              payment_method: appointmentCheckout?.finalPaymentMethod,
+            },
+          ] : undefined,
+          appointmentSettlement: isAppointmentCheckout ? {
+            appointmentId: appointmentCheckout?.appointmentId,
+            takeOrderId: appointmentCheckout?.takeOrderId,
+            finalPaymentMethod: appointmentCheckout?.finalPaymentMethod,
+            depositTotal: appointmentDepositApplied,
+          } : undefined,
+          appointment_settlement: isAppointmentCheckout ? {
+            appointment_id: appointmentCheckout?.appointmentId,
+            take_order_id: appointmentCheckout?.takeOrderId,
+            final_payment_method: appointmentCheckout?.finalPaymentMethod,
+            deposit_total: appointmentDepositApplied,
+          } : undefined,
           ...buyerFields,
           subtotal: Number(subtotal),
           tax: Number(tax),
@@ -2854,11 +2971,14 @@ export function PosModal({
             totalTips: (sessionForOrder.totalTips || 0) + appliedTip,
         };
 
-        const saleAmount = total;
-        switch(paymentMethod) {
+        const saleAmount = isAppointmentCheckout ? appointmentFinalPaymentAmount : total;
+        const collectedPaymentMethod = isAppointmentCheckout
+          ? appointmentCheckout?.finalPaymentMethod
+          : paymentMethod;
+        switch(collectedPaymentMethod) {
             case 'Cash':
                 sessionUpdate.totalCashSales = (sessionForOrder.totalCashSales || 0) + saleAmount;
-                sessionUpdate.expectedCash = (sessionForOrder.expectedCash || 0) + saleAmount + appliedTip;
+                sessionUpdate.expectedCash = (sessionForOrder.expectedCash || 0) + saleAmount + (isAppointmentCheckout ? 0 : appliedTip);
                 break;
             case 'Card':
                  sessionUpdate.totalCardSales = (sessionForOrder.totalCardSales || 0) + saleAmount;
@@ -2943,6 +3063,9 @@ export function PosModal({
           console.warn('[TakeOrder] Failed to mark take orders as completed:', error);
         }
       }
+      if (isAppointmentCheckout) {
+        setAppointmentSettlementContext(null);
+      }
 
       if (finalOrder && typeof window !== 'undefined' && navigator.onLine) {
         // Don't block checkout UX on full sync. Sync runs in background.
@@ -2960,7 +3083,9 @@ export function PosModal({
       const displayOrderNumber = (finalOrder as any)?.orderNumber ?? (finalOrder as any)?.order_number ?? '-';
       toast({
         title: `Order #${displayOrderNumber} Created`,
-        description: `${paymentMethod} sale completed for ${total.toFixed(2)}.`,
+        description: isAppointmentCheckout
+          ? `Appointment deposit applied; ${appointmentCheckout?.finalPaymentMethod} balance collected for ${appointmentFinalPaymentAmount.toFixed(2)}.`
+          : `${paymentMethod} sale completed for ${total.toFixed(2)}.`,
       });
 
       // Remove completed table/tab carts instead of leaving empty cart shells behind.
@@ -3044,6 +3169,7 @@ export function PosModal({
       onMobileCartOpenChange: setIsMobileCartOpen,
       mobileCartDisplay: 'inline' as const,
       registerQuickAddHandler,
+      appointmentSettlement: appointmentSettlementContext,
     };
 
     switch (currentBusinessType) {

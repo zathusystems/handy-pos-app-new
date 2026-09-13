@@ -220,7 +220,7 @@ def _build_stock_targets(order_lines, business, branch):
         if recipe_entries and (is_prepared_menu_item or not sold_item or sold_item.item_type == 'sellable'):
             for recipe_item in recipe_entries:
                 _register_recipe_entry(targets, missing, business, branch, recipe_item, sold_quantity)
-        else:
+        elif not getattr(sold_item, 'is_service', False):
             target = targets[str(sold_item.id)]
             target['quantity'] += sold_quantity
             target['name'] = sold_item.name
@@ -233,7 +233,6 @@ def _build_stock_targets(order_lines, business, branch):
                 _register_recipe_entry(targets, missing, business, branch, recipe_item, option_multiplier)
 
     return list(targets.values()), missing
-
 
 def get_mra_product_mapping_issues(order_lines, business, branch):
     """Return sale lines that are not ready for an MRA EIS transaction."""

@@ -625,6 +625,17 @@ class Customer(models.Model):
         default=False,
         help_text="Is customer VAT registered?"
     )
+
+    # Salon client profile. These fields remain on the shared customer record
+    # so a salon has one source of truth for contact, account, and care data.
+    salon_preferences = models.TextField(
+        blank=True,
+        help_text='Salon service preferences, such as preferred treatments, colours, or products.'
+    )
+    salon_care_notes = models.TextField(
+        blank=True,
+        help_text='Private salon care notes, including reported sensitivities or products to avoid.'
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

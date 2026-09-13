@@ -79,6 +79,62 @@ class CustomerAPITest(TestCase):
         self.assertEqual(response.data['name'], 'Updated Customer')
         self.assertIn('current_balance', response.data)
 
+    def test_salon_profile_fields_are_saved_on_the_existing_customer(self):
+        self.business.business_type = 'beauty_salon'
+        self.business.save(update_fields=['business_type', 'updated_at'])
+        customer = Customer.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Salon Client',
+        )
+
+        response = self.client.patch(
+            f'/api/customers/{customer.id}/',
+            {
+                'salon_preferences': 'Prefers natural hair products.',
+                'salon_care_notes': 'Avoid strongly fragranced products.',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['salon_preferences'], 'Prefers natural hair products.')
+        self.assertEqual(response.data['salon_care_notes'], 'Avoid strongly fragranced products.')
+        customer.refresh_from_db()
+        self.assertEqual(customer.salon_care_notes, 'Avoid strongly fragranced products.')
+
+    def test_salon_history_returns_only_this_customers_appointments(self):
+        self.business.business_type = 'beauty_salon'
+        self.business.save(update_fields=['business_type', 'updated_at'])
+        customer = Customer.objects.create(business=self.business, branch=self.branch, name='Salon Client')
+        other_customer = Customer.objects.create(business=self.business, branch=self.branch, name='Another Client')
+        from appointments.models import Appointment
+
+        Appointment.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=customer,
+            scheduled_start=timezone.now(),
+            scheduled_end=timezone.now() + timedelta(hours=1),
+            services=[],
+            total=Decimal('0.00'),
+        )
+        Appointment.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=other_customer,
+            scheduled_start=timezone.now(),
+            scheduled_end=timezone.now() + timedelta(hours=1),
+            services=[],
+            total=Decimal('0.00'),
+        )
+
+        response = self.client.get(f'/api/customers/{customer.id}/salon-history/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['summary']['appointment_count'], 1)
+        self.assertEqual(response.data['appointments'][0]['customer_name'], customer.name)
+
 
 class CustomerBillPaymentAccountSettingsAPITest(TestCase):
     def setUp(self):

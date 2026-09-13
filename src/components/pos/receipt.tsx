@@ -170,6 +170,21 @@ export const Receipt = ({
   const orderDate = Number.isNaN(parsedOrderDate.getTime()) ? new Date() : parsedOrderDate;
   const paymentMethodDisplay = toTrimmedString((order as any).paymentMethod ?? (order as any).payment_method);
   const normalizedPaymentMethod = paymentMethodDisplay.toLowerCase();
+  const rawPaymentBreakdown = (order as any).paymentBreakdown ?? (order as any).payment_breakdown;
+  const paymentBreakdown = Array.isArray(rawPaymentBreakdown) ? rawPaymentBreakdown : [];
+  const isAppointmentSettlement = normalizedPaymentMethod === 'appointment settlement';
+  const appointmentDepositPaid = paymentBreakdown
+    .filter((entry: any) => toTrimmedString(entry?.source).toLowerCase() === 'appointment_deposit')
+    .reduce((sum: number, entry: any) => sum + toFiniteNumber(entry?.amount, 0), 0);
+  const appointmentCheckoutPayment = paymentBreakdown.find(
+    (entry: any) => toTrimmedString(entry?.source).toLowerCase() === 'checkout'
+  ) as Record<string, unknown> | undefined;
+  const appointmentFinalPaymentMethod = toTrimmedString(
+    appointmentCheckoutPayment?.payment_method ??
+    appointmentCheckoutPayment?.paymentMethod ??
+    (order as any)?.appointmentSettlement?.finalPaymentMethod ??
+    (order as any)?.appointment_settlement?.final_payment_method
+  );
   const isCashPayment = normalizedPaymentMethod === 'cash' || normalizedPaymentMethod.includes('cash');
   const buyerName = resolveBuyerField(
     (order as any).customerName,
@@ -566,7 +581,7 @@ export const Receipt = ({
         <div className="pt-1 mt-1">
           {renderDotRuleLine()}
           <div className={`flex justify-between items-start gap-2 font-bold ${payableTextClass} py-1`}>
-            <span className="tracking-wide">TOTAL PAYABLE</span>
+            <span className="tracking-wide">{isAppointmentSettlement ? 'SERVICE TOTAL' : 'TOTAL PAYABLE'}</span>
             <span>{formatSafeCurrency(normalizedFinalPayable)}</span>
           </div>
           {renderDotRuleLine()}
@@ -576,18 +591,47 @@ export const Receipt = ({
       {/* Payment Information */}
       <div className={`space-y-0.5 ${sectionSpacingClass} ${bodyTextClass}`}>
         {renderSectionDivider()}
-        <div className="flex justify-between items-start gap-2">
-          <span>Payment Method:</span>
-          <span>{paymentMethodDisplay || 'N/A'}</span>
-        </div>
-        <div className="flex justify-between items-start gap-2 font-semibold">
-          <span>Amount Paid:</span>
-          <span>{formatSafeCurrency(receiptAmountPaid)}</span>
-        </div>
-        <div className="flex justify-between items-start gap-2 font-semibold">
-          <span>Change:</span>
-          <span>{formatSafeCurrency(receiptChangeDisplay)}</span>
-        </div>
+        {isAppointmentSettlement ? (
+          <>
+            <div className="flex justify-between items-start gap-2">
+              <span>Service Total:</span>
+              <span>{formatSafeCurrency(normalizedFinalPayable)}</span>
+            </div>
+            <div className="flex justify-between items-start gap-2">
+              <span>Deposit Already Paid:</span>
+              <span>-{formatSafeCurrency(appointmentDepositPaid)}</span>
+            </div>
+            <div className="flex justify-between items-start gap-2 font-semibold">
+              <span>Balance Collected:</span>
+              <span>{formatSafeCurrency(toFiniteNumber(appointmentCheckoutPayment?.amount, Math.max(0, normalizedFinalPayable - appointmentDepositPaid)))}</span>
+            </div>
+            <div className="flex justify-between items-start gap-2">
+              <span>Final Payment Method:</span>
+              <span>{appointmentFinalPaymentMethod || 'N/A'}</span>
+            </div>
+            {receiptChangeDisplay > 0 && (
+              <div className="flex justify-between items-start gap-2 font-semibold">
+                <span>Change:</span>
+                <span>{formatSafeCurrency(receiptChangeDisplay)}</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="flex justify-between items-start gap-2">
+              <span>Payment Method:</span>
+              <span>{paymentMethodDisplay || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-start gap-2 font-semibold">
+              <span>Amount Paid:</span>
+              <span>{formatSafeCurrency(receiptAmountPaid)}</span>
+            </div>
+            <div className="flex justify-between items-start gap-2 font-semibold">
+              <span>Change:</span>
+              <span>{formatSafeCurrency(receiptChangeDisplay)}</span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Tax Breakdown */}

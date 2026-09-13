@@ -15,7 +15,6 @@ from .models import TakeOrder, TakeOrderItem
 
 User = get_user_model()
 
-
 class PublicOrderTrackingTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -448,6 +447,44 @@ class TakeOrderStatusManagementTests(TestCase):
         self.assertEqual(len(package_lines), 1)
         self.assertEqual(package_lines[0].inventory_item_id, str(packaging_item.id))
         self.assertEqual(package_lines[0].price, Decimal('1.25'))
+
+    def test_salon_service_order_stays_in_service_queue_and_routes_every_service_line(self):
+        self.business.business_type = 'beauty_salon'
+        self.business.save(update_fields=['business_type', 'updated_at'])
+
+        response = self.client.post(
+            '/api/orders/take-orders/',
+            {
+                'branch_id': str(self.branch.id),
+                'status': 'Sent to Kitchen',
+                'customer_name': 'Salon guest',
+                'items': [
+                    {
+                        'inventory_item_id': str(self.item.id),
+                        'name': 'Wash and blow dry',
+                        'quantity': '1.000',
+                        'price': '8.50',
+                    }
+                ],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['status'], 'Sent to Kitchen')
+        self.assertTrue(response.data['items'][0]['is_kitchen_item'])
+
+        order = TakeOrder.objects.get(id=response.data['id'])
+        self.assertEqual(order.status, 'Sent to Kitchen')
+        self.assertFalse(order.items.get().is_takeaway_packaging)
+
+        ticket_response = self.client.post(
+            f'/api/orders/take-orders/{order.id}/mark_kitchen_ticket_printed/',
+            format='json',
+        )
+
+        self.assertEqual(ticket_response.status_code, 200, ticket_response.data)
+        self.assertTrue(ticket_response.data['kitchen_ticket_printed'])
 
     def test_staff_order_requires_an_active_session(self):
         self.active_session.status = 'closed'

@@ -17,22 +17,39 @@ from business.access import get_accessible_business_ids
 from inventory.models import InventoryItem
 from pos_sessions.stock_validation import validate_stock_available_for_order_lines
 from .takeaway import normalise_takeaway_items
-from .session_access import get_active_staff_session, user_can_process_take_order_payment
+from .session_access import (
+    get_active_staff_session,
+    user_can_cancel_take_order,
+    user_can_process_take_order_payment,
+)
 
-
-KITCHEN_BUSINESS_TYPES = {'restaurant', 'bar_liquor'}
+ORDER_FULFILLMENT_BUSINESS_TYPES = {'restaurant', 'bar_liquor', 'beauty_salon'}
+SALON_SERVICE_BUSINESS_TYPES = {'beauty_salon'}
 PUBLIC_ORDER_LOOKUP_DAYS = 30
 PUBLIC_ORDER_LOOKUP_LIMIT = 25
 
 
-def _business_supports_kitchen(business):
-    return str(getattr(business, 'business_type', '') or '').strip().lower() in KITCHEN_BUSINESS_TYPES
+def _business_supports_order_fulfillment(business):
+    return (
+        str(getattr(business, 'business_type', '') or '').strip().lower()
+        in ORDER_FULFILLMENT_BUSINESS_TYPES
+    )
+
+
+def _business_uses_service_dockets(business):
+    return (
+        str(getattr(business, 'business_type', '') or '').strip().lower()
+        in SALON_SERVICE_BUSINESS_TYPES
+    )
 
 
 def _take_order_has_kitchen_items(take_order):
-    """Kitchen tickets should contain prepared/recipe-backed sellable items only."""
-    if not _business_supports_kitchen(take_order.business):
+    """Return whether the order has lines to route for preparation/service."""
+    if not _business_supports_order_fulfillment(take_order.business):
         return False
+
+    if _business_uses_service_dockets(take_order.business):
+        return take_order.items.exclude(is_takeaway_packaging=True).exists()
 
     if any(
         bool(item.is_prepared_menu_item) or bool(item.recipe)
@@ -68,7 +85,7 @@ def _take_order_has_kitchen_items(take_order):
 
 
 def _resolve_take_order_status(take_order, requested_status):
-    if requested_status in {'Sent to Kitchen', 'Preparing'} and not _business_supports_kitchen(take_order.business):
+    if requested_status in {'Sent to Kitchen', 'Preparing'} and not _business_supports_order_fulfillment(take_order.business):
         return 'Ready'
 
     if requested_status == 'Sent to Kitchen' and not _take_order_has_kitchen_items(take_order):
@@ -83,25 +100,6 @@ def _django_validation_payload(exc):
     if hasattr(exc, 'messages'):
         return {'error': ' '.join(str(message) for message in exc.messages)}
     return {'error': str(exc)}
-
-
-def _user_can_cancel_take_order(user, take_order):
-    if not user or not user.is_authenticated:
-        return False
-    if getattr(user, 'is_superuser', False):
-        return True
-    if take_order.business.owner_id == user.id:
-        return True
-    try:
-        from staff.models import Staff, StaffRole
-        return Staff.objects.filter(
-            user=user,
-            business=take_order.business,
-            is_active=True,
-            role=StaffRole.ADMIN,
-        ).exists()
-    except Exception:
-        return False
 
 
 def _normalize_phone_lookup(value):
@@ -166,7 +164,13 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         branch_id = self.request.query_params.get('branch_id')
         if branch_id:
             queryset = queryset.filter(branch_id=branch_id)
-        return queryset.prefetch_related('items')
+        return queryset.select_related(
+            'appointment',
+            'appointment__customer',
+        ).prefetch_related(
+            'items',
+            'appointment__deposits',
+        )
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -244,7 +248,10 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         cancellation_reason = str(
             request.data.get('cancellation_reason') or request.data.get('cancellationReason') or ''
         ).strip()
-        if resolved_status == 'Cancelled' and not _user_can_cancel_take_order(request.user, take_order):
+        if resolved_status == 'Cancelled' and not user_can_cancel_take_order(
+            user=request.user,
+            take_order=take_order,
+        ):
             return Response(
                 {'error': 'Only admin users can cancel orders.'},
                 status=status.HTTP_403_FORBIDDEN
@@ -285,8 +292,12 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         take_order.status = resolved_status
         if resolved_status == 'Cancelled':
             take_order.cancellation_reason = cancellation_reason
+            take_order.cancelled_at = timezone.now()
+            take_order.cancelled_by = request.user
         elif take_order.cancellation_reason and resolved_status != 'Cancelled':
             take_order.cancellation_reason = ''
+            take_order.cancelled_at = None
+            take_order.cancelled_by = None
         
         if resolved_status == 'Completed':
             take_order.completed_at = timezone.now()
@@ -296,6 +307,10 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
             take_order.completed_by = None
         
         take_order.save()
+        # An appointment remains a normal take order after check-in. Keep its
+        # lightweight schedule status in step with the existing order lifecycle.
+        from appointments.services import sync_appointment_from_take_order
+        sync_appointment_from_take_order(take_order)
         
         return Response(
             TakeOrderSerializer(take_order).data,

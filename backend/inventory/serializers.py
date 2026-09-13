@@ -200,7 +200,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             'unit_type', 'reorder_level', 'status', 'cost', 'price',
             'value', 'is_variable_price', 'is_fuel', 'sku', 'barcode', 'product_code',
             'expiry', 'on_menu', 'supplier', 'manufacturer', 'batch',
-            'brand', 'is_recipe_ingredient', 'is_produced',
+            'brand', 'is_recipe_ingredient', 'is_produced', 'is_service',
             'is_sold_in_portions', 'portion_name', 'portions_per_unit', 'portion_price',
             'show_in_custom_sales_section', 'recipe', 'image', 'mra_mapping', 'is_mra_ready',
             'created_at', 'updated_at'
@@ -228,15 +228,22 @@ class InventoryItemSerializer(serializers.ModelSerializer):
         if is_produced is None and self.instance is not None:
             is_produced = self.instance.is_produced
 
+        is_service = attrs.get('is_service')
+        if is_service is None and self.instance is not None:
+            is_service = self.instance.is_service
+
         if item_type != 'sellable':
             attrs['is_produced'] = False
+            attrs['is_service'] = False
             attrs['is_variable_price'] = False
             attrs['is_sold_in_portions'] = False
             attrs['portion_name'] = None
             attrs['portions_per_unit'] = None
             attrs['portion_price'] = None
             attrs['show_in_custom_sales_section'] = False
-        elif is_produced:
+        elif is_produced or is_service:
+            if is_service:
+                attrs['is_produced'] = False
             attrs['is_variable_price'] = False
             attrs['is_sold_in_portions'] = False
             attrs['portion_name'] = None
@@ -265,7 +272,7 @@ class InventoryItemCreateUpdateSerializer(serializers.ModelSerializer):
             'reorder_level', 'cost', 'price', 'is_variable_price', 'is_fuel',
             'sku', 'barcode', 'product_code', 'expiry', 'on_menu', 'supplier',
             'manufacturer', 'batch', 'brand', 'is_recipe_ingredient',
-            'is_produced', 'is_sold_in_portions', 'portion_name',
+            'is_produced', 'is_service', 'is_sold_in_portions', 'portion_name',
             'portions_per_unit', 'portion_price', 'show_in_custom_sales_section',
             'recipe', 'image'
         ]
@@ -346,7 +353,7 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
         source='inventory_item.name',
         read_only=True
     )
-    
+
     class Meta:
         model = PurchaseOrderItem
         fields = [

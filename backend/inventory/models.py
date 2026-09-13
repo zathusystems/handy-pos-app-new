@@ -356,6 +356,14 @@ class InventoryItem(models.Model):
     
     # Beauty Salon fields
     brand = models.CharField(max_length=255, blank=True, null=True)
+    is_service = models.BooleanField(
+        default=False,
+        help_text=(
+            "A salon/spa service. Services are sold like products but are not "
+            "directly stock tracked; an optional recipe deducts the consumables used."
+        ),
+    )
+
     
     # Recipe (for sellable items)
     recipe = models.JSONField(default=list, blank=True)
@@ -395,6 +403,7 @@ class InventoryItem(models.Model):
         if self.item_type != 'sellable':
             normalized_values = {
                 'is_produced': False,
+                'is_service': False,
                 'is_variable_price': False,
                 'is_sold_in_portions': False,
                 'portion_name': None,
@@ -406,8 +415,9 @@ class InventoryItem(models.Model):
                 if getattr(self, field) != value:
                     setattr(self, field, value)
                     normalized_fields.add(field)
-        elif self.is_produced:
+        elif self.is_produced or self.is_service:
             normalized_values = {
+                'is_produced': False if self.is_service else self.is_produced,
                 'is_variable_price': False,
                 'is_sold_in_portions': False,
                 'portion_name': None,
@@ -438,7 +448,7 @@ class InventoryItem(models.Model):
     def update_status(self):
         """Update stock status based on current stock levels"""
         available_units = self.available_stock_units
-        if self.item_type == 'sellable' and self.is_produced:
+        if self.item_type == 'sellable' and (self.is_produced or self.is_service):
             self.status = 'In Stock'
         elif available_units > self.reorder_level:
             self.status = 'In Stock'

@@ -7,7 +7,6 @@ from business.models import Business, Branch, Customer
 
 User = get_user_model()
 
-
 class Session(models.Model):
     """POS Session model for tracking sales sessions"""
     STATUS_CHOICES = [
@@ -99,6 +98,7 @@ class Order(models.Model):
         ('Card', 'Card'),
         ('Mobile Money', 'Mobile Money'),
         ('Bank Transfer', 'Bank Transfer'),
+        ('Appointment Settlement', 'Appointment Settlement'),
         ('On Account', 'On Account'),
         ('Laybuy', 'Laybuy'),
         ('Other', 'Other'),
@@ -123,7 +123,17 @@ class Order(models.Model):
     order_number = models.IntegerField()
     order_type = models.CharField(max_length=20, choices=ORDER_TYPE_CHOICES, default='sale')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='New')
-    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS)
+    payment_method = models.CharField(max_length=32, choices=PAYMENT_METHODS)
+    payment_breakdown = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Immutable payment allocation snapshot, used for appointment deposits and final settlement.',
+    )
+    appointment_settlement = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Appointment checkout metadata used to settle recorded deposits exactly once.',
+    )
     is_takeaway = models.BooleanField(default=False)
     pump_name = models.CharField(max_length=100, blank=True, null=True)
 

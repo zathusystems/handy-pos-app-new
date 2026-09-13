@@ -485,6 +485,8 @@ class SyncService {
     const availableCreditRaw = converted.availableCredit ?? record?.available_credit;
     const customerTin = String(converted.customerTin ?? record?.customer_tin ?? '').trim();
     const vatRegistered = this.toBoolean(converted.vatRegistered ?? record?.vat_registered, false);
+    const salonPreferences = String(converted.salonPreferences ?? record?.salon_preferences ?? '').trim();
+    const salonCareNotes = String(converted.salonCareNotes ?? record?.salon_care_notes ?? '').trim();
 
     return {
       ...converted,
@@ -508,6 +510,10 @@ class SyncService {
       customer_tin: customerTin,
       vatRegistered,
       vat_registered: vatRegistered,
+      salonPreferences,
+      salon_preferences: salonPreferences,
+      salonCareNotes,
+      salon_care_notes: salonCareNotes,
       createdAt: String(converted.createdAt ?? record?.created_at ?? nowIso).trim() || nowIso,
       updatedAt: String(converted.updatedAt ?? record?.updated_at ?? nowIso).trim() || nowIso,
     };
@@ -1555,7 +1561,7 @@ class SyncService {
     }
     
     // ✅ Fields that should NOT be converted to snake_case (backend expects camelCase)
-    const keepCamelCase = ['supplierId', 'supplierName', 'totalItems', 'totalCost', 'paymentStatus', 'amountPaid', 'amountDue', 'createdBy', 'createdByName', 'customerId', 'inventoryItemId', 'quantityOrdered', 'quantityReceived', 'quantityRemaining', 'costPerUnit', 'batchNumber', 'expiryDate', 'branchId', 'businessId', 'supplierTin', 'vatRegistered', 'itemType', 'stockUnits', 'unitType', 'reorderLevel', 'isVariablePrice', 'isProduced', 'isSoldInPortions', 'portionName', 'portionsPerUnit', 'portionPrice', 'isRecipeIngredient', 'onMenu', 'showInCustomSalesSection', 'isRecipeIngredient'];
+    const keepCamelCase = ['supplierId', 'supplierName', 'totalItems', 'totalCost', 'paymentStatus', 'amountPaid', 'amountDue', 'createdBy', 'createdByName', 'customerId', 'inventoryItemId', 'quantityOrdered', 'quantityReceived', 'quantityRemaining', 'costPerUnit', 'batchNumber', 'expiryDate', 'branchId', 'businessId', 'supplierTin', 'vatRegistered', 'itemType', 'stockUnits', 'unitType', 'reorderLevel', 'isVariablePrice', 'isProduced', 'isService', 'isSoldInPortions', 'portionName', 'portionsPerUnit', 'portionPrice', 'isRecipeIngredient', 'onMenu', 'showInCustomSalesSection', 'isRecipeIngredient'];
     
     // Convert camelCase keys to snake_case for backend
     const converted: any = {};
@@ -1629,6 +1635,8 @@ class SyncService {
       ['laybuyDeposit', 'laybuy_deposit'],
       ['depositAmount', 'deposit_amount'],
       ['laybuyPaymentMethod', 'laybuy_payment_method'],
+      ['paymentBreakdown', 'payment_breakdown'],
+      ['appointmentSettlement', 'appointment_settlement'],
       ['isTakeaway', 'is_takeaway'],
     ];
 
@@ -1849,6 +1857,12 @@ class SyncService {
         'deposit_amount',
         'laybuyPaymentMethod',
         'laybuy_payment_method',
+        'paymentMethod',
+        'payment_method',
+        'paymentBreakdown',
+        'payment_breakdown',
+        'appointmentSettlement',
+        'appointment_settlement',
         'isTakeaway',
         'is_takeaway',
         'fiscalInvoiceNumber',

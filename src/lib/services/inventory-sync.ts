@@ -158,6 +158,10 @@ function normalizeInventoryProduct(
     converted.isProduced ?? backendProduct?.is_produced ?? existingProduct?.isProduced,
     false
   );
+  const isService = toBoolean(
+    converted.isService ?? backendProduct?.is_service ?? existingProduct?.isService,
+    false
+  );
   const showInCustomSalesSection = toBoolean(
     converted.showInCustomSalesSection ??
       backendProduct?.show_in_custom_sales_section ??
@@ -190,7 +194,7 @@ function normalizeInventoryProduct(
   ).trim();
   const portionName = isSoldInPortions && rawPortionName ? rawPortionName : undefined;
 
-  const recipe = isProduced
+  const recipe = isProduced || isService
     ? (Array.isArray(converted.recipe) ? converted.recipe : (Array.isArray(existingProduct?.recipe) ? existingProduct?.recipe : []))
     : [];
 
@@ -233,6 +237,8 @@ function normalizeInventoryProduct(
     showInCustomSalesSection,
     show_in_custom_sales_section: showInCustomSalesSection,
     isProduced,
+    isService,
+    is_service: isService,
     onMenu: toBoolean(converted.onMenu ?? backendProduct?.on_menu ?? existingProduct?.onMenu, false),
     isSoldInPortions,
     portionName,

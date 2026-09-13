@@ -915,7 +915,7 @@ export default function InventoryPage() {
 
   const stockTrackedItems = React.useMemo(() => (
     (inventoryData || []).filter((item) => (
-      item.itemType === 'ingredient' || !item.isProduced
+      (item.itemType === 'ingredient' || !item.isProduced) && !Boolean(item.isService ?? item.is_service)
     ))
   ), [inventoryData]);
   
@@ -933,7 +933,7 @@ export default function InventoryPage() {
         return true;
       }
 
-      return canUsePurchasedSellables && item.itemType === 'sellable' && !item.isProduced;
+      return canUsePurchasedSellables && item.itemType === 'sellable' && !item.isProduced && !Boolean(item.isService ?? item.is_service);
     });
   }, [currentBusinessType, editingItem?.id, inventoryData]);
   const groupedPurchaseCount = React.useMemo(() => {

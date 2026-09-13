@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
 from rest_framework import serializers
 from .models import TakeOrder, TakeOrderItem
 from business.customer_accounts import resolve_customer_for_account_payload
@@ -8,10 +10,22 @@ from .takeaway import normalise_takeaway_items
 from .session_access import get_active_staff_session
 
 
-KITCHEN_BUSINESS_TYPES = {'restaurant', 'bar_liquor'}
 
-def _business_supports_kitchen(business):
-    return str(getattr(business, 'business_type', '') or '').strip().lower() in KITCHEN_BUSINESS_TYPES
+ORDER_FULFILLMENT_BUSINESS_TYPES = {'restaurant', 'bar_liquor', 'beauty_salon'}
+SALON_SERVICE_BUSINESS_TYPES = {'beauty_salon'}
+
+def _business_supports_order_fulfillment(business):
+    return (
+        str(getattr(business, 'business_type', '') or '').strip().lower()
+        in ORDER_FULFILLMENT_BUSINESS_TYPES
+    )
+
+
+def _business_uses_service_dockets(business):
+    return (
+        str(getattr(business, 'business_type', '') or '').strip().lower()
+        in SALON_SERVICE_BUSINESS_TYPES
+    )
 
 
 class TakeOrderItemSerializer(serializers.ModelSerializer):
@@ -82,8 +96,14 @@ class TakeOrderItemSerializer(serializers.ModelSerializer):
     def get_is_kitchen_item(self, obj):
         if getattr(obj, 'is_takeaway_packaging', False):
             return False
-        if not _business_supports_kitchen(obj.take_order.business):
+        if not _business_supports_order_fulfillment(obj.take_order.business):
             return False
+
+        # A salon service docket intentionally includes every service line.
+        # The client-side label is changed to "Service"; this field name stays
+        # stable for existing sync clients and historical orders.
+        if _business_uses_service_dockets(obj.take_order.business):
+            return True
 
         if bool(getattr(obj, 'is_prepared_menu_item', False)) or bool(getattr(obj, 'recipe', None)):
             return True
@@ -101,7 +121,9 @@ class TakeOrderSerializer(serializers.ModelSerializer):
     items = TakeOrderItemSerializer(many=True, read_only=True)
     created_by_name = serializers.SerializerMethodField()
     completed_by_name = serializers.SerializerMethodField()
+    cancelled_by_name = serializers.SerializerMethodField()
     order_type_display = serializers.CharField(source='get_order_type_display', read_only=True)
+    appointment_settlement = serializers.SerializerMethodField()
     
     class Meta:
         model = TakeOrder
@@ -112,13 +134,14 @@ class TakeOrderSerializer(serializers.ModelSerializer):
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
             'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'created_by', 'created_by_name',
             'completed_by', 'completed_by_name',
-            'created_at', 'updated_at', 'completed_at',
+            'cancelled_by', 'cancelled_by_name', 'created_at', 'updated_at', 'completed_at', 'cancelled_at',
             'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
+            'appointment_settlement',
         ]
         read_only_fields = [
             'id', 'order_number', 'created_by', 'created_by_name',
             'session',
-            'completed_by', 'completed_by_name', 'created_at', 'updated_at',
+            'completed_by', 'completed_by_name', 'cancelled_by', 'cancelled_by_name', 'created_at', 'updated_at',
             'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
         ]
     
@@ -134,6 +157,34 @@ class TakeOrderSerializer(serializers.ModelSerializer):
             return getattr(obj.completed_by, 'full_name', None) or obj.completed_by.get_username()
         return None
 
+    def get_cancelled_by_name(self, obj):
+        if obj.cancelled_by:
+            return getattr(obj.cancelled_by, 'full_name', None) or obj.cancelled_by.get_username()
+        return None
+
+    def get_appointment_settlement(self, obj):
+        try:
+            appointment = obj.appointment
+        except Exception:
+            return None
+        if not appointment or not appointment.customer_id:
+            return None
+
+        deposits = list(appointment.deposits.all())
+        try:
+            deposit_total = sum((Decimal(str(deposit.amount or 0)) for deposit in deposits), Decimal('0.00'))
+        except (InvalidOperation, TypeError, ValueError):
+            deposit_total = Decimal('0.00')
+        deposit_total = deposit_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return {
+            'appointment_id': str(appointment.id),
+            'take_order_id': str(obj.id),
+            'customer_id': str(appointment.customer_id),
+            'customer_name': appointment.customer.name,
+            'customer_phone': appointment.customer.phone,
+            'deposit_total': str(deposit_total),
+        }
+
 
 class TakeOrderCreateSerializer(serializers.ModelSerializer):
     items = TakeOrderItemSerializer(many=True, write_only=True)
@@ -146,6 +197,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
     order_type_display = serializers.CharField(source='get_order_type_display', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     completed_by_name = serializers.SerializerMethodField()
+    cancelled_by_name = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
     completed_at = serializers.DateTimeField(read_only=True, allow_null=True)
@@ -160,13 +212,13 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'customer_name', 'customer_phone', 'customer_notes', 'table_number',
             'special_instructions', 'cancellation_reason', 'is_takeaway', 'items', 'items_response',
             'created_by', 'created_by_name', 'completed_by', 'completed_by_name',
-            'created_at', 'updated_at', 'completed_at',
+            'cancelled_by', 'cancelled_by_name', 'created_at', 'updated_at', 'completed_at', 'cancelled_at',
             'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
         ]
         read_only_fields = [
             'id', 'order_number', 'order_type', 'order_type_display',
             'session',
-            'created_by', 'created_by_name', 'completed_by', 'completed_by_name',
+            'created_by', 'created_by_name', 'completed_by', 'completed_by_name', 'cancelled_by', 'cancelled_by_name',
             'created_at', 'updated_at', 'completed_at',
             'kitchen_ticket_printed', 'kitchen_ticket_printed_at',
         ]
@@ -247,7 +299,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
                 TakeOrderItemSerializer().get_is_kitchen_item(item)
                 for item in take_order.items.all()
             )
-            if not _business_supports_kitchen(branch.business) or not has_kitchen_items:
+            if not _business_supports_order_fulfillment(branch.business) or not has_kitchen_items:
                 take_order.status = 'Ready'
                 take_order.save(update_fields=['status', 'updated_at'])
         
@@ -256,6 +308,11 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
     def get_completed_by_name(self, obj):
         if obj.completed_by:
             return getattr(obj.completed_by, 'full_name', None) or obj.completed_by.get_username()
+        return None
+
+    def get_cancelled_by_name(self, obj):
+        if obj.cancelled_by:
+            return getattr(obj.cancelled_by, 'full_name', None) or obj.cancelled_by.get_username()
         return None
     
     def to_representation(self, instance):
@@ -267,6 +324,9 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
         completed_by_name = None
         if instance.completed_by:
             completed_by_name = getattr(instance.completed_by, 'full_name', None) or instance.completed_by.get_username()
+        cancelled_by_name = None
+        if instance.cancelled_by:
+            cancelled_by_name = getattr(instance.cancelled_by, 'full_name', None) or instance.cancelled_by.get_username()
         
         return {
             'id': str(instance.id),
@@ -288,9 +348,12 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
             'created_by_name': created_by_name,
             'completed_by': str(instance.completed_by.id) if instance.completed_by else None,
             'completed_by_name': completed_by_name,
+            'cancelled_by': str(instance.cancelled_by.id) if instance.cancelled_by else None,
+            'cancelled_by_name': cancelled_by_name,
             'created_at': instance.created_at.isoformat(),
             'updated_at': instance.updated_at.isoformat(),
             'completed_at': instance.completed_at.isoformat() if instance.completed_at else None,
+            'cancelled_at': instance.cancelled_at.isoformat() if instance.cancelled_at else None,
             'kitchen_ticket_printed': instance.kitchen_ticket_printed,
             'kitchen_ticket_printed_at': instance.kitchen_ticket_printed_at.isoformat() if instance.kitchen_ticket_printed_at else None,
         }

@@ -5,6 +5,7 @@ Automatically marks POS session records as dirty when they are updated,
 ensuring all changes are tracked for syncing to cloud backend
 """
 
+
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.db.models import Sum, Q
@@ -41,15 +42,19 @@ def recompute_session_totals(session):
     )
 
     total_sales = orders.aggregate(Sum('subtotal'))['subtotal__sum'] or Decimal('0')
-    non_laybuy_orders = orders.exclude(payment_method='Laybuy')
+    # Laybuy and appointment settlements record collections as dedicated
+    # payment transactions, so their order labels must not be counted again.
+    direct_paid_orders = orders.exclude(
+        payment_method__in=['Laybuy', 'Appointment Settlement'],
+    )
 
     totals = {
-        'cash': non_laybuy_orders.filter(payment_method='Cash').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
-        'card': non_laybuy_orders.filter(payment_method='Card').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
-        'mobile_money': non_laybuy_orders.filter(payment_method='Mobile Money').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
-        'bank_transfer': non_laybuy_orders.filter(payment_method='Bank Transfer').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
-        'on_account': non_laybuy_orders.filter(payment_method='On Account').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
-        'other': non_laybuy_orders.filter(payment_method='Other').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
+        'cash': direct_paid_orders.filter(payment_method='Cash').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
+        'card': direct_paid_orders.filter(payment_method='Card').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
+        'mobile_money': direct_paid_orders.filter(payment_method='Mobile Money').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
+        'bank_transfer': direct_paid_orders.filter(payment_method='Bank Transfer').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
+        'on_account': direct_paid_orders.filter(payment_method='On Account').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
+        'other': direct_paid_orders.filter(payment_method='Other').aggregate(Sum('total'))['total__sum'] or Decimal('0'),
     }
 
     laybuy_order_ids = [str(order_id) for order_id in orders.filter(payment_method='Laybuy').values_list('id', flat=True)]
@@ -88,7 +93,9 @@ def recompute_session_totals(session):
     session.total_on_account_sales = totals['on_account']
     session.total_other_sales = totals['other']
     session.total_tips = total_tips
-    session.expected_cash = session.opening_float + totals['cash'] + total_tips
+    # Cash order totals already include a recorded tip. Adding total_tips again
+    # would overstate the cash expected at session close.
+    session.expected_cash = session.opening_float + totals['cash']
 
     session.save(update_fields=[
         'total_sales',

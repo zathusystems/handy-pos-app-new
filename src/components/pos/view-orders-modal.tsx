@@ -27,10 +27,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/auth-fetch';
 import {
   buildKitchenInventoryLookup,
-  getKitchenOrderItems,
-  orderHasKitchenPrepItems,
+  getOrderFulfillmentItems,
+  orderHasFulfillmentItems,
 } from '@/lib/kitchen-order-routing';
-import { isKitchenBusinessType, type BusinessType } from '@/lib/inventory/config';
+import {
+  getOrderWorkflowCopy,
+  isOrderFulfillmentBusinessType,
+  isSalonServiceBusinessType,
+  type BusinessType,
+} from '@/lib/inventory/config';
 import {
   AlertCircle,
   Calendar,
@@ -90,15 +95,6 @@ const CANCELLED_STATUSES = new Set(['Cancelled']);
 const ORDER_MODAL_REFRESH_MS = 10_000;
 const ORDER_BILL_PRINT_ROOT_ID = 'orders-modal-bill-printable-area';
 const KITCHEN_TICKET_PRINT_ROOT_ID = 'orders-modal-kitchen-ticket-printable-area';
-const ORDER_FILTER_LABELS: Record<OrderFilter, string> = {
-  attention: 'Needs Attention',
-  mine: 'My Orders',
-  kitchen: 'Kitchen',
-  ready: 'Ready for Sale',
-  cancelled: 'Cancelled',
-  all: 'All Orders',
-};
-
 type CustomerBillPrintOptions = {
   items?: TakeOrder['items'];
   billNumber?: string;
@@ -191,7 +187,9 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const billPrintLockRef = React.useRef(false);
   const kitchenTicketPrintLockRef = React.useRef(false);
   const [, setRefresh] = useState(0);
-  const kitchenEnabled = isKitchenBusinessType(businessType);
+  const orderFulfillmentEnabled = isOrderFulfillmentBusinessType(businessType);
+  const isSalonServiceWorkflow = isSalonServiceBusinessType(businessType);
+  const workflowCopy = getOrderWorkflowCopy(businessType);
   const inventoryItems = useLiveQuery(
     () => db.inventory.toArray(),
     []
@@ -200,10 +198,27 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     () => buildKitchenInventoryLookup(inventoryItems),
     [inventoryItems]
   );
-  const hasKitchenPrepItems = React.useCallback(
-    (order: TakeOrder): boolean => kitchenEnabled && orderHasKitchenPrepItems(order, kitchenInventoryLookup),
-    [kitchenEnabled, kitchenInventoryLookup]
+  const hasFulfillmentItems = React.useCallback(
+    (order: TakeOrder): boolean => (
+      orderFulfillmentEnabled && orderHasFulfillmentItems(order, kitchenInventoryLookup, businessType)
+    ),
+    [businessType, kitchenInventoryLookup, orderFulfillmentEnabled]
   );
+  const getDisplayStatus = React.useCallback((status: string): string => {
+    if (!isSalonServiceWorkflow) return status;
+    if (status === 'Sent to Kitchen') return workflowCopy.sentLabel;
+    if (status === 'Preparing') return workflowCopy.preparingLabel;
+    if (status === 'Ready') return workflowCopy.readyLabel;
+    return status;
+  }, [isSalonServiceWorkflow, workflowCopy]);
+  const orderFilterLabels: Record<OrderFilter, string> = {
+    attention: 'Needs Attention',
+    mine: 'My Orders',
+    kitchen: workflowCopy.queueLabel,
+    ready: workflowCopy.readyLabel,
+    cancelled: 'Cancelled',
+    all: 'All Orders',
+  };
   const canCancelOrders = !currentUserRole || currentUserRole === 'Admin';
 
   const getCustomerBillPaymentAccounts = React.useCallback(async () => {
@@ -294,10 +309,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   }, [isOpen, branchId]);
 
   React.useEffect(() => {
-    if (!kitchenEnabled && activeFilter === 'kitchen') {
+    if (!orderFulfillmentEnabled && activeFilter === 'kitchen') {
       setActiveFilter('attention');
     }
-  }, [activeFilter, kitchenEnabled]);
+  }, [activeFilter, orderFulfillmentEnabled]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -369,7 +384,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     const needsAttention = allOrders.filter((order) => ATTENTION_STATUSES.has(order.status)).length;
     const inKitchen = allOrders.filter((order) => (
       KITCHEN_STATUSES.has(order.status) &&
-      hasKitchenPrepItems(order)
+      hasFulfillmentItems(order)
     )).length;
     const ready = allOrders.filter((order) => READY_STATUSES.has(order.status)).length;
     const cancelled = allOrders.filter((order) => CANCELLED_STATUSES.has(order.status)).length;
@@ -383,7 +398,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       cancelled,
       all: allOrders.length,
     };
-  }, [allOrders, hasKitchenPrepItems, isCurrentUsersOrder]);
+  }, [allOrders, hasFulfillmentItems, isCurrentUsersOrder]);
   const audibleOrderNotifications = useMemo(
     () => allOrders.flatMap((order) => {
       if (ATTENTION_STATUSES.has(order.status)) {
@@ -392,12 +407,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       if (READY_STATUSES.has(order.status)) {
         return [{ id: order.id, channel: 'ready' }];
       }
-      if (kitchenEnabled && KITCHEN_STATUSES.has(order.status) && hasKitchenPrepItems(order)) {
+      if (orderFulfillmentEnabled && KITCHEN_STATUSES.has(order.status) && hasFulfillmentItems(order)) {
         return [{ id: order.id, channel: 'kitchen' }];
       }
       return [];
     }),
-    [allOrders, hasKitchenPrepItems, kitchenEnabled]
+    [allOrders, hasFulfillmentItems, orderFulfillmentEnabled]
   );
   useOrderNotificationSound(audibleOrderNotifications, {
     enabled: isOpen,
@@ -412,10 +427,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       return allOrders.filter(isCurrentUsersOrder);
     }
     if (activeFilter === 'kitchen') {
-      if (!kitchenEnabled) return [];
+      if (!orderFulfillmentEnabled) return [];
       return allOrders.filter((order) => (
         KITCHEN_STATUSES.has(order.status) &&
-        hasKitchenPrepItems(order)
+        hasFulfillmentItems(order)
       ));
     }
     if (activeFilter === 'ready') {
@@ -426,7 +441,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     }
 
     return allOrders;
-  }, [activeFilter, allOrders, hasKitchenPrepItems, isCurrentUsersOrder, kitchenEnabled]);
+  }, [activeFilter, allOrders, hasFulfillmentItems, isCurrentUsersOrder, orderFulfillmentEnabled]);
 
   const filterOptions: Array<{
     key: OrderFilter;
@@ -436,12 +451,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   }> = [
     { key: 'attention', label: 'Needs Attention', count: orderStats.needsAttention, icon: AlertCircle },
     { key: 'mine', label: 'My Orders', count: orderStats.mine, icon: User },
-    ...(kitchenEnabled ? [{ key: 'kitchen' as const, label: 'Kitchen', count: orderStats.inKitchen, icon: ChefHat }] : []),
-    { key: 'ready', label: 'Ready for Sale', count: orderStats.ready, icon: CheckCircle2 },
+    ...(orderFulfillmentEnabled ? [{ key: 'kitchen' as const, label: workflowCopy.queueLabel, count: orderStats.inKitchen, icon: ChefHat }] : []),
+    { key: 'ready', label: workflowCopy.readyLabel, count: orderStats.ready, icon: CheckCircle2 },
     { key: 'cancelled', label: 'Cancelled', count: orderStats.cancelled, icon: X },
     { key: 'all', label: 'All Orders', count: orderStats.all, icon: ShoppingBasket },
   ];
-  const activeFilterLabel = ORDER_FILTER_LABELS[activeFilter];
+  const activeFilterLabel = orderFilterLabels[activeFilter];
 
   const getDestinationFilter = (status: string, order?: TakeOrder): OrderFilter => {
     if (ATTENTION_STATUSES.has(status)) return 'attention';
@@ -449,8 +464,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     if (CANCELLED_STATUSES.has(status)) return 'cancelled';
     if (
       KITCHEN_STATUSES.has(status)
-      && kitchenEnabled
-      && (!order || hasKitchenPrepItems(order))
+      && orderFulfillmentEnabled
+      && (!order || hasFulfillmentItems(order))
     ) {
       return 'kitchen';
     }
@@ -460,19 +475,19 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const getPrimaryAction = (order: TakeOrder) => {
     const status = order.status;
     if (status === 'Pending' || status === 'Confirmed') {
-      if (!hasKitchenPrepItems(order)) {
+      if (!hasFulfillmentItems(order)) {
         return { label: 'Mark Ready', nextStatus: 'Ready' as const };
       }
-      return { label: 'Send to Kitchen', nextStatus: 'Sent to Kitchen' as const };
+      return { label: workflowCopy.sendLabel, nextStatus: 'Sent to Kitchen' as const };
     }
-    if ((status === 'Sent to Kitchen' || status === 'Preparing') && !kitchenEnabled) {
+    if ((status === 'Sent to Kitchen' || status === 'Preparing') && !orderFulfillmentEnabled) {
       return { label: 'Mark Ready', nextStatus: 'Ready' as const };
     }
     if (status === 'Sent to Kitchen') {
-      return { label: 'Start', nextStatus: 'Preparing' as const };
+      return { label: workflowCopy.startLabel, nextStatus: 'Preparing' as const };
     }
     if (status === 'Preparing') {
-      return { label: 'Mark Ready', nextStatus: 'Ready' as const };
+      return { label: workflowCopy.readyLabel, nextStatus: 'Ready' as const };
     }
     if (status === 'Ready') {
       return { label: 'Process Payment', processSale: true as const };
@@ -653,8 +668,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const handlePrintKitchenTicket = async (order: TakeOrder) => {
     if (kitchenTicketPrintLockRef.current) return;
 
-    const kitchenItems = getKitchenOrderItems(order, kitchenInventoryLookup);
-    if (kitchenItems.length === 0) return;
+    const fulfillmentItems = getOrderFulfillmentItems(order, kitchenInventoryLookup, businessType);
+    if (fulfillmentItems.length === 0) return;
 
     kitchenTicketPrintLockRef.current = true;
     setPrintingKitchenTicketOrderId(order.id);
@@ -671,8 +686,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       if (!defaultPrinter) {
         toast({
           variant: 'destructive',
-          title: 'Kitchen Ticket Not Printed',
-          description: 'Order was sent to the kitchen, but no default printer is configured.',
+          title: `${workflowCopy.ticketLabel} Not Printed`,
+          description: `Order was sent to ${workflowCopy.queueLabel.toLowerCase()}, but no default printer is configured.`,
         });
         return;
       }
@@ -691,8 +706,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       if (!printContents || printContents.trim().length === 0) {
         toast({
           variant: 'destructive',
-          title: 'Kitchen Ticket Not Printed',
-          description: 'The kitchen ticket was not ready. Check the printer and kitchen queue.',
+          title: `${workflowCopy.ticketLabel} Not Printed`,
+          description: `The ${workflowCopy.ticketLabel.toLowerCase()} was not ready. Check the printer and ${workflowCopy.queueLabel.toLowerCase()}.`,
         });
         return;
       }
@@ -719,10 +734,10 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       if (!result.success) {
         toast({
           variant: 'destructive',
-          title: 'Kitchen Ticket Not Printed',
+          title: `${workflowCopy.ticketLabel} Not Printed`,
           description: result.timedOut
             ? 'Order was sent, but the printer did not respond in time.'
-            : 'Order was sent, but the kitchen ticket could not be printed.',
+            : `Order was sent, but the ${workflowCopy.ticketLabel.toLowerCase()} could not be printed.`,
         });
         return;
       }
@@ -749,15 +764,15 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       }
 
       toast({
-        title: 'Kitchen Ticket Printed',
-        description: `Order ${order.orderNumber} was sent to the kitchen.`,
+        title: `${workflowCopy.ticketLabel} Printed`,
+        description: `Order ${order.orderNumber} was sent to ${workflowCopy.queueLabel.toLowerCase()}.`,
       });
     } catch (error) {
       console.error('[Orders Kitchen Ticket] Failed to print kitchen ticket:', error);
       toast({
         variant: 'destructive',
-        title: 'Kitchen Ticket Not Printed',
-        description: 'Order was sent, but the kitchen ticket could not be printed.',
+        title: `${workflowCopy.ticketLabel} Not Printed`,
+        description: `Order was sent, but the ${workflowCopy.ticketLabel.toLowerCase()} could not be printed.`,
       });
     } finally {
       kitchenTicketPrintLockRef.current = false;
@@ -769,11 +784,11 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     if (
       order &&
       requestedStatus === 'Sent to Kitchen' &&
-      !hasKitchenPrepItems(order)
+      !hasFulfillmentItems(order)
     ) {
       return 'Ready';
     }
-    if ((requestedStatus === 'Sent to Kitchen' || requestedStatus === 'Preparing') && !kitchenEnabled) {
+    if ((requestedStatus === 'Sent to Kitchen' || requestedStatus === 'Preparing') && !orderFulfillmentEnabled) {
       return 'Ready';
     }
     return requestedStatus;
@@ -818,8 +833,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       if (destinationFilter !== activeFilter) {
         setActiveFilter(destinationFilter);
         toast({
-          title: `Order moved to ${ORDER_FILTER_LABELS[destinationFilter]}`,
-          description: `You are now viewing ${ORDER_FILTER_LABELS[destinationFilter]}.`,
+          title: `Order moved to ${orderFilterLabels[destinationFilter]}`,
+          description: `You are now viewing ${orderFilterLabels[destinationFilter]}.`,
         });
       }
       console.log(`[ViewOrdersModal] Order ${orderId} updated to ${resolvedStatus}`);
@@ -864,9 +879,11 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       order.status !== 'Cancelled' &&
       order.status !== 'Completed' &&
       canCurrentUserProcessPayment(order);
-    const kitchenItemCount = kitchenEnabled ? getKitchenOrderItems(order, kitchenInventoryLookup).length : 0;
+    const fulfillmentItemCount = orderFulfillmentEnabled
+      ? getOrderFulfillmentItems(order, kitchenInventoryLookup, businessType).length
+      : 0;
     const canPrintKitchenTicket =
-      kitchenItemCount > 0 &&
+      fulfillmentItemCount > 0 &&
       !['Cancelled', 'Completed'].includes(order.status);
     const hasNotes = Boolean(order.customerNotes || order.specialInstructions || order.items.some((item) => item.notes));
 
@@ -878,7 +895,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               <p className="min-w-0 break-words text-base font-semibold text-foreground">Order {order.orderNumber}</p>
               <Badge className={`${getStatusColor(order.status)} flex items-center gap-1 border`}>
                 {getStatusIcon(order.status)}
-                <span className="text-xs font-semibold">{order.status}</span>
+                <span className="text-xs font-semibold">{getDisplayStatus(order.status)}</span>
               </Badge>
               <Badge className={`${getOrderTypeColor(order.orderType)} text-xs`}>
                 {order.orderType === 'staff' ? 'Staff' : 'QR Order'}
@@ -888,9 +905,9 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                   Notes
                 </Badge>
               )}
-              {kitchenEnabled && kitchenItemCount === 0 && (
+              {orderFulfillmentEnabled && fulfillmentItemCount === 0 && (
                 <Badge variant="outline" className="text-xs">
-                  No kitchen prep
+                  {workflowCopy.noPrepLabel}
                 </Badge>
               )}
             </div>
@@ -963,7 +980,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 onClick={() => void handlePrintKitchenTicket(order)}
               >
                 <Printer className="h-4 w-4" />
-                {printingKitchenTicketOrderId === order.id ? 'Printing…' : 'Print Kitchen Ticket'}
+                {printingKitchenTicketOrderId === order.id ? 'Printing…' : `Print ${workflowCopy.ticketLabel}`}
               </Button>
             )}
             <Button
@@ -1010,7 +1027,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       setCancellationReason('');
       setSelectedOrder(null);
     };
-    const hasKitchenItems = hasKitchenPrepItems(order);
+    const hasKitchenItems = hasFulfillmentItems(order);
     const canProcessPayment =
       order.status !== 'Cancelled' &&
       order.status !== 'Completed' &&
@@ -1025,7 +1042,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 <DialogTitle className="min-w-0 break-words text-xl sm:text-2xl">Order {order.orderNumber}</DialogTitle>
                 <Badge className={`${getStatusColor(order.status)} flex items-center gap-1 border`}>
                   {getStatusIcon(order.status)}
-                  <span className="text-xs font-semibold">{order.status}</span>
+                  <span className="text-xs font-semibold">{getDisplayStatus(order.status)}</span>
                 </Badge>
                 <Badge className={`${getOrderTypeColor(order.orderType)} text-xs`}>
                   {order.orderType === 'staff' ? 'Staff' : 'Self-Service'}
@@ -1186,7 +1203,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                     onClick={() => void handlePrintKitchenTicket(order)}
                   >
                     <Printer className="h-4 w-4" />
-                    {printingKitchenTicketOrderId === order.id ? 'Printing…' : 'Kitchen'}
+                    {printingKitchenTicketOrderId === order.id ? 'Printing…' : workflowCopy.ticketLabel}
                   </Button>
                 )}
                 <Button
@@ -1219,34 +1236,34 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                   <>
                     {order.status === 'Pending' && (
                       <Button size="sm" onClick={() => updateAndClose(hasKitchenItems ? 'Sent to Kitchen' : 'Ready')}>
-                        {hasKitchenItems ? 'Send' : 'Ready'}
+                        {hasKitchenItems ? workflowCopy.sendLabel : workflowCopy.readyLabel}
                       </Button>
                     )}
                     {order.status === 'Confirmed' && (
                       <>
                         <Button size="sm" onClick={() => updateAndClose(hasKitchenItems ? 'Sent to Kitchen' : 'Ready')}>
-                          {hasKitchenItems ? 'Send' : 'Ready'}
+                          {hasKitchenItems ? workflowCopy.sendLabel : workflowCopy.readyLabel}
                         </Button>
                         {hasKitchenItems && (
                           <Button size="sm" onClick={() => updateAndClose('Ready')} variant="outline">
-                            Ready
+                            {workflowCopy.readyLabel}
                           </Button>
                         )}
                       </>
                     )}
-                    {!kitchenEnabled && (order.status === 'Sent to Kitchen' || order.status === 'Preparing') && (
+                    {!orderFulfillmentEnabled && (order.status === 'Sent to Kitchen' || order.status === 'Preparing') && (
                       <Button size="sm" onClick={() => updateAndClose('Ready')}>
-                        Ready
+                        {workflowCopy.readyLabel}
                       </Button>
                     )}
-                    {kitchenEnabled && order.status === 'Sent to Kitchen' && (
+                    {orderFulfillmentEnabled && order.status === 'Sent to Kitchen' && (
                       <Button size="sm" onClick={() => updateAndClose('Preparing')}>
-                        Start
+                        {workflowCopy.startLabel}
                       </Button>
                     )}
-                    {kitchenEnabled && order.status === 'Preparing' && (
+                    {orderFulfillmentEnabled && order.status === 'Preparing' && (
                       <Button size="sm" onClick={() => updateAndClose('Ready')}>
-                        Ready
+                        {workflowCopy.readyLabel}
                       </Button>
                     )}
                     {canProcessPayment && order.status === 'Ready' && (
@@ -1513,7 +1530,9 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             isTakeaway={Boolean(kitchenTicketOrder.isTakeaway ?? kitchenTicketOrder.is_takeaway)}
             isSelfService={kitchenTicketOrder.orderType === 'self_service'}
             paperWidth={kitchenTicketPaperWidth}
-            items={getKitchenOrderItems(kitchenTicketOrder, kitchenInventoryLookup).map((item) => ({
+            ticketTitle={workflowCopy.ticketTitle}
+            locationLabel={workflowCopy.locationLabel}
+            items={getOrderFulfillmentItems(kitchenTicketOrder, kitchenInventoryLookup, businessType).map((item) => ({
               id: String(item.id),
               name: String(item.name || 'Item'),
               quantity: toFiniteNumber(item.quantity, 0),

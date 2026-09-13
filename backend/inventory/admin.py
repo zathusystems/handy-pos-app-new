@@ -5,7 +5,6 @@ from .models import (
     WasteRecord, StockAudit, StockAuditItem, MRAProductMapping
 )
 
-
 @admin.register(Supplier)
 class SupplierAdmin(admin.ModelAdmin):
     list_display = ('name', 'business', 'email', 'phone', 'is_active', 'created_at')
@@ -27,8 +26,8 @@ class RecipeIngredientInline(admin.TabularInline):
 
 @admin.register(InventoryItem)
 class InventoryItemAdmin(admin.ModelAdmin):
-    list_display = ('name', 'business', 'branch', 'item_type', 'stock_units', 'status', 'price', 'is_produced', 'show_in_custom_sales_section', 'created_at')
-    list_filter = ('business', 'branch', 'item_type', 'status', 'is_produced', 'is_sold_in_portions', 'show_in_custom_sales_section', 'created_at')
+    list_display = ('name', 'business', 'branch', 'item_type', 'stock_units', 'status', 'price', 'is_produced', 'is_service', 'show_in_custom_sales_section', 'created_at')
+    list_filter = ('business', 'branch', 'item_type', 'status', 'is_produced', 'is_service', 'is_sold_in_portions', 'show_in_custom_sales_section', 'created_at')
     search_fields = ('name', 'category', 'supplier')
     readonly_fields = ('created_at', 'updated_at', 'value', 'recipe_display')
     fieldsets = (
@@ -44,8 +43,8 @@ class InventoryItemAdmin(admin.ModelAdmin):
         ('Supplier & Batch', {
             'fields': ('supplier', 'manufacturer', 'batch', 'expiry')
         }),
-        ('Restaurant/Bar Fields', {
-            'fields': ('is_recipe_ingredient', 'is_produced', 'on_menu'),
+        ('Prepared Items and Services', {
+            'fields': ('is_recipe_ingredient', 'is_produced', 'is_service', 'on_menu'),
             'classes': ('collapse',)
         }),
         ('Recipe / Bill of Materials', {

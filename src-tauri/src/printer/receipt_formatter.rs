@@ -115,9 +115,14 @@ fn escpos_size_mode(
     } else {
         1
     };
+    // ESC/POS only supports coarse text-height steps. A 15px web receipt font
+    // is a readable normal size on 80mm paper, not an instruction to double
+    // the physical character height. Reserve the enlarged modes for an
+    // explicitly larger setting so ordinary receipt, bill, and ticket text
+    // does not print tall.
     let height_multiplier = if font_size >= 22.0 {
         3
-    } else if font_size >= 15.0 {
+    } else if font_size >= 18.0 {
         2
     } else {
         1
@@ -1323,6 +1328,13 @@ mod tests {
         assert!(output
             .windows(3)
             .any(|command| command == [0x1B, 0x45, 0x01]));
+    }
+
+    #[test]
+    fn standard_80mm_text_does_not_use_double_height() {
+        assert_eq!(escpos_size_mode(Some(15.0), Some(1.0), 15.0, 1.0), 0);
+        assert_eq!(escpos_size_mode(Some(17.0), Some(1.0), 15.0, 1.0), 0);
+        assert_eq!(escpos_size_mode(Some(18.0), Some(1.0), 15.0, 1.0), 1);
     }
 
     #[test]

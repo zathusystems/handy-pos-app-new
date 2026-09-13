@@ -45,6 +45,7 @@ import {
   CheckCircle2,
   ShoppingBasket,
   Clock3,
+  CalendarDays,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useForm, FormProvider } from 'react-hook-form';
@@ -106,7 +107,12 @@ import { Badge } from '@/components/ui/badge';
 import { DashboardSubscriptionGuard } from '@/components/dashboard-subscription-guard';
 import { AppVersionLabel } from '@/components/app-version-label';
 import { syncBusinessBranchesFromServer } from '@/lib/branch-sync';
-import { isKitchenBusinessType, normalizeBusinessType } from '@/lib/inventory/config';
+import {
+  getOrderWorkflowCopy,
+  isOrderFulfillmentBusinessType,
+  isSalonServiceBusinessType,
+  normalizeBusinessType,
+} from '@/lib/inventory/config';
 import { formatInventoryQuantity, formatNotificationBadgeCount } from '@/lib/quantity-format';
 import {
   readStoredBusinessSettingsObject,
@@ -251,6 +257,7 @@ const navSections = [
     items: [
       { href: '/dashboard/menu', icon: BookOpen, label: 'Menu', permission: 'view_menu' as Permission },
       { href: '/dashboard/kitchen', icon: ChefHat, label: 'Kitchen', permission: 'view_kitchen' as Permission },
+      { href: '/dashboard/appointments', icon: CalendarDays, label: 'Appointments', permission: 'view_orders' as Permission },
     ],
   },
   {
@@ -1819,6 +1826,8 @@ function AppSidebar({
   onPosClick,
   multiBranchEnabled,
   kitchenAvailable,
+  salonAppointmentsAvailable,
+  fulfillmentQueueLabel,
   customSalesSection,
   eisEnabled,
 }: {
@@ -1826,6 +1835,8 @@ function AppSidebar({
   onPosClick?: () => void;
   multiBranchEnabled: boolean;
   kitchenAvailable: boolean;
+  salonAppointmentsAvailable: boolean;
+  fulfillmentQueueLabel: string;
   customSalesSection: { enabled: boolean; name: string };
   eisEnabled: boolean;
 }) {
@@ -1836,13 +1847,16 @@ function AppSidebar({
   const sidebarSections = React.useMemo(() => navSections.map((section) => {
     return {
       ...section,
+      title: section.title === 'Restaurant' && fulfillmentQueueLabel === 'Service Queue' ? 'Service' : section.title,
       items: section.items.map((item) => (
-        item.href === '/dashboard/custom-section'
+        item.href === '/dashboard/kitchen'
+          ? { ...item, label: fulfillmentQueueLabel }
+          : item.href === '/dashboard/custom-section'
           ? { ...item, label: customSalesSection.name || item.label }
           : item
       )),
     };
-  }), [customSalesSection.enabled, customSalesSection.name]);
+  }), [customSalesSection.enabled, customSalesSection.name, fulfillmentQueueLabel]);
 
   const filteredSections = sidebarSections
 	    .map((section) => ({
@@ -1850,6 +1864,7 @@ function AppSidebar({
 	      items: section.items.filter(item => (
 	        hasPermission(item.permission) &&
 	        (item.href !== '/dashboard/kitchen' || kitchenAvailable) &&
+	        (item.href !== '/dashboard/appointments' || salonAppointmentsAvailable) &&
 	        (item.href !== '/dashboard/custom-section' || customSalesSection.enabled) &&
         (item.href !== '/dashboard/eis-sales' || eisEnabled === true)
 	      )),
@@ -2042,7 +2057,9 @@ export default function DashboardLayout({
     [business?.id]
   );
   const currentBusinessType = normalizeBusinessType(businessRecord?.type ?? business?.type, 'General Retail');
-  const kitchenAvailable = isKitchenBusinessType(currentBusinessType);
+  const kitchenAvailable = isOrderFulfillmentBusinessType(currentBusinessType);
+  const salonAppointmentsAvailable = isSalonServiceBusinessType(currentBusinessType);
+  const orderWorkflowCopy = getOrderWorkflowCopy(currentBusinessType);
 
   useEffect(() => {
     let cancelled = false;
@@ -2271,6 +2288,7 @@ export default function DashboardLayout({
     if (user) {
         const accessibleRoutes = [...navItems, ...settingsNav]
             .filter(item => item.href !== '/dashboard/kitchen' || kitchenAvailable)
+	    .filter(item => item.href !== '/dashboard/appointments' || salonAppointmentsAvailable)
 	    .filter(item => item.href !== '/dashboard/eis-sales' || eisEnabled !== false)
             .filter(item => checkPermission(user.role, item.permission))
             .map(item => item.href);
@@ -2291,7 +2309,7 @@ export default function DashboardLayout({
             }
         }
     }
-  }, [user, pathname, router, kitchenAvailable, eisEnabled]);
+  }, [user, pathname, router, kitchenAvailable, salonAppointmentsAvailable, eisEnabled]);
 
   if (loading || !user) {
     return (
@@ -2310,6 +2328,8 @@ export default function DashboardLayout({
 	             onPosClick={() => openPosModalForOrder()}
 	             multiBranchEnabled={multiBranchEnabled}
 	             kitchenAvailable={kitchenAvailable}
+	             salonAppointmentsAvailable={salonAppointmentsAvailable}
+	             fulfillmentQueueLabel={orderWorkflowCopy.queueLabel}
 	             customSalesSection={customSalesSection}
 	             eisEnabled={eisEnabled === true}
 	           />

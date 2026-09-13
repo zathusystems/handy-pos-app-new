@@ -104,6 +104,21 @@ export type BuyerDetails = {
   vat5Quantity?: number;
   laybuyDeposit?: number;
   laybuyPaymentMethod?: string;
+  appointmentSettlement?: {
+    appointmentId: string;
+    takeOrderId: string;
+    finalPaymentMethod: 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Other';
+    depositTotal: number;
+  };
+};
+
+export type AppointmentSettlementContext = {
+  appointmentId: string;
+  takeOrderId: string;
+  customerId: string;
+  customerName?: string;
+  customerPhone?: string;
+  depositTotal: number;
 };
 
 export interface PosProps {
@@ -131,6 +146,7 @@ export interface PosProps {
   mobileCartDisplay?: 'dialog' | 'inline';
   registerQuickAddHandler?: (handler: ((item: InventoryItem) => boolean | void | Promise<boolean | void>) | null) => void;
   businessType?: BusinessType;
+  appointmentSettlement?: AppointmentSettlementContext | null;
 }
 
 type ReceiptDisplaySettings = {
@@ -192,6 +208,7 @@ const normalizeBuyerDetails = (details?: BuyerDetails | null): BuyerDetails | un
   const laybuyDeposit = Number(details.laybuyDeposit ?? 0);
   const hasLaybuyDeposit = Number.isFinite(laybuyDeposit) && laybuyDeposit > 0;
   const laybuyPaymentMethod = details.laybuyPaymentMethod?.trim();
+  const appointmentSettlement = details.appointmentSettlement;
 
   if (
     !customerId &&
@@ -204,7 +221,8 @@ const normalizeBuyerDetails = (details?: BuyerDetails | null): BuyerDetails | un
     !vat5ProjectNumber &&
     !vat5CertificateNumber &&
     !hasVat5Quantity &&
-    !hasLaybuyDeposit
+    !hasLaybuyDeposit &&
+    !appointmentSettlement
   ) {
     return undefined;
   }
@@ -222,6 +240,7 @@ const normalizeBuyerDetails = (details?: BuyerDetails | null): BuyerDetails | un
     vat5Quantity: hasVat5Quantity ? vat5Quantity : undefined,
     laybuyDeposit: hasLaybuyDeposit ? laybuyDeposit : undefined,
     laybuyPaymentMethod: laybuyPaymentMethod || undefined,
+    appointmentSettlement,
   };
 };
 
@@ -941,6 +960,7 @@ const PaymentDialog = ({
     displayMode = 'dialog',
     onStepChange,
     businessType,
+    appointmentSettlement,
     activeCharges = [],
     mraAppliedCharges = [],
 }: {
@@ -962,6 +982,7 @@ const PaymentDialog = ({
     displayMode?: 'dialog' | 'inline';
     onStepChange?: (step: 'payment' | 'confirmation') => void;
     businessType?: BusinessType;
+    appointmentSettlement?: AppointmentSettlementContext | null;
 }) => {
     const { toast } = useToast();
     const [step, setStep] = useState<'payment' | 'confirmation'>('payment');
@@ -1047,8 +1068,15 @@ const PaymentDialog = ({
         () => accountCustomers.find((customer) => String(customer.id) === selectedCustomerId) || null,
         [accountCustomers, selectedCustomerId]
     );
+    const appointmentDepositTotal = Math.max(0, toFiniteNumber(appointmentSettlement?.depositTotal, 0));
+    const isAppointmentSettlement = Boolean(
+        appointmentSettlement?.appointmentId &&
+        appointmentSettlement?.takeOrderId &&
+        appointmentSettlement?.customerId &&
+        appointmentDepositTotal > 0
+    );
     const customerRequiredPayment = selectedPaymentMethod === 'On Account' || selectedPaymentMethod === 'Laybuy';
-    const isCustomerDetailsOpen = showBuyerDetails || customerRequiredPayment;
+    const isCustomerDetailsOpen = showBuyerDetails || customerRequiredPayment || isAppointmentSettlement;
 
     const handleCustomerSelect = useCallback((customerId: string) => {
         setSelectedCustomerId(customerId);
@@ -1075,10 +1103,10 @@ const PaymentDialog = ({
         setRecordChangeAsTip(false);
         setLaybuyDeposit('');
         setLaybuyPaymentMethod('Cash');
-        setShowBuyerDetails(false);
-        setSelectedCustomerId('');
-        setBuyerName('');
-        setBuyerPhone('');
+        setShowBuyerDetails(isAppointmentSettlement);
+        setSelectedCustomerId(isAppointmentSettlement ? appointmentSettlement?.customerId || '' : '');
+        setBuyerName(isAppointmentSettlement ? appointmentSettlement?.customerName || '' : '');
+        setBuyerPhone(isAppointmentSettlement ? appointmentSettlement?.customerPhone || '' : '');
         setBuyerTin('');
         setBuyerAuthorizationCode('');
         setIsExport(false);
@@ -1095,7 +1123,16 @@ const PaymentDialog = ({
         setIsProcessingPayment(false);
         mappingRefreshAttemptedRef.current = false;
         mappingItemFetchAttemptedRef.current = false;
-    }, [resetToken, subtotal, tax, taxLabel]);
+    }, [
+        appointmentSettlement?.customerId,
+        appointmentSettlement?.customerName,
+        appointmentSettlement?.customerPhone,
+        isAppointmentSettlement,
+        resetToken,
+        subtotal,
+        tax,
+        taxLabel,
+    ]);
 
     useEffect(() => {
         if (!isCustomerDetailsOpen || !normalizedActiveBranchId) {
@@ -1698,6 +1735,9 @@ const PaymentDialog = ({
     );
     const chargesTotal = useMemo(() => sumAppliedCharges(appliedCharges), [appliedCharges]);
     const total = calculatedGrossAmount + exclusiveChargesTotal;
+    const amountDueNow = isAppointmentSettlement
+        ? Math.max(0, total - appointmentDepositTotal)
+        : total;
     const hasBlockingUnmapped = shouldEnforceTaxMapping && unmappedProducts.length > 0;
     const businessSettings = useLiveQuery(async () => getOfflineBusinessProfile(), []);
     const allowNegativeIngredientStock =
@@ -1707,7 +1747,9 @@ const PaymentDialog = ({
         typeof cashPaid === 'number'
             ? cashPaid
             : Number.parseFloat(String(cashPaid ?? ''));
-    const change = Number.isFinite(normalizedCashPaid) && normalizedCashPaid > 0 ? normalizedCashPaid - total : 0;
+    const change = Number.isFinite(normalizedCashPaid) && normalizedCashPaid > 0
+        ? normalizedCashPaid - amountDueNow
+        : 0;
     const tipFromChange = selectedPaymentMethod === 'Cash' && recordChangeAsTip
         ? Math.max(0, change)
         : 0;
@@ -1736,7 +1778,7 @@ const PaymentDialog = ({
         !buyerPhone.trim();
     const cashPaymentInvalid =
         selectedPaymentMethod === 'Cash' &&
-        (!Number.isFinite(normalizedCashPaid) || normalizedCashPaid < total);
+        (!Number.isFinite(normalizedCashPaid) || normalizedCashPaid < amountDueNow);
 
     const applyPaymentKeypadInput = useCallback((key: string) => {
         const isCashTarget = selectedPaymentMethod === 'Cash';
@@ -1754,7 +1796,7 @@ const PaymentDialog = ({
         } else if (key === 'backspace') {
             nextValue = current.slice(0, -1);
         } else if (key === 'exact') {
-            nextValue = total.toFixed(2).replace(/\.00$/, '');
+            nextValue = (isCashTarget ? amountDueNow : total).toFixed(2).replace(/\.00$/, '');
         } else if (key === '.') {
             nextValue = current.includes('.') ? current : `${current || '0'}.`;
         } else if (/^\d+$/.test(key)) {
@@ -1767,7 +1809,7 @@ const PaymentDialog = ({
         } else {
             setLaybuyDeposit(nextValue);
         }
-    }, [cashPaid, laybuyDeposit, selectedPaymentMethod, total]);
+    }, [amountDueNow, cashPaid, laybuyDeposit, selectedPaymentMethod, total]);
     const receiptStyleTaxBreakdown = useMemo(() => {
         const breakdown = new Map<string, {
             rate: number;
@@ -1837,7 +1879,15 @@ const PaymentDialog = ({
             return;
         }
 
-        const methodRequiresCustomer = method === 'On Account' || method === 'Laybuy';
+        const methodRequiresCustomer = method === 'On Account' || method === 'Laybuy' || isAppointmentSettlement;
+        if (isAppointmentSettlement && (method === 'On Account' || method === 'Laybuy')) {
+            toast({
+                variant: 'destructive',
+                title: 'Choose a final payment method',
+                description: 'Appointment deposits can only be settled with cash, card, mobile money, bank transfer, or other.',
+            });
+            return;
+        }
         if (method === 'Laybuy' && hideLaybuyPayment) {
             toast({
                 variant: 'destructive',
@@ -1896,9 +1946,9 @@ const PaymentDialog = ({
         setIsProcessingPayment(true);
         try {
             const buyerDetails = normalizeBuyerDetails({
-                customerId: selectedCustomerId,
-                name: buyerName,
-                phone: buyerPhone,
+                customerId: isAppointmentSettlement ? appointmentSettlement?.customerId : selectedCustomerId,
+                name: isAppointmentSettlement ? appointmentSettlement?.customerName : buyerName,
+                phone: isAppointmentSettlement ? appointmentSettlement?.customerPhone : buyerPhone,
                 tin: buyerTin,
                 authorizationCode: buyerAuthorizationCode,
                 isExport: eisEnabled ? isExport : undefined,
@@ -1910,6 +1960,12 @@ const PaymentDialog = ({
                     : undefined,
                 laybuyDeposit: method === 'Laybuy' ? normalizedLaybuyDeposit : undefined,
                 laybuyPaymentMethod: method === 'Laybuy' ? laybuyPaymentMethod : undefined,
+                appointmentSettlement: isAppointmentSettlement && appointmentSettlement ? {
+                    appointmentId: appointmentSettlement.appointmentId,
+                    takeOrderId: appointmentSettlement.takeOrderId,
+                    finalPaymentMethod: method as 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Other',
+                    depositTotal: appointmentDepositTotal,
+                } : undefined,
             });
             const checkoutTip = method === 'Cash' ? tipFromChange : 0;
             const order = await onCheckout(method, checkoutTip, buyerDetails);
@@ -1920,7 +1976,7 @@ const PaymentDialog = ({
                         ? cashPaid
                         : Number.parseFloat(String(cashPaid ?? ''));
                 const hasCashPaid = Number.isFinite(normalizedCashPaid) && normalizedCashPaid > 0;
-                const cashChange = hasCashPaid ? Math.max(0, normalizedCashPaid - total) : 0;
+                const cashChange = hasCashPaid ? Math.max(0, normalizedCashPaid - amountDueNow) : 0;
                 const cashTip = method === 'Cash' && recordChangeAsTip ? cashChange : 0;
                 const displayedCashChange = cashTip > 0 ? 0 : cashChange;
 
@@ -2731,6 +2787,18 @@ const PaymentDialog = ({
                     )}
                     <Separator className="my-1" />
                     <div className="flex justify-between text-lg font-bold text-primary"><span>Total Amount Due</span><span>{currencyFormatter(total)}</span></div>
+                    {isAppointmentSettlement && (
+                        <>
+                            <div className="flex justify-between text-xs text-emerald-700 dark:text-emerald-300">
+                                <span>Appointment deposit already paid</span>
+                                <span>-{currencyFormatter(Math.min(appointmentDepositTotal, total))}</span>
+                            </div>
+                            <div className="flex justify-between border-t pt-2 text-base font-bold">
+                                <span>Balance to collect now</span>
+                                <span>{currencyFormatter(amountDueNow)}</span>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {Object.keys(productTaxMappings).length > 0 && cart && cart.length > 0 && (
@@ -2824,14 +2892,18 @@ const PaymentDialog = ({
                     <div className="flex items-start justify-between gap-3">
                         <div className="space-y-1">
                             <Label htmlFor="toggle-buyer-details" className="text-sm font-medium">
-                                {selectedPaymentMethod === 'Laybuy'
+                                {isAppointmentSettlement
+                                    ? 'Appointment customer'
+                                    : selectedPaymentMethod === 'Laybuy'
                                     ? 'Laybuy Customer Details'
                                     : selectedPaymentMethod === 'On Account'
                                         ? 'Customer Account Details'
                                         : 'Buyer Details'}
                             </Label>
                             <p className="text-xs text-muted-foreground">
-                                {selectedPaymentMethod === 'Laybuy'
+                                {isAppointmentSettlement
+                                    ? 'The recorded appointment deposit and final payment stay attached to this customer.'
+                                    : selectedPaymentMethod === 'Laybuy'
                                     ? 'Required so deposits and installments stay attached to the right customer.'
                                     : selectedPaymentMethod === 'On Account'
                                     ? 'Required for credit sales so the balance is attached to the right customer.'
@@ -2842,7 +2914,7 @@ const PaymentDialog = ({
                             id="toggle-buyer-details"
                             checked={isCustomerDetailsOpen}
                             onCheckedChange={setShowBuyerDetails}
-                            disabled={isProcessingPayment || customerRequiredPayment}
+                            disabled={isProcessingPayment || customerRequiredPayment || isAppointmentSettlement}
                         />
                     </div>
                     {isCustomerDetailsOpen && (
@@ -2853,7 +2925,7 @@ const PaymentDialog = ({
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                     value={selectedCustomerId}
                                     onChange={(event) => handleCustomerSelect(event.target.value)}
-                                    disabled={isProcessingPayment}
+                                    disabled={isProcessingPayment || isAppointmentSettlement}
                                 >
                                     <option value="">
                                         {customerRequiredPayment
@@ -2886,7 +2958,9 @@ const PaymentDialog = ({
                                     })}
                                 </select>
                                 <p className="text-[11px] text-muted-foreground">
-                                    {isLoadingCustomers
+                                    {isAppointmentSettlement
+                                        ? 'This customer is locked to the appointment so its deposit is applied to the right service.'
+                                        : isLoadingCustomers
                                         ? 'Refreshing saved customers...'
                                         : selectedPaymentMethod === 'Laybuy'
                                             ? 'Laybuy sales need a saved customer or enough details to create one.'
@@ -2908,7 +2982,7 @@ const PaymentDialog = ({
                                         placeholder="Enter customer name"
                                         value={buyerName}
                                         onChange={(e) => setBuyerName(e.target.value)}
-                                        disabled={isProcessingPayment}
+                                        disabled={isProcessingPayment || isAppointmentSettlement}
                                     />
                                 </div>
                                 <div className="space-y-1">
@@ -2917,7 +2991,7 @@ const PaymentDialog = ({
                                         placeholder="Enter phone number"
                                         value={buyerPhone}
                                         onChange={(e) => setBuyerPhone(e.target.value)}
-                                        disabled={isProcessingPayment}
+                                        disabled={isProcessingPayment || isAppointmentSettlement}
                                         inputMode="tel"
                                     />
                                 </div>
@@ -3022,7 +3096,7 @@ const PaymentDialog = ({
                        <Button size="default" variant={selectedPaymentMethod === 'Card' ? 'default' : 'outline'} onClick={() => setSelectedPaymentMethod('Card')} className="text-sm h-11" disabled={isProcessingPayment}><CreditCard className="mr-1 h-4 w-4"/>Card</Button>
                        <Button size="default" variant={selectedPaymentMethod === 'Mobile Money' ? 'default' : 'outline'} onClick={() => setSelectedPaymentMethod('Mobile Money')} className="text-sm h-11" disabled={isProcessingPayment}><Smartphone className="mr-1 h-4 w-4"/>Mobile</Button>
                        <Button size="default" variant={selectedPaymentMethod === 'Bank Transfer' ? 'default' : 'outline'} onClick={() => setSelectedPaymentMethod('Bank Transfer')} className="text-sm h-11" disabled={isProcessingPayment}><Landmark className="mr-1 h-4 w-4"/>Bank</Button>
-                       <Button
+                       {!isAppointmentSettlement && <Button
                          size="default"
                          variant={selectedPaymentMethod === 'On Account' ? 'default' : 'outline'}
                          onClick={() => {
@@ -3033,8 +3107,8 @@ const PaymentDialog = ({
                          disabled={isProcessingPayment}
                        >
                          <UserPlus className="mr-1 h-4 w-4"/>Account
-                       </Button>
-                       {!hideLaybuyPayment && (
+                       </Button>}
+                       {!isAppointmentSettlement && !hideLaybuyPayment && (
                          <Button
                            size="default"
                            variant={selectedPaymentMethod === 'Laybuy' ? 'default' : 'outline'}
@@ -3087,7 +3161,7 @@ const PaymentDialog = ({
                         <div className="space-y-2">
                             <div className="flex justify-between text-sm">
                                 <span>Amount Due</span>
-                                <span className="font-semibold">{currencyFormatter(total)}</span>
+                                <span className="font-semibold">{currencyFormatter(amountDueNow)}</span>
                             </div>
                             <div className={cn("flex justify-between text-lg font-bold", change >= 0 ? 'text-green-600' : 'text-red-600')}>
                                 <span>Change</span>
@@ -3257,6 +3331,7 @@ export const GenericPos = ({
   mobileCartDisplay = 'dialog',
   registerQuickAddHandler,
   businessType,
+  appointmentSettlement,
 }: PosProps) => {
   const [isPaymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [showPrinterConfig, setShowPrinterConfig] = useState(false);
@@ -3840,7 +3915,10 @@ export const GenericPos = ({
     let stockText = '';
     let hasStock = false;
     
-    if (item.itemType === 'sellable' && item.recipe && item.recipe.length > 0) {
+    if (Boolean(item.isService ?? item.is_service)) {
+      stockText = 'Service';
+      hasStock = true;
+    } else if (item.itemType === 'sellable' && item.recipe && item.recipe.length > 0) {
       const available = canProduceItem(item);
       stockText = available ? '✓ Available' : '✗ Out of Stock';
       hasStock = available;
@@ -4069,6 +4147,7 @@ export const GenericPos = ({
           onConfigurePrinter={() => setShowPrinterConfig(true)}
           displayMode="inline"
           businessType={businessType}
+          appointmentSettlement={appointmentSettlement}
         />
       ) : (
         <>
@@ -4270,6 +4349,7 @@ export const GenericPos = ({
               branchId={branchId}
               onConfigurePrinter={() => setShowPrinterConfig(true)}
               businessType={businessType}
+              appointmentSettlement={appointmentSettlement}
           />
       </Dialog>
     )}

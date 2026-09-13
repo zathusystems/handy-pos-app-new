@@ -23,6 +23,8 @@ type KitchenTicketProps = {
   isSelfService?: boolean;
   paperWidth?: '80mm' | '58mm';
   rootId?: string;
+  ticketTitle?: string;
+  locationLabel?: string;
 };
 
 const toFiniteNumber = (value: unknown, fallback = 0): number => {
@@ -83,6 +85,8 @@ export function KitchenTicket({
   isSelfService = false,
   paperWidth = '80mm',
   rootId = 'kitchen-ticket-printable-area',
+  ticketTitle = 'KITCHEN TICKET',
+  locationLabel = 'TABLE / ADDRESS',
 }: KitchenTicketProps) {
   const resolvedPaperWidth = paperWidth === '58mm' ? '58mm' : '80mm';
   const isCompactPaper = resolvedPaperWidth === '58mm';
@@ -202,11 +206,11 @@ export function KitchenTicket({
         {toTrimmedString(businessName) && (
           <div className="kitchen-ticket-business">{toTrimmedString(businessName).toUpperCase()}</div>
         )}
-        <div className="kitchen-ticket-title">KITCHEN TICKET</div>
+        <div className="kitchen-ticket-title">{ticketTitle}</div>
         <div className="kitchen-ticket-order">ORDER #{orderNumber}</div>
         <div className="kitchen-ticket-meta">
           <div className="kitchen-ticket-meta-line">TAKEN BY: {preparedBy}</div>
-          {orderLocation && <div className="kitchen-ticket-meta-line">TABLE / ADDRESS: {orderLocation}</div>}
+          {orderLocation && <div className="kitchen-ticket-meta-line">{locationLabel}: {orderLocation}</div>}
           {customer && <div className="kitchen-ticket-meta-line">CUSTOMER: {customer}</div>}
           {isTakeaway && <div className="kitchen-ticket-meta-line">TAKEAWAY</div>}
           {printedAt && <div className="kitchen-ticket-meta-line">ORDERED: {printedAt}</div>}

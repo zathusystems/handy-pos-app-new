@@ -288,6 +288,98 @@ class RecipeStockValidationTests(TestCase):
         self.direct_product.refresh_from_db()
         self.assertEqual(self.direct_product.stock_units, Decimal('-2.000'))
 
+    def test_salon_service_without_consumables_can_sell_with_no_stock(self):
+        service = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Wash and Blow Dry',
+            category='Hair Services',
+            item_type='sellable',
+            stock_units=Decimal('0.000'),
+            price=Decimal('25.00'),
+            is_service=True,
+        )
+
+        validate_stock_available_for_order_lines(
+            [{'inventory_item_id': str(service.id), 'name': service.name, 'quantity': 1}],
+            self.business,
+            self.branch,
+        )
+
+        order = Order.objects.create(
+            business=self.business,
+            branch=self.branch,
+            order_number=1101,
+            order_type='sale',
+            payment_method='Cash',
+            subtotal=Decimal('25.00'),
+            total=Decimal('25.00'),
+        )
+        OrderItem.objects.create(
+            order=order,
+            inventory_item_id=str(service.id),
+            name=service.name,
+            quantity=Decimal('1.000'),
+            price=Decimal('25.00'),
+            subtotal=Decimal('25.00'),
+            total=Decimal('25.00'),
+        )
+
+        decrement_inventory_for_order(order, self.branch, self.business)
+        service.refresh_from_db()
+        self.assertEqual(service.stock_units, Decimal('0.000'))
+
+    def test_salon_service_recipe_only_deducts_its_consumables(self):
+        self.ingredient.stock_units = Decimal('5.000')
+        self.ingredient.save(update_fields=['stock_units', 'updated_at'])
+        service = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Hair Treatment',
+            category='Hair Services',
+            item_type='sellable',
+            stock_units=Decimal('0.000'),
+            price=Decimal('35.00'),
+            is_service=True,
+            recipe=[{
+                'ingredientId': str(self.ingredient.id),
+                'name': self.ingredient.name,
+                'quantity': 2,
+                'unit': 'kg',
+            }],
+        )
+
+        validate_stock_available_for_order_lines(
+            [{'inventory_item_id': str(service.id), 'name': service.name, 'quantity': 2}],
+            self.business,
+            self.branch,
+        )
+
+        order = Order.objects.create(
+            business=self.business,
+            branch=self.branch,
+            order_number=1102,
+            order_type='sale',
+            payment_method='Cash',
+            subtotal=Decimal('70.00'),
+            total=Decimal('70.00'),
+        )
+        OrderItem.objects.create(
+            order=order,
+            inventory_item_id=str(service.id),
+            name=service.name,
+            quantity=Decimal('2.000'),
+            price=Decimal('35.00'),
+            subtotal=Decimal('70.00'),
+            total=Decimal('70.00'),
+        )
+
+        decrement_inventory_for_order(order, self.branch, self.business)
+        self.ingredient.refresh_from_db()
+        service.refresh_from_db()
+        self.assertEqual(self.ingredient.stock_units, Decimal('1.000'))
+        self.assertEqual(service.stock_units, Decimal('0.000'))
+
     def test_takeaway_packaging_is_deducted_directly_even_if_it_has_a_recipe(self):
         packaging_item = InventoryItem.objects.create(
             business=self.business,
@@ -875,9 +967,12 @@ class SyncPushOrderTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['results']['errors'], [])
         self.assertEqual(Order.objects.filter(id=order_id).count(), 1)
+        order = Order.objects.get(id=order_id)
+        self.assertEqual(order.gross_amount, Decimal('5.00'))
+        self.assertEqual(order.total, Decimal('6.50'))
 
         self.session.refresh_from_db()
-        self.assertEqual(self.session.total_cash_sales, Decimal('5.00'))
+        self.assertEqual(self.session.total_cash_sales, Decimal('6.50'))
         self.assertEqual(self.session.total_tips, Decimal('1.50'))
         self.assertEqual(self.session.expected_cash, Decimal('6.50'))
 
@@ -886,7 +981,7 @@ class SyncPushOrderTests(TestCase):
         self.assertEqual(second_response.data['results']['errors'], [])
 
         self.session.refresh_from_db()
-        self.assertEqual(self.session.total_cash_sales, Decimal('5.00'))
+        self.assertEqual(self.session.total_cash_sales, Decimal('6.50'))
         self.assertEqual(self.session.total_tips, Decimal('1.50'))
         self.assertEqual(self.session.expected_cash, Decimal('6.50'))
 

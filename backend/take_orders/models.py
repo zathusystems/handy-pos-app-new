@@ -5,7 +5,6 @@ from business.models import Business, Branch, Customer
 
 User = get_user_model()
 
-
 class TakeOrder(models.Model):
     """Take Order model - separate from POS sales for kitchen preparation"""
     STATUS_CHOICES = [
@@ -56,11 +55,19 @@ class TakeOrder(models.Model):
     # Order details
     special_instructions = models.TextField(blank=True, null=True)
     cancellation_reason = models.TextField(blank=True, null=True)
+    cancelled_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='take_orders_cancelled',
+    )
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
     kitchen_ticket_printed = models.BooleanField(default=False)
     kitchen_ticket_printed_at = models.DateTimeField(null=True, blank=True)
 

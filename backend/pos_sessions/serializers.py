@@ -111,6 +111,8 @@ class OrderSerializer(serializers.ModelSerializer):
             'order_type',
             'status',
             'payment_method',
+            'payment_breakdown',
+            'appointment_settlement',
             'is_takeaway',
             'pump_name',
             'is_invoice_sale',
@@ -179,6 +181,8 @@ class OrderSerializer(serializers.ModelSerializer):
             'customer_id': 'customer',
             'orderType': 'order_type',
             'paymentMethod': 'payment_method',
+            'paymentBreakdown': 'payment_breakdown',
+            'appointmentSettlement': 'appointment_settlement',
             'isTakeaway': 'is_takeaway',
             'pumpName': 'pump_name',
             'isInvoiceSale': 'is_invoice_sale',
@@ -266,8 +270,13 @@ class OrderSerializer(serializers.ModelSerializer):
                     'buyer_tin',
                 )
             )
-            customer_required_payment = payment_method in {'on account', 'laybuy'}
-            customer_required_label = 'On Account' if payment_method == 'on account' else 'Laybuy'
+            is_appointment_settlement = payment_method == 'appointment settlement'
+            customer_required_payment = payment_method in {'on account', 'laybuy'} or is_appointment_settlement
+            customer_required_label = (
+                'On Account' if payment_method == 'on account'
+                else 'Laybuy' if payment_method == 'laybuy'
+                else 'Appointment settlement'
+            )
             should_resolve_customer = bool(business and (provided_customer or has_customer_details or customer_required_payment))
             if should_resolve_customer:
                 try:
@@ -302,6 +311,7 @@ class OrderSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'customer': f'{customer_required_label} sales require a customer account or customer name/phone.'
                 })
+
 
             if payment_method == 'on account':
                 customer = validated_data.get('customer')
@@ -457,11 +467,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
             if tip_amount > 0 and order.session_id:
                 order.session.total_tips = (order.session.total_tips or Decimal('0.00')) + tip_amount
-                if str(order.payment_method or '').strip().lower() == 'cash':
-                    order.session.expected_cash = (order.session.expected_cash or Decimal('0.00')) + tip_amount
-                    order.session.save(update_fields=['total_tips', 'expected_cash', 'updated_at'])
-                else:
-                    order.session.save(update_fields=['total_tips', 'updated_at'])
+                order.session.save(update_fields=['total_tips', 'updated_at'])
 
             return order
 
@@ -550,64 +556,22 @@ class SessionSerializer(serializers.ModelSerializer):
         return float(total)
     
     def get_total_cash_sales(self, obj):
-        """Calculate cash sales excluding voided and cancelled orders"""
-        from django.db.models import Sum
-        total = Order.objects.filter(
-            session=obj,
-            payment_method='Cash',
-            status__in=['New', 'Preparing', 'Ready', 'Completed']
-        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
-        return float(total)
+        return float(obj.total_cash_sales or 0)
     
     def get_total_card_sales(self, obj):
-        """Calculate card sales excluding voided and cancelled orders"""
-        from django.db.models import Sum
-        total = Order.objects.filter(
-            session=obj,
-            payment_method='Card',
-            status__in=['New', 'Preparing', 'Ready', 'Completed']
-        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
-        return float(total)
+        return float(obj.total_card_sales or 0)
     
     def get_total_mobile_money_sales(self, obj):
-        """Calculate mobile money sales excluding voided and cancelled orders"""
-        from django.db.models import Sum
-        total = Order.objects.filter(
-            session=obj,
-            payment_method='Mobile Money',
-            status__in=['New', 'Preparing', 'Ready', 'Completed']
-        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
-        return float(total)
+        return float(obj.total_mobile_money_sales or 0)
 
     def get_total_bank_transfer_sales(self, obj):
-        """Calculate bank transfer sales excluding voided and cancelled orders"""
-        from django.db.models import Sum
-        total = Order.objects.filter(
-            session=obj,
-            payment_method='Bank Transfer',
-            status__in=['New', 'Preparing', 'Ready', 'Completed']
-        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
-        return float(total)
+        return float(obj.total_bank_transfer_sales or 0)
     
     def get_total_on_account_sales(self, obj):
-        """Calculate on account sales excluding voided and cancelled orders"""
-        from django.db.models import Sum
-        total = Order.objects.filter(
-            session=obj,
-            payment_method='On Account',
-            status__in=['New', 'Preparing', 'Ready', 'Completed']
-        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
-        return float(total)
+        return float(obj.total_on_account_sales or 0)
     
     def get_total_other_sales(self, obj):
-        """Calculate other sales excluding voided and cancelled orders"""
-        from django.db.models import Sum
-        total = Order.objects.filter(
-            session=obj,
-            payment_method='Other',
-            status__in=['New', 'Preparing', 'Ready', 'Completed']
-        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
-        return float(total)
+        return float(obj.total_other_sales or 0)
     
     def get_total_tips(self, obj):
         """Return the session's synced tip total.
@@ -618,15 +582,8 @@ class SessionSerializer(serializers.ModelSerializer):
         return float(obj.total_tips or 0)
     
     def get_expected_cash(self, obj):
-        """Calculate expected cash (opening float + cash sales) excluding voided orders"""
-        from django.db.models import Sum
-        cash_sales = Order.objects.filter(
-            session=obj,
-            payment_method='Cash',
-            status__in=['New', 'Preparing', 'Ready', 'Completed']
-        ).aggregate(Sum('total'))['total__sum'] or Decimal('0')
-        expected = (obj.opening_float or 0) + cash_sales
-        return float(expected)
+        """Return current collections, including customer-account payments."""
+        return float(obj.expected_cash or 0)
     
     def to_internal_value(self, data):
         """Convert camelCase from frontend to snake_case for backend"""

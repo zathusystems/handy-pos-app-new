@@ -128,12 +128,12 @@ class BusinessViewSet(viewsets.ModelViewSet):
         """Create business with auto-setup"""
         business = serializer.save(owner=self.request.user)
 
-        # Auto-create settings. Restaurant-style businesses need kitchen flow
-        # enabled immediately so POS, take orders, and kitchen display align.
-        restaurant_kitchen_enabled = business.business_type in {'restaurant', 'bar_liquor'}
+        # Restaurants, bars, and salons use the order fulfilment workflow.
+        # Salons present it as a service queue and service docket in the UI.
+        order_fulfillment_enabled = business.business_type in {'restaurant', 'bar_liquor', 'beauty_salon'}
         biz_settings = BusinessSettings.objects.create(
             business=business,
-            enable_kitchen=restaurant_kitchen_enabled,
+            enable_kitchen=order_fulfillment_enabled,
         )
         requested_currency = str(getattr(serializer, '_requested_currency', '') or '').strip().upper()
         if requested_currency in {'USD', 'MWK'} and biz_settings.currency != requested_currency:
@@ -615,6 +615,42 @@ class CustomerViewSet(viewsets.ModelViewSet):
         queryset = customer.account_transactions.select_related('branch', 'created_by')[:limit]
         serializer = CustomerAccountTransactionSerializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='salon-history')
+    def salon_history(self, request, pk=None):
+        """Return one salon client's appointment and service history."""
+        customer = self.get_object()
+        if customer.business.business_type != 'beauty_salon':
+            return Response(
+                {'detail': 'Salon client history is only available for Beauty Salon and Spa businesses.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            limit = max(1, min(100, int(request.query_params.get('limit', 20))))
+        except (TypeError, ValueError):
+            limit = 20
+
+        from appointments.models import Appointment
+        from appointments.serializers import AppointmentSerializer
+
+        appointments = Appointment.objects.filter(customer=customer).select_related(
+            'business', 'branch', 'customer', 'take_order', 'created_by', 'checked_in_by',
+            'cancelled_by', 'no_show_by',
+        ).prefetch_related('deposits__payment_transaction', 'deposits__recorded_by').order_by('-scheduled_start')[:limit]
+        appointment_data = AppointmentSerializer(appointments, many=True).data
+        completed_count = sum(1 for appointment in appointment_data if appointment['status'] == 'completed')
+
+        return Response({
+            'profile': {
+                'salon_preferences': customer.salon_preferences,
+                'salon_care_notes': customer.salon_care_notes,
+            },
+            'summary': {
+                'appointment_count': len(appointment_data),
+                'completed_count': completed_count,
+            },
+            'appointments': appointment_data,
+        })
 
     @action(detail=True, methods=['post'], url_path='payments')
     @transaction.atomic
