@@ -40,6 +40,14 @@ class Appointment(models.Model):
         related_name='appointment',
         help_text='The normal service order created when this appointment is checked in.',
     )
+    settled_order = models.OneToOneField(
+        'pos_sessions.Order',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='settled_appointment',
+        help_text='The completed POS sale that settled this appointment.',
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

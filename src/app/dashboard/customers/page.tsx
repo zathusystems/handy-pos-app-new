@@ -173,7 +173,12 @@ type SalonHistoryAppointment = {
   scheduled_start: string;
   scheduled_end: string;
   status: string;
-  services: Array<{ name: string; quantity: string | number }>;
+  services: Array<{
+    name: string;
+    quantity: string | number;
+    selected_options?: Array<{ name?: string }>;
+    selectedOptions?: Array<{ name?: string }>;
+  }>;
   total: string | number;
   take_order_number?: number | null;
 };
@@ -199,6 +204,12 @@ const normalizeBackendBranchId = (value?: string | number | null): string => {
   if (legacyMatch) return legacyMatch[1];
   return normalized;
 };
+
+const salonServiceOptionNames = (service: SalonHistoryAppointment['services'][number]): string[] => (
+  (service.selected_options || service.selectedOptions || [])
+    .map((option) => String(option.name || '').trim())
+    .filter(Boolean)
+);
 
 const normalizeCollection = <T,>(payload: any): T[] => {
   if (Array.isArray(payload)) return payload;
@@ -1943,11 +1954,19 @@ export default function CustomersPage() {
                               <span className="text-sm font-semibold">{format(toNumber(appointment.total, 0))}</span>
                             </div>
                           </div>
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {services.length > 0
-                              ? services.map((service) => `${service.name} x${service.quantity}`).join(', ')
-                              : 'No services recorded.'}
-                          </p>
+                          <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                            {services.length > 0 ? services.map((service, index) => {
+                              const optionNames = salonServiceOptionNames(service);
+                              return (
+                                <div key={`${service.name}-${index}`}>
+                                  <p>{service.name} x{service.quantity}</p>
+                                  {optionNames.length > 0 && (
+                                    <p className="text-xs">Choices: {optionNames.join(' · ')}</p>
+                                  )}
+                                </div>
+                              );
+                            }) : <p>No services recorded.</p>}
+                          </div>
                         </div>
                       );
                     })

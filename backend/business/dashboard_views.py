@@ -8,6 +8,7 @@ from django.db.utils import OperationalError
 from pos_sessions.models import Order, OrderItem, Session
 from inventory.models import InventoryItem, PurchaseOrderItem
 from take_orders.models import TakeOrder
+from appointments.service_labels import format_appointment_service_label
 from .models import Business, Branch, CustomerAccountTransaction, CustomerLaybuy, CustomerLaybuyPayment
 from .access import get_accessible_business_queryset
 from decimal import Decimal
@@ -291,7 +292,7 @@ class DashboardViewSet(viewsets.ViewSet):
 
             if appointment.status not in {Appointment.STATUS_CANCELLED, Appointment.STATUS_NO_SHOW}:
                 for service in (appointment.services if isinstance(appointment.services, list) else []):
-                    service_name = str(service.get('name') or '').strip()
+                    service_name = format_appointment_service_label(service)
                     if not service_name:
                         continue
                     service_data = service_totals.setdefault(
@@ -334,11 +335,11 @@ class DashboardViewSet(viewsets.ViewSet):
                 (deposit.amount or Decimal('0.00') for deposit in appointment.deposits.all()),
                 Decimal('0.00'),
             )
-            service_names = [
-                str(service.get('name') or '').strip()
-                for service in (appointment.services if isinstance(appointment.services, list) else [])
-                if str(service.get('name') or '').strip()
-            ]
+            service_names = []
+            for service in (appointment.services if isinstance(appointment.services, list) else []):
+                service_name = format_appointment_service_label(service)
+                if service_name:
+                    service_names.append(service_name)
             upcoming_data.append({
                 'id': str(appointment.id),
                 'customerName': appointment.customer.name,
@@ -985,21 +986,29 @@ class DashboardViewSet(viewsets.ViewSet):
                 recent_sales = recent_sales.filter(session=active_session)
             else:
                 recent_sales = recent_sales.none()
-        recent_sales = recent_sales.values('id', 'order_number', 'total', 'payment_method', 'created_at', 'order_type').order_by('-created_at')[:5]
+        recent_sales = recent_sales.prefetch_related('items').order_by('-created_at')[:5]
         
         print(f"[Dashboard] Found {recent_sales.count()} recent sales")
         
         recent_sales_data = [
             {
-                'id': str(sale['id']),
+                'id': str(sale.id),
                 'description': (
-                    f"Invoice Sale #{sale['order_number']}"
-                    if sale.get('order_type') == 'invoice'
-                    else f"Sale #{sale['order_number']}"
+                    f"Invoice Sale #{sale.order_number}"
+                    if sale.order_type == 'invoice'
+                    else f"Sale #{sale.order_number}"
                 ),
-                'amount': float(sale['total']),
-                'paymentMethod': sale['payment_method'],
-                'createdAt': sale['created_at'].isoformat(),
+                'amount': float(sale.total),
+                'paymentMethod': sale.payment_method,
+                'createdAt': sale.created_at.isoformat(),
+                'items': [
+                    {
+                        'name': item.name,
+                        'quantity': float(item.quantity),
+                        'selected_options': item.selected_options or [],
+                    }
+                    for item in sale.items.all()
+                ],
             }
             for sale in recent_sales
         ]

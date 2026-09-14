@@ -1223,8 +1223,6 @@ def handle_create_order(
                 return {'success': False, 'error': 'Appointment service order does not match this checkout.'}
             if appointment.status in {'cancelled', 'no_show'}:
                 return {'success': False, 'error': 'Cancelled or no-show appointments cannot be settled.'}
-            if not appointment.deposits.exists():
-                return {'success': False, 'error': 'This appointment has no recorded deposit to settle.'}
             appointment_settlement = {
                 'appointment_id': str(appointment.id),
                 'take_order_id': str(appointment.take_order_id),

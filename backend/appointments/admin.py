@@ -7,12 +7,12 @@ from .models import Appointment, AppointmentDeposit
 class AppointmentAdmin(admin.ModelAdmin):
     list_display = (
         'customer', 'business', 'branch', 'scheduled_start', 'scheduled_end',
-        'status', 'total', 'take_order',
+        'status', 'total', 'take_order', 'settled_order',
     )
     list_filter = ('status', 'business', 'branch')
     search_fields = ('customer__name', 'customer__phone', 'notes')
     readonly_fields = (
-        'id', 'services', 'total', 'take_order', 'created_by', 'checked_in_by',
+        'id', 'services', 'total', 'take_order', 'settled_order', 'created_by', 'checked_in_by',
         'checked_in_at', 'completed_at', 'cancelled_by', 'cancelled_at', 'cancellation_reason',
         'no_show_by', 'no_show_at', 'no_show_reason', 'created_at', 'updated_at',
     )

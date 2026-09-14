@@ -252,6 +252,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
     take_order_id = serializers.UUIDField(source='take_order.id', read_only=True, allow_null=True)
     take_order_number = serializers.IntegerField(source='take_order.order_number', read_only=True, allow_null=True)
     take_order_status = serializers.CharField(source='take_order.status', read_only=True, allow_null=True)
+    settled_order_id = serializers.UUIDField(source='settled_order.id', read_only=True, allow_null=True)
     created_by_name = serializers.SerializerMethodField()
     checked_in_by_name = serializers.SerializerMethodField()
     cancelled_by_name = serializers.SerializerMethodField()
@@ -264,7 +265,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
         model = Appointment
         fields = [
             'id', 'business', 'branch', 'branch_name', 'customer', 'customer_name', 'customer_phone',
-            'take_order_id', 'take_order_number', 'take_order_status',
+            'take_order_id', 'take_order_number', 'take_order_status', 'settled_order_id',
             'scheduled_start', 'scheduled_end', 'status', 'services', 'total', 'notes',
             'created_by', 'created_by_name', 'checked_in_by', 'checked_in_by_name',
             'cancelled_by', 'cancelled_by_name', 'cancelled_at', 'cancellation_reason',
@@ -304,6 +305,8 @@ class AppointmentSerializer(serializers.ModelSerializer):
         return total.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     def get_balance_due(self, obj):
+        if obj.settled_order_id:
+            return Decimal('0.00')
         total = Decimal(str(obj.total or 0))
         deposit_total = sum((Decimal(str(deposit.amount or 0)) for deposit in self._deposits(obj)), Decimal('0.00'))
         return max(Decimal('0.00'), total - deposit_total).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)

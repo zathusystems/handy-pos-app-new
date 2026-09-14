@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from decimal import Decimal
 
@@ -234,6 +235,17 @@ class AppointmentAPITests(APITestCase):
         self.assertEqual(order.items.count(), 1)
         self.assertEqual(order.items.first().inventory_item_id, str(self.service.id))
 
+        order_response = self.client.get(f'/api/orders/take-orders/{order.id}/')
+        self.assertEqual(order_response.status_code, status.HTTP_200_OK, order_response.data)
+        self.assertEqual(
+            order_response.data['appointment_settlement']['appointment_id'],
+            str(appointment.id),
+        )
+        self.assertEqual(
+            order_response.data['appointment_settlement']['take_order_id'],
+            str(order.id),
+        )
+
         status_response = self.client.patch(
             f'/api/orders/take-orders/{order.id}/update_status/',
             {'status': 'Preparing'},
@@ -252,6 +264,50 @@ class AppointmentAPITests(APITestCase):
         appointment.refresh_from_db()
         self.assertEqual(appointment.status, Appointment.STATUS_COMPLETED)
         self.assertIsNotNone(appointment.completed_at)
+
+    def test_cashier_can_check_in_appointment_but_waiter_cannot(self):
+        create_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')
+        appointment = Appointment.objects.get(pk=create_response.data['id'])
+        cashier = User.objects.create_user(email='check-in-cashier@example.com', password='test-pass')
+        waiter = User.objects.create_user(email='check-in-waiter@example.com', password='test-pass')
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=cashier,
+            name='Check In Cashier',
+            email='check-in-cashier@example.com',
+            role=StaffRole.CASHIER,
+        )
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=waiter,
+            name='Check In Waiter',
+            email='check-in-waiter@example.com',
+            role=StaffRole.WAITER,
+        )
+        self.create_active_session(waiter)
+        self.client.force_authenticate(waiter)
+
+        denied_response = self.client.post(
+            f'/api/appointments/appointments/{appointment.id}/check-in/',
+            format='json',
+        )
+
+        self.assertEqual(denied_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn('cashier, manager, or admin', str(denied_response.data))
+
+        self.create_active_session(cashier)
+        self.client.force_authenticate(cashier)
+        approved_response = self.client.post(
+            f'/api/appointments/appointments/{appointment.id}/check-in/',
+            format='json',
+        )
+
+        self.assertEqual(approved_response.status_code, status.HTTP_200_OK, approved_response.data)
+        appointment.refresh_from_db()
+        self.assertEqual(appointment.checked_in_by, cashier)
+        self.assertEqual(appointment.take_order.session.user, cashier)
 
     def test_cashier_can_record_appointment_deposit_in_active_session(self):
         create_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')
@@ -354,12 +410,113 @@ class AppointmentAPITests(APITestCase):
         self.assertEqual(final_payments.count(), 1)
         self.assertEqual(final_payments.first().amount, Decimal('10000.00'))
         self.assertEqual(len(checkout_order.payment_breakdown), 2)
+        appointment.refresh_from_db()
+        appointment.take_order.refresh_from_db()
+        self.assertEqual(appointment.settled_order_id, checkout_order.id)
+        self.assertEqual(appointment.status, Appointment.STATUS_COMPLETED)
+        self.assertEqual(appointment.take_order.status, 'Completed')
+        appointment_detail = self.client.get(f'/api/appointments/appointments/{appointment.id}/')
+        self.assertEqual(appointment_detail.status_code, status.HTTP_200_OK, appointment_detail.data)
+        self.assertEqual(appointment_detail.data['balance_due'], Decimal('0.00'))
+        self.assertEqual(appointment_detail.data['settled_order_id'], str(checkout_order.id))
         deposit_session.refresh_from_db()
         self.assertEqual(deposit_session.total_sales, Decimal('15000.00'))
         self.assertEqual(deposit_session.total_mobile_money_sales, Decimal('5000.00'))
         self.assertEqual(deposit_session.total_cash_sales, Decimal('10000.00'))
         self.assertEqual(deposit_session.total_other_sales, Decimal('0.00'))
         self.assertEqual(deposit_session.expected_cash, Decimal('10000.00'))
+
+    def test_appointment_without_deposit_sync_checkout_keeps_customer_and_sale_linked(self):
+        appointment_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')
+        appointment = Appointment.objects.get(pk=appointment_response.data['id'])
+        checkout_session = self.create_active_session()
+
+        check_in_response = self.client.post(
+            f'/api/appointments/appointments/{appointment.id}/check-in/',
+            format='json',
+        )
+        self.assertEqual(check_in_response.status_code, status.HTTP_200_OK, check_in_response.data)
+        appointment.refresh_from_db()
+
+        order_id = str(uuid.uuid4())
+        now = timezone.now().isoformat()
+        sync_response = self.client.post(
+            '/sessions/sync/push/',
+            {
+                'last_synced_at': now,
+                'branch_id': str(self.branch.id),
+                'changes': [{
+                    'id': order_id,
+                    'entity_type': 'Order',
+                    'op': 'create',
+                    'timestamp': now,
+                    'data': {
+                        'id': order_id,
+                        'orderNumber': 2,
+                        'orderType': 'sale',
+                        'status': 'Completed',
+                        'paymentMethod': 'Appointment Settlement',
+                        'subtotal': 15000.0,
+                        'total': 15000.0,
+                        'cogs': 0.0,
+                        'createdAt': now,
+                        'updatedAt': now,
+                        'sessionId': str(checkout_session.id),
+                        'appointmentSettlement': {
+                            'appointmentId': str(appointment.id),
+                            'takeOrderId': str(appointment.take_order_id),
+                            'finalPaymentMethod': 'Card',
+                            'depositTotal': 0,
+                        },
+                        'items': [{
+                            'id': str(uuid.uuid4()),
+                            'inventoryItemId': str(self.service.id),
+                            'name': self.service.name,
+                            'quantity': 1,
+                            'price': 15000.0,
+                            'notes': '',
+                        }],
+                    },
+                }],
+            },
+            format='json',
+        )
+        self.assertEqual(sync_response.status_code, status.HTTP_200_OK, sync_response.data)
+        self.assertEqual(sync_response.data['results']['errors'], [])
+
+        checkout_order = Order.objects.get(pk=order_id)
+
+        checkout_order.refresh_from_db()
+        appointment.refresh_from_db()
+        appointment.take_order.refresh_from_db()
+        invoice = Invoice.objects.get(id=checkout_order.invoice_id)
+        self.customer.refresh_from_db()
+
+        self.assertTrue(checkout_order.is_paid)
+        self.assertEqual(invoice.status, 'Paid')
+        self.assertEqual(self.customer.current_balance, Decimal('0.00'))
+        self.assertFalse(CustomerAccountPaymentAllocation.objects.filter(invoice=invoice).exists())
+        final_payment = CustomerAccountTransaction.objects.get(
+            customer=self.customer,
+            order_id=str(checkout_order.id),
+            invoice_id=str(invoice.id),
+            entry_type='payment',
+            direction='credit',
+        )
+        self.assertEqual(final_payment.amount, Decimal('15000.00'))
+        self.assertEqual(final_payment.payment_method, 'Card')
+        self.assertEqual(len(checkout_order.payment_breakdown), 1)
+        self.assertEqual(checkout_order.payment_breakdown[0]['source'], 'checkout')
+        self.assertEqual(appointment.settled_order_id, checkout_order.id)
+        self.assertEqual(appointment.status, Appointment.STATUS_COMPLETED)
+        self.assertEqual(appointment.take_order.status, 'Completed')
+        appointment_detail = self.client.get(f'/api/appointments/appointments/{appointment.id}/')
+        self.assertEqual(appointment_detail.status_code, status.HTTP_200_OK, appointment_detail.data)
+        self.assertEqual(appointment_detail.data['balance_due'], Decimal('0.00'))
+        checkout_session.refresh_from_db()
+        self.assertEqual(checkout_session.total_sales, Decimal('15000.00'))
+        self.assertEqual(checkout_session.total_card_sales, Decimal('15000.00'))
+        self.assertEqual(checkout_session.total_cash_sales, Decimal('0.00'))
 
     def test_deposit_cannot_exceed_appointment_value(self):
         create_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')
@@ -494,6 +651,40 @@ class AppointmentAPITests(APITestCase):
         self.assertEqual(Decimal(str(service['quantity'])), Decimal('1.00'))
         self.assertEqual(Decimal(str(service['scheduled_value'])), Decimal('15000.00'))
         self.assertEqual(Decimal(str(service['completed_value'])), Decimal('0.00'))
+
+    def test_summary_includes_selected_service_options(self):
+        start = timezone.now().replace(second=0, microsecond=0)
+        Appointment.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=self.customer,
+            scheduled_start=start,
+            scheduled_end=start + timedelta(hours=1),
+            services=[{
+                'inventory_item_id': str(self.service.id),
+                'name': self.service.name,
+                'quantity': '1.000',
+                'price': '15000.00',
+                'total': '15000.00',
+                'recipe': [],
+                'selected_options': [
+                    {'name': 'Deep conditioning'},
+                    {'name': 'Steam treatment'},
+                ],
+            }],
+            total=Decimal('15000.00'),
+        )
+
+        response = self.client.get(
+            f'/api/appointments/appointments/summary/?branch={self.branch.id}&from_date={start.date()}&to_date={start.date()}'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(len(response.data['services']), 1)
+        self.assertEqual(
+            response.data['services'][0]['name'],
+            f'{self.service.name} - Deep conditioning, Steam treatment',
+        )
 
     def test_appointments_are_not_visible_to_another_business(self):
         Appointment.objects.create(

@@ -64,6 +64,7 @@ type AppointmentServiceSnapshot = {
   total?: string | number;
   recipe?: unknown[];
   selected_options?: MenuOptionSnapshot[];
+  selectedOptions?: MenuOptionSnapshot[];
 };
 
 type Appointment = {
@@ -191,6 +192,13 @@ const asCollection = <T,>(payload: unknown): T[] => {
 const numberValue = (value: unknown): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const appointmentServiceOptionNames = (service: AppointmentServiceSnapshot): string[] => {
+  const selectedOptions = service.selected_options || service.selectedOptions || [];
+  return selectedOptions
+    .map((option) => String(option.name || '').trim())
+    .filter(Boolean);
 };
 
 const menuServiceName = (service: AppointmentMenuService): string => (
@@ -811,9 +819,19 @@ export default function AppointmentsPage() {
                       <span className="truncate">{appointment.customer_name}</span>
                       {appointment.customer_phone && <span className="hidden sm:inline">{appointment.customer_phone}</span>}
                     </div>
-                    <p className="mt-2 text-sm">
-                      {appointment.services.map((service) => `${service.name} x${service.quantity}`).join(' · ')}
-                    </p>
+                    <div className="mt-2 space-y-1 text-sm">
+                      {appointment.services.map((service, index) => {
+                        const optionNames = appointmentServiceOptionNames(service);
+                        return (
+                          <div key={`${service.menu_item_id || service.inventory_item_id || service.name}-${index}`} className="min-w-0">
+                            <p className="break-words">{service.name} x{service.quantity}</p>
+                            {optionNames.length > 0 && (
+                              <p className="break-words text-xs text-muted-foreground">Choices: {optionNames.join(' · ')}</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                     {appointment.notes && <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{appointment.notes}</p>}
                     {appointment.status === 'cancelled' && appointment.cancellation_reason && (
                       <p className="mt-1 text-xs text-rose-700">Cancelled: {appointment.cancellation_reason}</p>

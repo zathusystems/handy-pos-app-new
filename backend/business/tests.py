@@ -6,7 +6,7 @@ from decimal import Decimal
 from rest_framework.test import APIClient
 
 from inventory.models import InventoryItem
-from pos_sessions.models import Order
+from pos_sessions.models import Order, OrderItem
 from .models import (
     Branch,
     Business,
@@ -117,8 +117,12 @@ class CustomerAPITest(TestCase):
             customer=customer,
             scheduled_start=timezone.now(),
             scheduled_end=timezone.now() + timedelta(hours=1),
-            services=[],
-            total=Decimal('0.00'),
+            services=[{
+                'name': 'Hair treatment',
+                'quantity': '1',
+                'selected_options': [{'name': 'Deep conditioning'}],
+            }],
+            total=Decimal('15000.00'),
         )
         Appointment.objects.create(
             business=self.business,
@@ -135,6 +139,10 @@ class CustomerAPITest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['summary']['appointment_count'], 1)
         self.assertEqual(response.data['appointments'][0]['customer_name'], customer.name)
+        self.assertEqual(
+            response.data['appointments'][0]['services'][0]['selected_options'][0]['name'],
+            'Deep conditioning',
+        )
 
 
 class SalonDashboardAPITest(TestCase):
@@ -209,6 +217,84 @@ class SalonDashboardAPITest(TestCase):
         self.assertEqual(salon_dashboard['topServices'][0]['name'], 'Hair treatment')
         self.assertEqual(salon_dashboard['topServices'][0]['appointments'], 2)
         self.assertEqual(len(salon_dashboard['upcomingAppointments']), 2)
+
+    def test_salon_dashboard_includes_selected_service_options(self):
+        from appointments.models import Appointment
+
+        now = timezone.now()
+        Appointment.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=self.customer,
+            scheduled_start=now + timedelta(hours=1),
+            scheduled_end=now + timedelta(hours=2),
+            status=Appointment.STATUS_BOOKED,
+            total=Decimal('17000.00'),
+            services=[
+                {
+                    'name': 'Hair treatment',
+                    'quantity': '1',
+                    'total': '17000.00',
+                    'selected_options': [
+                        {'name': 'Deep conditioning'},
+                        {'name': 'Steam treatment'},
+                    ],
+                },
+            ],
+        )
+
+        response = self.client.get(
+            '/api/business/dashboard/summary/',
+            {
+                'branch_id': self.branch.id,
+                'from_date': (now - timedelta(hours=1)).isoformat(),
+                'to_date': (now + timedelta(days=1)).isoformat(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        salon_dashboard = response.data['salonDashboard']
+        expected_label = 'Hair treatment - Deep conditioning, Steam treatment'
+        self.assertEqual(salon_dashboard['topServices'][0]['name'], expected_label)
+        self.assertEqual(salon_dashboard['upcomingAppointments'][0]['services'], [expected_label])
+
+    def test_dashboard_recent_sales_include_selected_item_options(self):
+        sale = Order.objects.create(
+            business=self.business,
+            branch=self.branch,
+            order_number=1,
+            status='Completed',
+            payment_method='Cash',
+            subtotal=Decimal('17000.00'),
+            total=Decimal('17000.00'),
+        )
+        OrderItem.objects.create(
+            order=sale,
+            inventory_item_id='hair-treatment',
+            name='Hair treatment',
+            quantity=Decimal('1.000'),
+            price=Decimal('15000.00'),
+            subtotal=Decimal('15000.00'),
+            total=Decimal('17000.00'),
+            selected_options=[
+                {'name': 'Deep conditioning'},
+                {'name': 'Steam treatment'},
+            ],
+        )
+
+        response = self.client.get(
+            '/api/business/dashboard/summary/',
+            {'branch_id': self.branch.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        recent_sale = response.data['recentSales'][0]
+        self.assertEqual(recent_sale['id'], str(sale.id))
+        self.assertEqual(recent_sale['items'][0]['name'], 'Hair treatment')
+        self.assertEqual(
+            [option['name'] for option in recent_sale['items'][0]['selected_options']],
+            ['Deep conditioning', 'Steam treatment'],
+        )
 
     def test_non_salon_dashboard_does_not_include_salon_dashboard_data(self):
         self.business.business_type = 'grocery'

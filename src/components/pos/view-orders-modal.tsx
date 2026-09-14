@@ -59,6 +59,7 @@ import { useOrderNotificationSound } from '@/hooks/use-order-notification-sound'
 import { useToast } from '@/hooks/use-toast';
 import { format, parseISO } from 'date-fns';
 import { TakeOrderModal } from './take-order-modal';
+import { AppointmentCheckInModal } from './appointment-check-in-modal';
 import { BillReceipt } from './bill-receipt';
 import { KitchenTicket } from './kitchen-ticket';
 import { SplitBillDialog, type SplitBillShare } from './split-bill-dialog';
@@ -160,6 +161,11 @@ const formatOptionPrice = (option: Record<string, any>, formatCurrency: (value: 
   return `${delta > 0 ? '+' : ''}${formatCurrency(delta)}`;
 };
 
+const isAppointmentOrder = (order: TakeOrder): boolean => {
+  const appointment = order.appointmentSettlement ?? order.appointment_settlement;
+  return Boolean(appointment?.appointmentId || appointment?.appointment_id);
+};
+
 export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale, onRequestProcessSale, businessType, currentUserRole }: ViewOrdersModalProps) {
   const { format: formatCurrency } = useCurrency();
   const { user } = useAuth();
@@ -169,6 +175,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [orderPendingItems, setOrderPendingItems] = useState<TakeOrder | null>(null);
   const [cancellationReason, setCancellationReason] = useState('');
   const [showTakeOrderModal, setShowTakeOrderModal] = useState(false);
+  const [showAppointmentsModal, setShowAppointmentsModal] = useState(false);
   const [activeFilter, setActiveFilter] = useState<OrderFilter>('attention');
   const [ordersReadyForNotifications, setOrdersReadyForNotifications] = useState(false);
   const [billOrder, setBillOrder] = useState<TakeOrder | null>(null);
@@ -869,6 +876,11 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     }
   };
 
+  const handleAppointmentCheckedIn = React.useCallback(async () => {
+    setActiveFilter('all');
+    await syncService.fetchAllTakeOrdersFromBackend(branchId);
+  }, [branchId]);
+
   const renderOrderCard = (order: TakeOrder) => {
     const total = order.items.reduce((sum, item) => {
       return sum + (item.quantity * (item.price || 0));
@@ -886,6 +898,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       fulfillmentItemCount > 0 &&
       !['Cancelled', 'Completed'].includes(order.status);
     const hasNotes = Boolean(order.customerNotes || order.specialInstructions || order.items.some((item) => item.notes));
+    const appointmentOrder = isAppointmentOrder(order);
 
     return (
       <div key={order.id} className="rounded-lg border bg-card p-3 shadow-sm transition hover:border-primary/30 hover:bg-muted/30 hover:shadow-md sm:p-4">
@@ -900,6 +913,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               <Badge className={`${getOrderTypeColor(order.orderType)} text-xs`}>
                 {order.orderType === 'staff' ? 'Staff' : 'QR Order'}
               </Badge>
+              {appointmentOrder && (
+                <Badge variant="outline" className="flex items-center gap-1 text-xs">
+                  <Calendar className="h-3 w-3" />
+                  Appointment
+                </Badge>
+              )}
               {hasNotes && (
                 <Badge variant="outline" className="text-xs">
                   Notes
@@ -1366,26 +1385,40 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                     Respond to QR and staff orders without leaving this screen.
                   </DialogDescription>
                 </div>
-                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:self-start">
+                <div className={`grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:self-start ${
+                  isSalonServiceWorkflow ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem]' : 'grid-cols-[minmax(0,1fr)_2.5rem]'
+                }`}>
                   <Button
                     size="sm"
-                    className="w-full gap-2 sm:w-auto"
+                    className="w-full gap-2 truncate sm:w-auto"
                     onClick={() => setShowTakeOrderModal(true)}
                   >
                     <Utensils className="h-4 w-4" />
                     Take Order
                   </Button>
+                  {isSalonServiceWorkflow && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full gap-2 truncate px-2 text-xs sm:w-auto sm:px-3 sm:text-sm"
+                      onClick={() => setShowAppointmentsModal(true)}
+                    >
+                      <Calendar className="hidden h-4 w-4 shrink-0 sm:block" />
+                      Appointments
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
-                    size="sm"
-                    className="w-full gap-2 sm:w-auto"
+                    size="icon"
+                    className="shrink-0"
+                    title="Refresh orders"
+                    aria-label="Refresh orders"
                     onClick={() => {
                       const { syncService } = require('@/lib/services/sync-service');
                       syncService.fetchAllTakeOrdersFromBackend(branchId);
                     }}
                   >
                     <RefreshCw className="h-4 w-4" />
-                    Refresh
                   </Button>
                 </div>
               </div>
@@ -1457,6 +1490,14 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         onOpenChange={handleTakeOrderOpenChange}
         businessType={businessType}
       />
+      {isSalonServiceWorkflow && (
+        <AppointmentCheckInModal
+          branchId={branchId}
+          isOpen={showAppointmentsModal}
+          onOpenChange={setShowAppointmentsModal}
+          onCheckedIn={handleAppointmentCheckedIn}
+        />
+      )}
       <TakeOrderModal
         branchId={branchId}
         isOpen={Boolean(orderPendingItems)}

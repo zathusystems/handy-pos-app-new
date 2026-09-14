@@ -92,6 +92,7 @@ import { downloadTextFile } from '@/lib/file-download';
 import { calculateZReportSummary, getOrderChargeBreakdown } from '@/lib/z-report-print';
 import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { isSalonServiceBusinessType } from '@/lib/inventory/config';
+import { getSelectedOptionNames } from '@/lib/selected-options';
 import SaleDetailModal from '@/app/dashboard/sessions/modals/sale-detail-modal';
 
 type RefundFormValues = {
@@ -142,6 +143,22 @@ const sortOrdersByMostRecent = (orders: Order[]): Order[] => {
 };
 
 const toTrimmedString = (value: unknown): string => String(value ?? '').trim();
+
+const formatOrderItemSummary = (
+    items: OrderItem[] | undefined,
+    includeUnitPrice = false
+): string => {
+    if (!Array.isArray(items)) return '';
+
+    return items
+        .map((item) => {
+            const optionNames = getSelectedOptionNames(item);
+            const choiceSummary = optionNames.length > 0 ? ` (${optionNames.join(', ')})` : '';
+            const priceSummary = includeUnitPrice ? ` @ ${Number(item.price ?? 0).toFixed(2)}` : '';
+            return `${item.name} x${item.quantity}${choiceSummary}${priceSummary}`;
+        })
+        .join(' | ');
+};
 
 const resolveBuyerField = (...candidates: Array<unknown>): string => {
     for (const candidate of candidates) {
@@ -808,6 +825,7 @@ export default function ReportsPage() {
                 amount_collected: collection.collected,
                 account_invoice_due: collection.accountDue,
                 laybuy_deposit: collection.laybuyDeposit,
+                items: formatOrderItemSummary(order.items),
                 laybuy_outstanding: collection.laybuyOutstanding,
                 cogs: Number(order.cogs ?? 0),
             };
@@ -866,11 +884,7 @@ export default function ReportsPage() {
                 const fiscalInvoice = toTrimmedString(
                     (order as any)?.fiscalInvoiceNumber ?? (order as any)?.fiscal_invoice_number
                 );
-                const itemsSummary = Array.isArray(order.items)
-                    ? order.items
-                          .map((item) => `${item.name} x${item.quantity} @ ${Number(item.price ?? 0).toFixed(2)}`)
-                          .join(' | ')
-                    : '';
+                const itemsSummary = formatOrderItemSummary(order.items, true);
 
                 return {
                     receipt_id: order.id,
@@ -1351,13 +1365,14 @@ export default function ReportsPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="overflow-x-auto">
-                    <Table className="min-w-[860px]">
+                    <Table className="min-w-[1040px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Order #</TableHead>
                                 <TableHead>Date</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Payment</TableHead>
+                                <TableHead>Items</TableHead>
                                 <TableHead className="text-right">VAT</TableHead>
                                 <TableHead className="text-right">Levies / Charges</TableHead>
                                 <TableHead className="text-right">Total</TableHead>
@@ -1366,13 +1381,16 @@ export default function ReportsPage() {
                         </TableHeader>
                         <TableBody>
                             {!allOrders ? (
-                                <TableRow><TableCell colSpan={8} className="text-center"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
+                                <TableRow><TableCell colSpan={9} className="text-center"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
                             ) : allOrders.map(order => (
                                 <TableRow key={order.id} className={`${order.status === 'Voided' ? 'opacity-60' : ''}`}>
                                     <TableCell className="font-mono">#{order.orderNumber}</TableCell>
                                     <TableCell>{format(new Date(order.createdAt), 'PPpp')}</TableCell>
                                     <TableCell><Badge variant={orderStatusBadge[order.status]}>{order.status}</Badge></TableCell>
                                     <TableCell><Badge variant="outline">{order.paymentMethod}</Badge></TableCell>
+                                    <TableCell className="max-w-[20rem] whitespace-normal text-xs text-muted-foreground">
+                                        {formatOrderItemSummary(order.items) || 'No items recorded'}
+                                    </TableCell>
                                     <TableCell className="text-right text-blue-700">{formatCurrency(Number(order.tax ?? order.vatAmount ?? order.vat_amount ?? 0))}</TableCell>
                                     <TableCell className="text-right text-amber-700">{formatCurrency(getOrderChargeBreakdown(order as any).total)}</TableCell>
                                     <TableCell className="text-right font-semibold">{formatCurrency(order.total)}</TableCell>

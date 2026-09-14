@@ -69,6 +69,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { downloadTextFile } from '@/lib/file-download';
 import { isKitchenBusinessType, isSalonServiceBusinessType } from '@/lib/inventory/config';
+import { getSelectedOptionNames } from '@/lib/selected-options';
 import { ViewOrdersModal } from '@/components/pos/view-orders-modal';
 
 interface DashboardData {
@@ -144,6 +145,12 @@ interface DashboardData {
     amount: number;
     paymentMethod: string;
     createdAt: string;
+    items?: Array<{
+      name: string;
+      quantity: number;
+      selected_options?: Array<Record<string, unknown>>;
+      selectedOptions?: Array<Record<string, unknown>>;
+    }>;
   }>;
   activeSession?: {
     id: string;
@@ -207,6 +214,18 @@ const iconMap: Record<string, React.ComponentType<any>> = {
   TrendingUp,
   ShoppingCart,
   Package,
+};
+
+const formatRecentSaleItems = (sale: NonNullable<DashboardData['recentSales']>[number]): string => {
+  if (!Array.isArray(sale.items)) return '';
+
+  return sale.items
+    .map((item) => {
+      const optionNames = getSelectedOptionNames(item);
+      const choiceSummary = optionNames.length > 0 ? ` (${optionNames.join(', ')})` : '';
+      return `${item.name} x${item.quantity}${choiceSummary}`;
+    })
+    .join(' · ');
 };
 
 const parseDashboardDateTime = (value: unknown): Date | null => {
@@ -851,9 +870,12 @@ function AdminManagerDashboard({
               <div className="space-y-4">
                 {dashboardData.recentSales.map((sale: any) => (
                   <div key={sale.id} className="flex items-center justify-between border-b pb-3 last:border-0">
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                       <p className="font-medium text-sm">{sale.description || `Sale #${sale.id}`}</p>
                       <p className="text-xs text-muted-foreground">{format(new Date(sale.createdAt), 'p')}</p>
+                      {formatRecentSaleItems(sale) && (
+                        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{formatRecentSaleItems(sale)}</p>
+                      )}
                     </div>
                     <div className="text-right">
                       <p className="font-semibold">{formatCurrency(sale.amount)}</p>
@@ -1190,9 +1212,12 @@ function CashierWaiterDashboard({
             <div className="space-y-4">
               {dashboardData.recentSales.map((sale: any) => (
                 <div key={sale.id} className="flex items-center justify-between border-b pb-3 last:border-0">
-                  <div className="flex-1">
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium text-sm">{sale.description || `Sale #${sale.id}`}</p>
                     <p className="text-xs text-muted-foreground">{format(new Date(sale.createdAt), 'p')}</p>
+                    {formatRecentSaleItems(sale) && (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{formatRecentSaleItems(sale)}</p>
+                    )}
                   </div>
                   <div className="text-right">
                     <p className="font-semibold">{formatCurrency(sale.amount)}</p>

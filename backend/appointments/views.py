@@ -18,6 +18,7 @@ from take_orders.models import TakeOrder, TakeOrderItem
 from take_orders.session_access import get_active_staff_session
 
 from .models import Appointment, AppointmentDeposit
+from .service_labels import format_appointment_service_label
 from .serializers import (
     AppointmentDepositWriteSerializer,
     AppointmentSerializer,
@@ -52,8 +53,8 @@ def _user_can_manage_appointment_outcome(user, appointment):
         return False
 
 
-def _user_can_record_appointment_deposit(user, appointment):
-    """Deposits are cashier work and must be attached to the user's own session."""
+def _user_can_handle_appointment_cashier_work(user, appointment):
+    """Check-in and deposits create financial activity for the cashier's session."""
     if not user or not getattr(user, 'is_authenticated', False):
         return False
     if getattr(user, 'is_superuser', False) or appointment.business.owner_id == user.id:
@@ -94,7 +95,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         queryset = Appointment.objects.filter(
             business_id__in=get_accessible_business_ids(self.request.user)
         ).select_related(
-            'business', 'branch', 'customer', 'take_order', 'created_by', 'checked_in_by',
+            'business', 'branch', 'customer', 'take_order', 'settled_order', 'created_by', 'checked_in_by',
             'cancelled_by', 'no_show_by',
         ).prefetch_related('deposits__payment_transaction', 'deposits__recorded_by')
         branch_id = self.request.query_params.get('branch') or self.request.query_params.get('branch_id')
@@ -218,6 +219,8 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 {'detail': 'This appointment has already been checked in or is no longer available for check-in.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if not _user_can_handle_appointment_cashier_work(request.user, appointment):
+            raise PermissionDenied('Only a cashier, manager, or admin user can check in an appointment.')
 
         active_session = get_active_staff_session(
             user=request.user,
@@ -300,7 +303,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 {'detail': 'Deposits can only be recorded for an open appointment.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not _user_can_record_appointment_deposit(request.user, appointment):
+        if not _user_can_handle_appointment_cashier_work(request.user, appointment):
             raise PermissionDenied('Only a cashier, manager, or admin user can record an appointment deposit.')
 
         active_session = get_active_staff_session(
@@ -443,7 +446,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             for service in (appointment.services if isinstance(appointment.services, list) else []):
                 if not isinstance(service, dict):
                     continue
-                service_name = str(service.get('name') or '').strip()
+                service_name = format_appointment_service_label(service)
                 if not service_name:
                     continue
                 service_total = _money(service.get('total'))

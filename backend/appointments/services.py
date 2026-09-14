@@ -46,7 +46,7 @@ def _settlement_metadata(order):
 
 
 def settle_appointment_order(order, *, created_by=None):
-    """Apply a recorded appointment deposit and final checkout payment once.
+    """Settle an appointment sale and apply its deposit when one was recorded.
 
     Appointment deposits are deliberately excluded from the general prepaid-credit
     allocator. This keeps them reserved for the appointment they were recorded
@@ -80,18 +80,15 @@ def settle_appointment_order(order, *, created_by=None):
             raise ValidationError('Cancelled or no-show appointments cannot be settled.')
         if order.customer_id and order.customer_id != appointment.customer_id:
             raise ValidationError('The sale customer does not match the appointment customer.')
+        if appointment.settled_order_id and appointment.settled_order_id != order.id:
+            raise ValidationError('This appointment has already been settled by another sale.')
 
         deposits = list(
             appointment.deposits.select_for_update()
             .select_related('payment_transaction')
             .order_by('created_at', 'id')
         )
-        if not deposits:
-            raise ValidationError('This appointment has no recorded deposit to settle.')
-
         deposit_total = sum((_money(deposit.amount) for deposit in deposits), Decimal('0.00'))
-        if deposit_total <= 0:
-            raise ValidationError('This appointment has no usable deposit to settle.')
 
         if order.customer_id != appointment.customer_id:
             order.customer = appointment.customer
@@ -218,6 +215,7 @@ def settle_appointment_order(order, *, created_by=None):
                 'recorded_at': final_payment.created_at.isoformat() if final_payment.created_at else None,
             })
 
+        settled_at = timezone.now()
         settled_metadata = {
             'appointment_id': str(appointment.id),
             'take_order_id': str(appointment.take_order_id),
@@ -225,7 +223,7 @@ def settle_appointment_order(order, *, created_by=None):
             'deposit_total': str(_money(sum((allocation.amount for allocation in allocation_by_payment_id.values()), Decimal('0.00')))),
             'final_payment_amount': str(_money(final_payment.amount if final_payment else 0)),
             'final_payment_method': final_payment_method,
-            'settled_at': timezone.now().isoformat(),
+            'settled_at': settled_at.isoformat(),
         }
         type(order).objects.filter(pk=order.pk).update(
             payment_breakdown=payment_breakdown,
@@ -237,6 +235,30 @@ def settle_appointment_order(order, *, created_by=None):
         order.appointment_settlement = settled_metadata
         order.is_paid = True
         order.is_dirty = True
+
+        appointment_update_fields = []
+        if appointment.settled_order_id != order.id:
+            appointment.settled_order = order
+            appointment_update_fields.append('settled_order')
+        if appointment.status != Appointment.STATUS_COMPLETED:
+            appointment.status = Appointment.STATUS_COMPLETED
+            appointment_update_fields.append('status')
+        if not appointment.completed_at:
+            appointment.completed_at = settled_at
+            appointment_update_fields.append('completed_at')
+        if appointment_update_fields:
+            appointment_update_fields.append('updated_at')
+            appointment.save(update_fields=appointment_update_fields)
+
+        take_order = appointment.take_order
+        if take_order and take_order.status != 'Completed':
+            take_order.status = 'Completed'
+            take_order.completed_at = settled_at
+            update_fields = ['status', 'completed_at', 'updated_at']
+            if getattr(created_by, 'pk', None):
+                take_order.completed_by = created_by
+                update_fields.append('completed_by')
+            take_order.save(update_fields=update_fields)
         return {
             'appointment': appointment,
             'invoice': invoice,

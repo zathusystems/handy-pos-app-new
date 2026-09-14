@@ -37,6 +37,7 @@ import {
 import { getNextReceiptCopyNumber, markReceiptPrinted } from '@/lib/services/receipt-copy-service';
 import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { getOrderChargeBreakdown, getOrderChargeSnapshotRows } from '@/lib/z-report-print';
+import { getSelectedOptionNames } from '@/lib/selected-options';
 import {
   Dialog,
   DialogContent,
@@ -530,6 +531,7 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
       itemTaxAmount,
       itemTotal,
       quantityDisplay,
+      selectedOptionNames: getSelectedOptionNames(item),
     };
   });
 
@@ -731,6 +733,11 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
                           {item.notes && (
                             <p className="mt-1 text-xs text-muted-foreground break-words">{item.notes}</p>
                           )}
+                          {item.selectedOptionNames.length > 0 && (
+                            <p className="mt-1 break-words text-xs text-muted-foreground">
+                              Choices: {item.selectedOptionNames.join(' · ')}
+                            </p>
+                          )}
                         </div>
                         <p className="text-sm font-bold whitespace-nowrap">{formatCurrency(item.itemTotal)}</p>
                       </div>
@@ -796,6 +803,11 @@ export default function SaleDetailModal({ order, isOpen, onOpenChange }: { order
                                 Qty: {item.quantityDisplay}
                               </p>
                               {item.notes && <p className="text-xs text-muted-foreground mt-1">{item.notes}</p>}
+                              {item.selectedOptionNames.length > 0 && (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  Choices: {item.selectedOptionNames.join(' · ')}
+                                </p>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell className="text-right">{formatCurrency(item.itemPrice)}</TableCell>

@@ -1072,8 +1072,7 @@ const PaymentDialog = ({
     const isAppointmentSettlement = Boolean(
         appointmentSettlement?.appointmentId &&
         appointmentSettlement?.takeOrderId &&
-        appointmentSettlement?.customerId &&
-        appointmentDepositTotal > 0
+        appointmentSettlement?.customerId
     );
     const customerRequiredPayment = selectedPaymentMethod === 'On Account' || selectedPaymentMethod === 'Laybuy';
     const isCustomerDetailsOpen = showBuyerDetails || customerRequiredPayment || isAppointmentSettlement;
@@ -1884,7 +1883,7 @@ const PaymentDialog = ({
             toast({
                 variant: 'destructive',
                 title: 'Choose a final payment method',
-                description: 'Appointment deposits can only be settled with cash, card, mobile money, bank transfer, or other.',
+                description: 'Appointment checkouts can only use cash, card, mobile money, bank transfer, or other.',
             });
             return;
         }
@@ -2787,7 +2786,7 @@ const PaymentDialog = ({
                     )}
                     <Separator className="my-1" />
                     <div className="flex justify-between text-lg font-bold text-primary"><span>Total Amount Due</span><span>{currencyFormatter(total)}</span></div>
-                    {isAppointmentSettlement && (
+                    {isAppointmentSettlement && appointmentDepositTotal > 0 && (
                         <>
                             <div className="flex justify-between text-xs text-emerald-700 dark:text-emerald-300">
                                 <span>Appointment deposit already paid</span>
@@ -2902,7 +2901,7 @@ const PaymentDialog = ({
                             </Label>
                             <p className="text-xs text-muted-foreground">
                                 {isAppointmentSettlement
-                                    ? 'The recorded appointment deposit and final payment stay attached to this customer.'
+                                    ? 'This appointment payment stays attached to the selected customer.'
                                     : selectedPaymentMethod === 'Laybuy'
                                     ? 'Required so deposits and installments stay attached to the right customer.'
                                     : selectedPaymentMethod === 'On Account'
@@ -2959,7 +2958,7 @@ const PaymentDialog = ({
                                 </select>
                                 <p className="text-[11px] text-muted-foreground">
                                     {isAppointmentSettlement
-                                        ? 'This customer is locked to the appointment so its deposit is applied to the right service.'
+                                        ? 'This customer is locked to the appointment so its payment is applied to the right service.'
                                         : isLoadingCustomers
                                         ? 'Refreshing saved customers...'
                                         : selectedPaymentMethod === 'Laybuy'

@@ -1762,10 +1762,11 @@ export function PosModal({
     const appointmentDepositTotal = Number(
       rawAppointmentSettlement?.depositTotal ?? rawAppointmentSettlement?.deposit_total ?? 0
     );
+    const normalizedAppointmentDepositTotal = Number.isFinite(appointmentDepositTotal)
+      ? Math.max(0, appointmentDepositTotal)
+      : 0;
     const appointmentContext: AppointmentSettlementContext | null = (
       rawAppointmentSettlement &&
-      Number.isFinite(appointmentDepositTotal) &&
-      appointmentDepositTotal > 0 &&
       String(rawAppointmentSettlement.appointmentId ?? rawAppointmentSettlement.appointment_id ?? '').trim() &&
       String(rawAppointmentSettlement.takeOrderId ?? rawAppointmentSettlement.take_order_id ?? '').trim() &&
       String(rawAppointmentSettlement.customerId ?? rawAppointmentSettlement.customer_id ?? '').trim()
@@ -1775,14 +1776,14 @@ export function PosModal({
       customerId: String(rawAppointmentSettlement.customerId ?? rawAppointmentSettlement.customer_id).trim(),
       customerName: String(rawAppointmentSettlement.customerName ?? rawAppointmentSettlement.customer_name ?? '').trim() || undefined,
       customerPhone: String(rawAppointmentSettlement.customerPhone ?? rawAppointmentSettlement.customer_phone ?? '').trim() || undefined,
-      depositTotal: appointmentDepositTotal,
+      depositTotal: normalizedAppointmentDepositTotal,
     } : null;
 
     if (appointmentContext && cart.length > 0) {
       toast({
         variant: 'destructive',
         title: 'Finish the current sale first',
-        description: 'An appointment deposit can only be applied to its own service order.',
+        description: 'An appointment checkout can only be applied to its own service order.',
       });
       return false;
     }
@@ -1936,7 +1937,7 @@ export function PosModal({
       toast({
         variant: 'destructive',
         title: 'Appointment order is locked for checkout',
-        description: 'Update the service order before applying its recorded deposit.',
+        description: 'Update the service order before checking out the appointment.',
       });
       return;
     }
@@ -2416,6 +2417,18 @@ export function PosModal({
     const appointmentFinalPaymentAmount = isAppointmentCheckout
       ? Math.max(0, total - appointmentDepositApplied)
       : total;
+    const appointmentPaymentBreakdown = isAppointmentCheckout ? [
+      ...(appointmentDepositApplied > 0 ? [{
+        source: 'appointment_deposit',
+        amount: appointmentDepositApplied,
+        payment_method: 'Appointment Deposit',
+      }] : []),
+      {
+        source: 'checkout',
+        amount: appointmentFinalPaymentAmount,
+        payment_method: appointmentCheckout?.finalPaymentMethod,
+      },
+    ] : undefined;
     let orderCogs = 0;
     let finalOrder: Order | null = null;
     const shouldMoveStockImmediately = paymentMethod !== 'Laybuy';
@@ -2905,30 +2918,8 @@ export function PosModal({
           }),
           status: isKitchenOrder ? 'New' : 'Completed',
           paymentMethod: orderPaymentMethod,
-          paymentBreakdown: isAppointmentCheckout ? [
-            {
-              source: 'appointment_deposit',
-              amount: appointmentDepositApplied,
-              payment_method: 'Appointment Deposit',
-            },
-            {
-              source: 'checkout',
-              amount: appointmentFinalPaymentAmount,
-              payment_method: appointmentCheckout?.finalPaymentMethod,
-            },
-          ] : undefined,
-          payment_breakdown: isAppointmentCheckout ? [
-            {
-              source: 'appointment_deposit',
-              amount: appointmentDepositApplied,
-              payment_method: 'Appointment Deposit',
-            },
-            {
-              source: 'checkout',
-              amount: appointmentFinalPaymentAmount,
-              payment_method: appointmentCheckout?.finalPaymentMethod,
-            },
-          ] : undefined,
+          paymentBreakdown: appointmentPaymentBreakdown,
+          payment_breakdown: appointmentPaymentBreakdown,
           appointmentSettlement: isAppointmentCheckout ? {
             appointmentId: appointmentCheckout?.appointmentId,
             takeOrderId: appointmentCheckout?.takeOrderId,
@@ -3055,12 +3046,18 @@ export function PosModal({
       }
 
       if (takeOrderIdsInCart.length > 0) {
-        try {
-          const result = await markTakeOrdersCompleted(takeOrderIdsInCart);
-          console.log('[TakeOrder] Marked take orders as completed:', result.completed);
+        if (isAppointmentCheckout) {
+          // The server marks appointment service orders complete only after the
+          // appointment payment and its ledger entries have been saved.
           setTakeOrderIdsInCart([]);
-        } catch (error) {
-          console.warn('[TakeOrder] Failed to mark take orders as completed:', error);
+        } else {
+          try {
+            const result = await markTakeOrdersCompleted(takeOrderIdsInCart);
+            console.log('[TakeOrder] Marked take orders as completed:', result.completed);
+            setTakeOrderIdsInCart([]);
+          } catch (error) {
+            console.warn('[TakeOrder] Failed to mark take orders as completed:', error);
+          }
         }
       }
       if (isAppointmentCheckout) {
@@ -3084,7 +3081,9 @@ export function PosModal({
       toast({
         title: `Order #${displayOrderNumber} Created`,
         description: isAppointmentCheckout
-          ? `Appointment deposit applied; ${appointmentCheckout?.finalPaymentMethod} balance collected for ${appointmentFinalPaymentAmount.toFixed(2)}.`
+          ? appointmentDepositApplied > 0
+            ? `Appointment deposit applied; ${appointmentCheckout?.finalPaymentMethod} balance collected for ${appointmentFinalPaymentAmount.toFixed(2)}.`
+            : `Appointment checkout recorded; ${appointmentCheckout?.finalPaymentMethod} payment collected for ${appointmentFinalPaymentAmount.toFixed(2)}.`
           : `${paymentMethod} sale completed for ${total.toFixed(2)}.`,
       });
 
