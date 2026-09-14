@@ -17,6 +17,7 @@ import {
   Trash2,
   Receipt,
   FileText,
+  Scissors,
 } from 'lucide-react';
 import {
   Area,
@@ -67,7 +68,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { downloadTextFile } from '@/lib/file-download';
-import { isKitchenBusinessType } from '@/lib/inventory/config';
+import { isKitchenBusinessType, isSalonServiceBusinessType } from '@/lib/inventory/config';
 import { ViewOrdersModal } from '@/components/pos/view-orders-modal';
 
 interface DashboardData {
@@ -162,6 +163,43 @@ interface DashboardData {
     started_at: string;
     active_session_count?: number;
   } | null;
+  salonDashboard?: {
+    range: {
+      fromDate: string;
+      toDate: string;
+    };
+    totals: {
+      appointments: number;
+      booked: number;
+      checked_in: number;
+      in_service: number;
+      ready_for_payment: number;
+      completed: number;
+      cancelled: number;
+      no_show: number;
+      scheduledValue: number;
+      completedServiceValue: number;
+      depositsReceived: number;
+      openBalance: number;
+    };
+    upcomingAppointments: Array<{
+      id: string;
+      customerName: string;
+      customerPhone?: string;
+      scheduledStart: string;
+      scheduledEnd: string;
+      status: 'booked' | 'checked_in' | 'in_service' | 'ready_for_payment' | 'completed' | 'cancelled' | 'no_show';
+      services: string[];
+      total: number;
+      balanceDue: number;
+    }>;
+    topServices: Array<{
+      name: string;
+      appointments: number;
+      quantity: number;
+      value: number;
+    }>;
+  };
 }
 
 const iconMap: Record<string, React.ComponentType<any>> = {
@@ -256,17 +294,21 @@ function DashboardFilters({
   setDate,
   onExport,
   isExportDisabled = false,
+  title = 'Dashboard',
+  description = "Welcome back, here's a look at your business.",
 }: {
   date?: DateRange;
   setDate: (date?: DateRange) => void;
   onExport: () => void;
   isExportDisabled?: boolean;
+  title?: string;
+  description?: string;
 }) {
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">Welcome back, here&apos;s a look at your business.</p>
+        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+        <p className="text-muted-foreground">{description}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>
@@ -500,6 +542,153 @@ function CollectionsDueCard({
   );
 }
 
+function SalonDashboardOverview({
+  dashboardData,
+  isLoading,
+  formatCurrency,
+  router,
+}: {
+  dashboardData: DashboardData | null;
+  isLoading: boolean;
+  formatCurrency: (value: number) => string;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const salonDashboard = dashboardData?.salonDashboard;
+  const totals = salonDashboard?.totals;
+  const displayStatus = (value: string) => value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-medium text-primary">
+            <Scissors className="h-4 w-4" />
+            Salon workspace
+          </div>
+          <h2 className="mt-1 text-xl font-semibold">Appointments and services</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Keep the day moving from booking to payment.</p>
+        </div>
+        <Button variant="outline" onClick={() => router.push('/dashboard/appointments')}>
+          <CalendarIcon className="h-4 w-4" />
+          View appointments
+        </Button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {isLoading
+          ? Array.from({ length: 4 }).map((_, index) => (
+              <Card key={index}>
+                <CardContent className="space-y-2 p-4">
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-7 w-14" />
+                  <Skeleton className="h-3 w-32" />
+                </CardContent>
+              </Card>
+            ))
+          : [
+              {
+                label: 'Appointments',
+                value: totals?.appointments ?? 0,
+                detail: `${totals?.booked ?? 0} booked`,
+              },
+              {
+                label: 'In service',
+                value: totals?.in_service ?? 0,
+                detail: `${totals?.checked_in ?? 0} checked in`,
+              },
+              {
+                label: 'Ready for payment',
+                value: totals?.ready_for_payment ?? 0,
+                detail: `${totals?.completed ?? 0} completed`,
+              },
+              {
+                label: 'Open appointment balance',
+                value: formatCurrency(Number(totals?.openBalance ?? 0)),
+                detail: `${formatCurrency(Number(totals?.depositsReceived ?? 0))} deposits received`,
+              },
+            ].map((metric) => (
+              <Card key={metric.label}>
+                <CardContent className="p-4">
+                  <p className="text-xs font-medium uppercase text-muted-foreground">{metric.label}</p>
+                  <p className="mt-1 text-2xl font-semibold">{metric.value}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{metric.detail}</p>
+                </CardContent>
+              </Card>
+            ))}
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">Next appointments</CardTitle>
+              <CardDescription>Upcoming client bookings at this branch.</CardDescription>
+            </div>
+            {!isLoading && <Badge variant="outline">{salonDashboard?.upcomingAppointments.length ?? 0} upcoming</Badge>}
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-40 w-full" />
+            ) : salonDashboard?.upcomingAppointments.length ? (
+              <div className="space-y-3">
+                {salonDashboard.upcomingAppointments.map((appointment) => (
+                  <div key={appointment.id} className="flex items-start justify-between gap-3 border-b pb-3 last:border-0 last:pb-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-semibold">{appointment.customerName}</p>
+                        <Badge variant="secondary" className="capitalize">{displayStatus(appointment.status)}</Badge>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        {format(new Date(appointment.scheduledStart), 'EEE, p')} · {appointment.services.slice(0, 2).join(', ') || 'Service not specified'}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-sm font-semibold">{formatCurrency(appointment.total)}</p>
+                      {appointment.balanceDue > 0 && (
+                        <p className="mt-1 text-xs text-amber-700">{formatCurrency(appointment.balanceDue)} due</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="py-7 text-center text-sm text-muted-foreground">No upcoming appointments.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Top services</CardTitle>
+            <CardDescription>Most booked services in the selected period.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-40 w-full" />
+            ) : salonDashboard?.topServices.length ? (
+              <div className="space-y-3">
+                {salonDashboard.topServices.map((service) => (
+                  <div key={service.name} className="flex items-center justify-between gap-3 border-b pb-3 last:border-0 last:pb-0">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{service.name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {service.appointments} appointment{service.appointments === 1 ? '' : 's'} · {service.quantity} booked
+                      </p>
+                    </div>
+                    <p className="shrink-0 text-sm font-semibold">{formatCurrency(service.value)}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="py-7 text-center text-sm text-muted-foreground">No services booked in this period.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
 // Admin/Manager Dashboard Component
 function AdminManagerDashboard({
   dashboardData,
@@ -510,7 +699,9 @@ function AdminManagerDashboard({
   formatCurrency,
   router,
   onExport,
+  businessType,
 }: any) {
+  const isSalonBusiness = isSalonServiceBusinessType(businessType);
   const currentDaySession = useMemo(
     () => getCurrentDaySession(dashboardData?.activeSession || null),
     [dashboardData?.activeSession]
@@ -551,7 +742,18 @@ function AdminManagerDashboard({
         setDate={setDateRange}
         onExport={onExport}
         isExportDisabled={isLoading}
+        title={isSalonBusiness ? 'Salon Dashboard' : 'Dashboard'}
+        description={isSalonBusiness ? 'Appointments, service progress, and sales for your branch.' : undefined}
       />
+
+      {isSalonBusiness && (
+        <SalonDashboardOverview
+          dashboardData={dashboardData}
+          isLoading={isLoading}
+          formatCurrency={formatCurrency}
+          router={router}
+        />
+      )}
 
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 md:gap-6 lg:grid-cols-4">
@@ -593,28 +795,28 @@ function AdminManagerDashboard({
         <Button
           variant="outline"
           className="h-auto flex-row items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-500/5 hover:bg-blue-500/10 dark:bg-blue-500/10 dark:hover:bg-blue-500/20 border-blue-500/20 dark:border-blue-500/30"
-          onClick={() => router.push('/dashboard/inventory?tab=purchases&modal=receive')}
+          onClick={() => router.push(isSalonBusiness ? '/dashboard/appointments' : '/dashboard/inventory?tab=purchases&modal=receive')}
         >
-          <Truck className="h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-          <span className="text-xs font-medium">Receive</span>
+          {isSalonBusiness ? <CalendarIcon className="h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" /> : <Truck className="h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />}
+          <span className="text-xs font-medium">{isSalonBusiness ? 'Appointments' : 'Receive'}</span>
         </Button>
 
         <Button
           variant="outline"
           className="h-auto flex-row items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-500/5 hover:bg-red-500/10 dark:bg-red-500/10 dark:hover:bg-red-500/20 border-red-500/20 dark:border-red-500/30"
-          onClick={() => router.push('/dashboard/inventory?tab=waste&modal=waste')}
+          onClick={() => router.push(isSalonBusiness ? '/dashboard/menu' : '/dashboard/inventory?tab=waste&modal=waste')}
         >
-          <Trash2 className="h-4 w-4 flex-shrink-0 text-red-600 dark:text-red-400" />
-          <span className="text-xs font-medium">Waste</span>
+          {isSalonBusiness ? <Scissors className="h-4 w-4 flex-shrink-0 text-red-600 dark:text-red-400" /> : <Trash2 className="h-4 w-4 flex-shrink-0 text-red-600 dark:text-red-400" />}
+          <span className="text-xs font-medium">{isSalonBusiness ? 'Services' : 'Waste'}</span>
         </Button>
 
         <Button
           variant="outline"
           className="h-auto flex-row items-center justify-center gap-2 px-3 py-2 rounded-lg bg-orange-500/5 hover:bg-orange-500/10 dark:bg-orange-500/10 dark:hover:bg-orange-500/20 border-orange-500/20 dark:border-orange-500/30"
-          onClick={() => router.push('/dashboard/expenses')}
+          onClick={() => router.push(isSalonBusiness ? '/dashboard/customers' : '/dashboard/expenses')}
         >
-          <Receipt className="h-4 w-4 flex-shrink-0 text-orange-600 dark:text-orange-400" />
-          <span className="text-xs font-medium">Expense</span>
+          {isSalonBusiness ? <ClipboardList className="h-4 w-4 flex-shrink-0 text-orange-600 dark:text-orange-400" /> : <Receipt className="h-4 w-4 flex-shrink-0 text-orange-600 dark:text-orange-400" />}
+          <span className="text-xs font-medium">{isSalonBusiness ? 'Clients' : 'Expense'}</span>
         </Button>
 
         <Button
@@ -870,6 +1072,7 @@ function CashierWaiterDashboard({
   currentUserRole,
 }: any) {
   const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
+  const isSalonBusiness = isSalonServiceBusinessType(businessType);
   const currentDaySession = useMemo(
     () => getCurrentDaySession(dashboardData?.activeSession || null),
     [dashboardData?.activeSession]
@@ -905,19 +1108,32 @@ function CashierWaiterDashboard({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">Welcome back, here&apos;s your quick overview.</p>
+          <h1 className="text-2xl font-bold tracking-tight">{isSalonBusiness ? 'Salon Dashboard' : 'Dashboard'}</h1>
+          <p className="text-muted-foreground">
+            {isSalonBusiness ? 'Appointments, service progress, and payment readiness for your branch.' : "Welcome back, here's your quick overview."}
+          </p>
         </div>
       </div>
+
+      {isSalonBusiness && (
+        <SalonDashboardOverview
+          dashboardData={dashboardData}
+          isLoading={isLoading}
+          formatCurrency={formatCurrency}
+          router={router}
+        />
+      )}
 
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
               <ClipboardList className="h-5 w-5 text-primary" />
-              Orders
+              {isSalonBusiness ? 'Service orders' : 'Orders'}
             </CardTitle>
-            <CardDescription>Take new orders and respond to customer requests.</CardDescription>
+            <CardDescription>
+              {isSalonBusiness ? 'Check clients in, manage service progress, and collect payment.' : 'Take new orders and respond to customer requests.'}
+            </CardDescription>
           </div>
           <Button onClick={() => setIsOrdersModalOpen(true)} disabled={!activeBranchId}>
             Open Orders
@@ -933,11 +1149,11 @@ function CashierWaiterDashboard({
                 <p className="mt-1 text-2xl font-semibold">{attentionOrderCount}</p>
               </div>
               <div className="rounded-lg border bg-muted/30 p-3">
-                <p className="text-xs font-medium uppercase text-muted-foreground">Ready for Sale</p>
+                <p className="text-xs font-medium uppercase text-muted-foreground">{isSalonBusiness ? 'Ready for payment' : 'Ready for Sale'}</p>
                 <p className="mt-1 text-2xl font-semibold">{readyOrderCount}</p>
               </div>
               <div className="rounded-lg border bg-muted/30 p-3">
-                <p className="text-xs font-medium uppercase text-muted-foreground">Open Orders</p>
+                <p className="text-xs font-medium uppercase text-muted-foreground">{isSalonBusiness ? 'Open services' : 'Open Orders'}</p>
                 <p className="mt-1 text-2xl font-semibold">{openOrderCount}</p>
               </div>
             </div>
@@ -1205,6 +1421,41 @@ export default function DashboardPage() {
       });
     });
 
+    if (dashboardData.salonDashboard) {
+      const { totals } = dashboardData.salonDashboard;
+      rows.push(
+        {
+          section: 'Appointments',
+          metric: 'Appointments',
+          value: Number(totals.appointments || 0),
+        },
+        {
+          section: 'Appointments',
+          metric: 'Completed services',
+          value: Number(totals.completed || 0),
+        },
+        {
+          section: 'Appointments',
+          metric: 'Deposits received',
+          value: Number(totals.depositsReceived || 0),
+        },
+        {
+          section: 'Appointments',
+          metric: 'Open appointment balance',
+          value: Number(totals.openBalance || 0),
+        },
+      );
+      dashboardData.salonDashboard.topServices.forEach((service) => {
+        rows.push({
+          section: 'Top Service',
+          name: service.name,
+          appointments: Number(service.appointments || 0),
+          quantity: Number(service.quantity || 0),
+          value: Number(service.value || 0),
+        });
+      });
+    }
+
     if (rows.length === 0) {
       toast({
         variant: 'destructive',
@@ -1263,6 +1514,7 @@ export default function DashboardPage() {
         formatCurrency={formatCurrency}
         router={router}
         onExport={handleExportDashboardData}
+        businessType={business?.type}
       />
     );
   }

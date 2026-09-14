@@ -108,6 +108,8 @@ export function DashboardHeader({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const businessId = business?.id || user?.businessId || null;
+  const canViewSubscriptionAlerts = user?.role === 'Admin' || user?.role === 'Manager';
+  const canManageSubscription = user?.role === 'Admin';
   const mobileBusinessName = useMemo(() => {
     if (business?.name?.trim()) {
       return business.name.trim();
@@ -144,6 +146,13 @@ export function DashboardHeader({
 
   useEffect(() => {
     if (isAuthLoading || !businessId) {
+      return;
+    }
+
+    if (!canViewSubscriptionAlerts) {
+      setSubscriptionReminder(null);
+      setShowOutOfCreditsModal(false);
+      setShowLowFundsModal(false);
       return;
     }
 
@@ -215,7 +224,7 @@ export function DashboardHeader({
       active = false;
       window.removeEventListener('focus', handleFocus);
     };
-  }, [businessId, isAuthLoading, isBillingAddCreditFlow]);
+  }, [businessId, canViewSubscriptionAlerts, isAuthLoading, isBillingAddCreditFlow]);
 
   useEffect(() => {
     const backendBranchId = normalizeHeaderBranchId(propBranchId);
@@ -593,9 +602,13 @@ export function DashboardHeader({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction onClick={openBillingAddCredit}>
-              Go to Billing and Add Credits
-            </AlertDialogAction>
+            {canManageSubscription ? (
+              <AlertDialogAction onClick={openBillingAddCredit}>
+                Go to Billing and Add Credits
+              </AlertDialogAction>
+            ) : (
+              <AlertDialogAction>Contact Administrator</AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -611,9 +624,13 @@ export function DashboardHeader({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Later</AlertDialogCancel>
-            <AlertDialogAction onClick={openBillingAddCredit}>
-              Add Credits
-            </AlertDialogAction>
+            {canManageSubscription ? (
+              <AlertDialogAction onClick={openBillingAddCredit}>
+                Add Credits
+              </AlertDialogAction>
+            ) : (
+              <AlertDialogAction>Contact Administrator</AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

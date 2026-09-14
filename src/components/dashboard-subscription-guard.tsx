@@ -219,18 +219,22 @@ export function DashboardSubscriptionGuard({
   }
 
   const isAdminUser = user?.role === 'Admin';
-  const title =
-    guardState.reason === 'no_subscription'
+  const isManagerUser = user?.role === 'Manager';
+  const canViewSubscriptionDetails = isAdminUser || isManagerUser;
+  const title = canViewSubscriptionDetails
+    ? guardState.reason === 'no_subscription'
       ? 'Subscription Setup Required'
       : guardState.reason === 'inactive'
         ? 'Subscription Access Paused'
-        : 'Add Credits to Continue';
-  const description =
-    guardState.reason === 'no_subscription'
+        : 'Add Credits to Continue'
+    : 'Service Paused';
+  const description = canViewSubscriptionDetails
+    ? guardState.reason === 'no_subscription'
       ? 'This business does not have an active subscription yet, so dashboard access is currently blocked.'
       : guardState.reason === 'inactive'
         ? `This business subscription is currently ${guardState.status || 'inactive'}, so dashboard access is paused.`
-        : 'This business has no remaining subscription funds, so dashboard access is blocked until credits are added.';
+        : 'This business has no remaining subscription funds, so dashboard access is blocked until credits are added.'
+    : 'This service is currently paused. Please contact your administrator.';
   const billingHref = buildSubscriptionBillingUrl({
     openAddCredit: guardState.reason === 'insufficient_balance',
     subscriptionGuard: true,
@@ -255,7 +259,7 @@ export function DashboardSubscriptionGuard({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {guardState.reason !== 'no_subscription' && (
+          {canViewSubscriptionDetails && guardState.reason !== 'no_subscription' && (
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Subscription balance</AlertTitle>
@@ -278,15 +282,15 @@ export function DashboardSubscriptionGuard({
                 </Button>
               )}
             </div>
-          ) : (
+          ) : canViewSubscriptionDetails ? (
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Admin action required</AlertTitle>
               <AlertDescription>
-                Please contact your administrator to restore subscription access for this business.
+                Please contact the business administrator to update billing and restore subscription access.
               </AlertDescription>
             </Alert>
-          )}
+          ) : null}
         </CardContent>
       </Card>
     </div>

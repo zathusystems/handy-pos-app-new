@@ -247,6 +247,141 @@ class DashboardViewSet(viewsets.ViewSet):
             outstanding = max(Decimal('0.00'), (order.total or Decimal('0.00')) - payment_total)
         payment_totals['Laybuy Outstanding'] += max(Decimal('0.00'), outstanding)
 
+    def _build_salon_dashboard(self, branch, from_date, to_date):
+        """Return the appointment-focused dashboard data used by salon and spa businesses."""
+        from appointments.models import Appointment, AppointmentDeposit
+
+        appointment_queryset = (
+            Appointment.objects
+            .filter(
+                branch=branch,
+                scheduled_start__gte=from_date,
+                scheduled_start__lte=to_date,
+            )
+            .select_related('customer')
+            .prefetch_related('deposits')
+            .order_by('scheduled_start')
+        )
+        appointments = list(appointment_queryset)
+        status_counts = {status_name: 0 for status_name, _label in Appointment.STATUS_CHOICES}
+        scheduled_value = Decimal('0.00')
+        completed_service_value = Decimal('0.00')
+        open_balance = Decimal('0.00')
+        service_totals = {}
+        open_statuses = {
+            Appointment.STATUS_BOOKED,
+            Appointment.STATUS_CHECKED_IN,
+            Appointment.STATUS_IN_SERVICE,
+            Appointment.STATUS_READY_FOR_PAYMENT,
+        }
+
+        for appointment in appointments:
+            status_counts[appointment.status] = status_counts.get(appointment.status, 0) + 1
+            appointment_total = appointment.total or Decimal('0.00')
+            scheduled_value += appointment_total
+            if appointment.status == Appointment.STATUS_COMPLETED:
+                completed_service_value += appointment_total
+
+            if appointment.status in open_statuses:
+                deposit_total = sum(
+                    (deposit.amount or Decimal('0.00') for deposit in appointment.deposits.all()),
+                    Decimal('0.00'),
+                )
+                open_balance += max(Decimal('0.00'), appointment_total - deposit_total)
+
+            if appointment.status not in {Appointment.STATUS_CANCELLED, Appointment.STATUS_NO_SHOW}:
+                for service in (appointment.services if isinstance(appointment.services, list) else []):
+                    service_name = str(service.get('name') or '').strip()
+                    if not service_name:
+                        continue
+                    service_data = service_totals.setdefault(
+                        service_name,
+                        {
+                            'appointment_ids': set(),
+                            'quantity': Decimal('0.00'),
+                            'value': Decimal('0.00'),
+                        },
+                    )
+                    service_data['appointment_ids'].add(appointment.id)
+                    service_data['quantity'] += Decimal(str(service.get('quantity') or 0))
+                    service_data['value'] += Decimal(str(service.get('total') or 0))
+
+        deposits_received = (
+            AppointmentDeposit.objects
+            .filter(
+                appointment__branch=branch,
+                created_at__gte=from_date,
+                created_at__lte=to_date,
+            )
+            .aggregate(total=Sum('amount'))['total']
+            or Decimal('0.00')
+        )
+
+        upcoming_appointments = (
+            Appointment.objects
+            .filter(
+                branch=branch,
+                status__in=open_statuses,
+                scheduled_start__gte=timezone.now(),
+            )
+            .select_related('customer')
+            .prefetch_related('deposits')
+            .order_by('scheduled_start')[:5]
+        )
+        upcoming_data = []
+        for appointment in upcoming_appointments:
+            deposit_total = sum(
+                (deposit.amount or Decimal('0.00') for deposit in appointment.deposits.all()),
+                Decimal('0.00'),
+            )
+            service_names = [
+                str(service.get('name') or '').strip()
+                for service in (appointment.services if isinstance(appointment.services, list) else [])
+                if str(service.get('name') or '').strip()
+            ]
+            upcoming_data.append({
+                'id': str(appointment.id),
+                'customerName': appointment.customer.name,
+                'customerPhone': appointment.customer.phone or '',
+                'scheduledStart': appointment.scheduled_start.isoformat(),
+                'scheduledEnd': appointment.scheduled_end.isoformat(),
+                'status': appointment.status,
+                'services': service_names,
+                'total': float(appointment.total or Decimal('0.00')),
+                'balanceDue': float(max(Decimal('0.00'), (appointment.total or Decimal('0.00')) - deposit_total)),
+            })
+
+        top_services = [
+            {
+                'name': name,
+                'appointments': len(values['appointment_ids']),
+                'quantity': float(values['quantity']),
+                'value': float(values['value']),
+            }
+            for name, values in sorted(
+                service_totals.items(),
+                key=lambda entry: (entry[1]['value'], entry[1]['quantity']),
+                reverse=True,
+            )[:5]
+        ]
+
+        return {
+            'range': {
+                'fromDate': from_date.date().isoformat(),
+                'toDate': to_date.date().isoformat(),
+            },
+            'totals': {
+                'appointments': len(appointments),
+                **status_counts,
+                'scheduledValue': float(scheduled_value),
+                'completedServiceValue': float(completed_service_value),
+                'depositsReceived': float(deposits_received),
+                'openBalance': float(open_balance),
+            },
+            'upcomingAppointments': upcoming_data,
+            'topServices': top_services,
+        }
+
     @action(detail=False, methods=['get'])
     def summary(self, request):
         """Get dashboard summary data"""
@@ -885,5 +1020,11 @@ class DashboardViewSet(viewsets.ViewSet):
             'recentSales': recent_sales_data,
             'activeSession': active_session_data,
         }
+        if business.business_type == 'beauty_salon':
+            dashboard_data['salonDashboard'] = self._build_salon_dashboard(
+                branch,
+                from_date,
+                to_date,
+            )
         
         return Response(dashboard_data)

@@ -427,6 +427,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         scheduled_value = Decimal('0.00')
         completed_value = Decimal('0.00')
         outstanding_open_value = Decimal('0.00')
+        service_totals = {}
         for appointment in appointments:
             counts[appointment.status] = counts.get(appointment.status, 0) + 1
             total = _money(appointment.total)
@@ -437,6 +438,30 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 deposit_total = sum((_money(deposit.amount) for deposit in appointment.deposits.all()), Decimal('0.00'))
                 outstanding_open_value += max(Decimal('0.00'), total - deposit_total)
 
+            if appointment.status in {Appointment.STATUS_CANCELLED, Appointment.STATUS_NO_SHOW}:
+                continue
+            for service in (appointment.services if isinstance(appointment.services, list) else []):
+                if not isinstance(service, dict):
+                    continue
+                service_name = str(service.get('name') or '').strip()
+                if not service_name:
+                    continue
+                service_total = _money(service.get('total'))
+                service_data = service_totals.setdefault(
+                    service_name,
+                    {
+                        'appointment_ids': set(),
+                        'quantity': Decimal('0.00'),
+                        'scheduled_value': Decimal('0.00'),
+                        'completed_value': Decimal('0.00'),
+                    },
+                )
+                service_data['appointment_ids'].add(appointment.id)
+                service_data['quantity'] += Decimal(str(service.get('quantity') or 0))
+                service_data['scheduled_value'] += service_total
+                if appointment.status == Appointment.STATUS_COMPLETED:
+                    service_data['completed_value'] += service_total
+
         deposit_query = AppointmentDeposit.objects.filter(
             appointment__business_id__in=accessible_ids,
             created_at__date__gte=from_date,
@@ -445,6 +470,20 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         if branch_id:
             deposit_query = deposit_query.filter(appointment__branch_id=branch_id)
         deposits_received = deposit_query.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        service_breakdown = [
+            {
+                'name': name,
+                'appointments': len(values['appointment_ids']),
+                'quantity': values['quantity'].quantize(Decimal('0.001')),
+                'scheduled_value': _money(values['scheduled_value']),
+                'completed_value': _money(values['completed_value']),
+            }
+            for name, values in sorted(
+                service_totals.items(),
+                key=lambda entry: (entry[1]['scheduled_value'], entry[1]['quantity']),
+                reverse=True,
+            )
+        ]
         return Response({
             'range': {'from_date': from_date.isoformat(), 'to_date': to_date.isoformat()},
             'totals': {
@@ -455,4 +494,5 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 'deposits_received': _money(deposits_received),
                 'outstanding_scheduled_value': _money(outstanding_open_value),
             },
+            'services': service_breakdown,
         })

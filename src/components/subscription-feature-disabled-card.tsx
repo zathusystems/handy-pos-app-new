@@ -8,6 +8,7 @@ import {
   getSubscriptionFeatureInfo,
   type FeatureAccessResult,
 } from '@/lib/subscription-access';
+import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -47,8 +48,23 @@ export function SubscriptionFeatureDisabledCard({
   featureName,
   accessCheck,
 }: SubscriptionFeatureDisabledCardProps) {
+  const { user } = useAuth();
   const feature = getSubscriptionFeatureInfo(featureName);
   const billingCta = getBillingCta(accessCheck);
+  const canViewSubscriptionDetails = user?.role === 'Admin' || user?.role === 'Manager';
+  const canManageBilling = user?.role === 'Admin';
+  const accessMessage = canViewSubscriptionDetails
+    ? accessCheck.reason || `${feature.name} is currently unavailable for this subscription.`
+    : 'This service is currently paused. Please contact your administrator.';
+  const nextStep = canManageBilling
+    ? accessCheck.restriction === 'feature_disabled'
+      ? 'Enable this feature from Billing > Subscription Features to use this screen.'
+      : accessCheck.restriction === 'insufficient_balance'
+        ? 'Add credits in Billing to restore access to this feature.'
+        : 'Review the business subscription in Billing to restore access.'
+    : canViewSubscriptionDetails
+      ? 'Please contact the business administrator to update the subscription.'
+      : null;
 
   return (
     <Card className="border-amber-200 bg-amber-50">
@@ -72,20 +88,13 @@ export function SubscriptionFeatureDisabledCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-amber-900">
-          {accessCheck.reason ||
-            `${feature.name} is currently unavailable for this subscription.`}
-        </p>
-        <p className="text-sm text-amber-800">
-          {accessCheck.restriction === 'feature_disabled'
-            ? 'Enable this feature from Billing > Subscription Features to use this screen.'
-            : accessCheck.restriction === 'insufficient_balance'
-              ? 'Add credits in Billing to restore access to this feature.'
-              : 'Review the business subscription in Billing to restore access.'}
-        </p>
-        <Button asChild>
-          <Link href={billingCta.href}>{billingCta.label}</Link>
-        </Button>
+        <p className="text-sm text-amber-900">{accessMessage}</p>
+        {nextStep && <p className="text-sm text-amber-800">{nextStep}</p>}
+        {canManageBilling && (
+          <Button asChild>
+            <Link href={billingCta.href}>{billingCta.label}</Link>
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

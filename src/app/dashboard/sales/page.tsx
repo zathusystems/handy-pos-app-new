@@ -37,6 +37,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import Papa from 'papaparse';
 
 import { useReports, type ProductReportRow } from '@/hooks/use-reports';
+import { useSalonAppointmentReport } from '@/hooks/use-salon-appointment-report';
 import { useAuth } from '@/hooks/use-auth';
 import {
   Card,
@@ -90,6 +91,7 @@ import { logAuditAction } from '@/lib/audit';
 import { downloadTextFile } from '@/lib/file-download';
 import { calculateZReportSummary, getOrderChargeBreakdown } from '@/lib/z-report-print';
 import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
+import { isSalonServiceBusinessType } from '@/lib/inventory/config';
 import SaleDetailModal from '@/app/dashboard/sessions/modals/sale-detail-modal';
 
 type RefundFormValues = {
@@ -513,7 +515,14 @@ export default function ReportsPage() {
     const [productStockFilter, setProductStockFilter] = useState<'all' | ProductReportRow['stockStatus']>('all');
     const [productReportSort, setProductReportSort] = useState<ProductReportSort>('quantity-sold');
     const { format: formatCurrency } = useCurrency();
+    const { business } = useAuth();
+    const isSalonBusiness = isSalonServiceBusinessType(business?.type);
     const { data, loading, error } = useReports(date);
+    const {
+        data: salonAppointmentReport,
+        loading: isSalonAppointmentReportLoading,
+        error: salonAppointmentReportError,
+    } = useSalonAppointmentReport(date, isSalonBusiness);
 
     const filteredProductReport = useMemo(() => {
         const searchTerm = productSearch.trim().toLowerCase();
@@ -749,20 +758,44 @@ export default function ReportsPage() {
     const otherChargeRows = data.chargeBreakdown.filter((charge) => charge.chargeType !== 'LEVY');
 
     const handleExportReport = () => {
-        if (!allOrders || allOrders.length === 0) {
-            toast({
-                variant: 'destructive',
-                title: 'No data to export',
-                description: 'There are no orders in the selected date range.',
-            });
-            return;
-        }
-
-        const rows = allOrders.map((order) => {
+        const salonRows = isSalonBusiness
+            ? [
+                {
+                    record_type: 'Appointment Summary',
+                    metric: 'Appointments',
+                    value: salonAppointmentReport.totals.appointments,
+                },
+                {
+                    record_type: 'Appointment Summary',
+                    metric: 'Completed services',
+                    value: salonAppointmentReport.totals.completed,
+                },
+                {
+                    record_type: 'Appointment Summary',
+                    metric: 'Deposits received',
+                    value: toFiniteNumber(salonAppointmentReport.totals.deposits_received),
+                },
+                {
+                    record_type: 'Appointment Summary',
+                    metric: 'Open appointment balance',
+                    value: toFiniteNumber(salonAppointmentReport.totals.outstanding_scheduled_value),
+                },
+                ...salonAppointmentReport.services.map((service) => ({
+                    record_type: 'Service',
+                    service: service.name,
+                    appointments: service.appointments,
+                    quantity: toFiniteNumber(service.quantity),
+                    scheduled_value: toFiniteNumber(service.scheduled_value),
+                    completed_value: toFiniteNumber(service.completed_value),
+                })),
+            ]
+            : [];
+        const orderRows = (allOrders || []).map((order) => {
             const collection = getOrderCollectionAmounts(order);
             const chargeBreakdown = getOrderChargeBreakdown(order as any);
 
             return {
+                record_type: 'Sale',
                 order_number: order.orderNumber,
                 created_at: order.createdAt,
                 status: order.status,
@@ -780,10 +813,21 @@ export default function ReportsPage() {
             };
         });
 
+        if (orderRows.length === 0 && salonRows.length === 0) {
+            toast({
+                variant: 'destructive',
+                title: 'No data to export',
+                description: 'There are no sales or appointments in the selected date range.',
+            });
+            return;
+        }
+
+        const rows = [...orderRows, ...salonRows];
+
         const csv = Papa.unparse(rows);
         const fromLabel = date?.from ? format(date.from, 'yyyy-MM-dd') : 'from';
         const toLabel = format(date?.to || date?.from || new Date(), 'yyyy-MM-dd');
-        const filename = `financial-report-${fromLabel}-to-${toLabel}.csv`;
+        const filename = `${isSalonBusiness ? 'salon' : 'financial'}-report-${fromLabel}-to-${toLabel}.csv`;
         const downloadStarted = downloadTextFile(csv, filename);
 
         if (!downloadStarted) {
@@ -890,9 +934,11 @@ export default function ReportsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex w-full flex-col items-stretch justify-between gap-4 sm:flex-row sm:items-center">
         <div className="grid gap-2">
-          <h1 className="text-2xl font-bold tracking-tight">Financial Reports</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{isSalonBusiness ? 'Salon Reports' : 'Financial Reports'}</h1>
           <p className="text-muted-foreground">
-            Analyze your sales, profits, and trends for the active branch.
+            {isSalonBusiness
+              ? 'Review appointments, service performance, payments, and sales for the active branch.'
+              : 'Analyze your sales, profits, and trends for the active branch.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -973,11 +1019,17 @@ export default function ReportsPage() {
       
       <Tabs defaultValue="sales" className="w-full">
         <div className="overflow-x-auto pb-1">
-          <TabsList className="h-auto w-max min-w-full gap-1 sm:grid sm:w-full sm:grid-cols-6">
+          <TabsList className={cn('h-auto w-max min-w-full gap-1 sm:grid sm:w-full', isSalonBusiness ? 'sm:grid-cols-7' : 'sm:grid-cols-6')}>
               <TabsTrigger value="sales" className="shrink-0 whitespace-nowrap px-3 py-2 text-xs sm:text-sm">
                 <span className="sm:hidden">Summary</span>
                 <span className="hidden sm:inline">Financial Summary</span>
               </TabsTrigger>
+              {isSalonBusiness && (
+                <TabsTrigger value="services" className="shrink-0 whitespace-nowrap px-3 py-2 text-xs sm:text-sm">
+                  <span className="sm:hidden">Services</span>
+                  <span className="hidden sm:inline">Service Report</span>
+                </TabsTrigger>
+              )}
               <TabsTrigger value="orders" className="shrink-0 whitespace-nowrap px-3 py-2 text-xs sm:text-sm">
                 Orders
               </TabsTrigger>
@@ -1182,6 +1234,115 @@ export default function ReportsPage() {
                 </Card>
             </div>
         </TabsContent>
+        {isSalonBusiness && (
+          <TabsContent value="services">
+            <div className="grid gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Service Performance</CardTitle>
+                  <CardDescription>
+                    Appointment activity is shown separately from completed POS sales so deposits and balances stay clear.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {isSalonAppointmentReportLoading ? (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {[...Array(6)].map((_, index) => <Skeleton key={index} className="h-20 w-full" />)}
+                    </div>
+                  ) : salonAppointmentReportError ? (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                      Could not load appointment reporting: {salonAppointmentReportError.message}
+                    </div>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <p className="text-xs font-medium text-muted-foreground">Appointments</p>
+                        <p className="mt-1 text-2xl font-semibold">{salonAppointmentReport.totals.appointments}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{salonAppointmentReport.totals.booked} booked</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <p className="text-xs font-medium text-muted-foreground">Completed services</p>
+                        <p className="mt-1 text-2xl font-semibold">{salonAppointmentReport.totals.completed}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{formatCurrency(toFiniteNumber(salonAppointmentReport.totals.completed_service_value))} service value</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <p className="text-xs font-medium text-muted-foreground">In progress</p>
+                        <p className="mt-1 text-2xl font-semibold">
+                          {salonAppointmentReport.totals.checked_in + salonAppointmentReport.totals.in_service}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">{salonAppointmentReport.totals.ready_for_payment} ready for payment</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <p className="text-xs font-medium text-muted-foreground">Scheduled service value</p>
+                        <p className="mt-1 text-xl font-semibold">{formatCurrency(toFiniteNumber(salonAppointmentReport.totals.scheduled_value))}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Excludes cancelled and no-show services below</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <p className="text-xs font-medium text-muted-foreground">Deposits received</p>
+                        <p className="mt-1 text-xl font-semibold text-green-700">{formatCurrency(toFiniteNumber(salonAppointmentReport.totals.deposits_received))}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Recorded against appointments</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <p className="text-xs font-medium text-muted-foreground">Open appointment balance</p>
+                        <p className="mt-1 text-xl font-semibold text-amber-700">{formatCurrency(toFiniteNumber(salonAppointmentReport.totals.outstanding_scheduled_value))}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{salonAppointmentReport.totals.cancelled} cancelled · {salonAppointmentReport.totals.no_show} no show</p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Services Booked</CardTitle>
+                  <CardDescription>Service demand and value in the selected period. Cancelled and no-show bookings are excluded.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <Table className="min-w-[700px]">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Service</TableHead>
+                          <TableHead className="text-right">Appointments</TableHead>
+                          <TableHead className="text-right">Quantity</TableHead>
+                          <TableHead className="text-right">Scheduled Value</TableHead>
+                          <TableHead className="text-right">Completed Value</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {isSalonAppointmentReportLoading ? (
+                          [...Array(4)].map((_, index) => (
+                            <TableRow key={index}>
+                              <TableCell><Skeleton className="h-5 w-40" /></TableCell>
+                              <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
+                              <TableCell><Skeleton className="ml-auto h-5 w-16" /></TableCell>
+                              <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+                              <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+                            </TableRow>
+                          ))
+                        ) : salonAppointmentReport.services.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                              No appointment services were booked in this period.
+                            </TableCell>
+                          </TableRow>
+                        ) : salonAppointmentReport.services.map((service) => (
+                          <TableRow key={service.name}>
+                            <TableCell className="font-medium">{service.name}</TableCell>
+                            <TableCell className="text-right">{service.appointments}</TableCell>
+                            <TableCell className="text-right">{toFiniteNumber(service.quantity).toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-medium">{formatCurrency(toFiniteNumber(service.scheduled_value))}</TableCell>
+                            <TableCell className="text-right font-medium text-green-700">{formatCurrency(toFiniteNumber(service.completed_value))}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        )}
          <TabsContent value="orders">
             <Card>
                 <CardHeader>

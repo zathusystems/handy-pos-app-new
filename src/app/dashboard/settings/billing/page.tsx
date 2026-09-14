@@ -49,6 +49,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -402,6 +412,7 @@ export default function BillingPage() {
   const [showDepositDialog, setShowDepositDialog] = useState(false);
   const [showPauseDialog, setShowPauseDialog] = useState(false);
   const [showFeaturesDialog, setShowFeaturesDialog] = useState(false);
+  const [pendingFeatureDisable, setPendingFeatureDisable] = useState<Feature | null>(null);
   const [hasAppliedOpenAddCredit, setHasAppliedOpenAddCredit] = useState(false);
   const [hasAppliedOpenManageFeatures, setHasAppliedOpenManageFeatures] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
@@ -1383,6 +1394,17 @@ export default function BillingPage() {
     } finally {
       setIsUpdatingFeatures(false);
     }
+  };
+
+  const requestFeatureToggle = (featureId: number, isChecked: boolean) => {
+    const selectedFeature = features.find((feature) => feature.id === featureId);
+
+    if (!isChecked && selectedFeature?.feature === 'staff_management') {
+      setPendingFeatureDisable(selectedFeature);
+      return;
+    }
+
+    void handleToggleFeature(featureId, isChecked);
   };
 
   const handleCreateDeposit = async () => {
@@ -2532,7 +2554,7 @@ export default function BillingPage() {
                                   <input
                                     type="checkbox"
                                     checked={isIncludedFeature || isEnabled}
-                                    onChange={(event) => handleToggleFeature(feature.id, event.target.checked)}
+                                    onChange={(event) => requestFeatureToggle(feature.id, event.target.checked)}
                                     disabled={
                                       isUpdatingFeatures ||
                                       isIncludedFeature ||
@@ -2558,6 +2580,42 @@ export default function BillingPage() {
                     </div>
                   </DialogContent>
                 </Dialog>
+                <AlertDialog
+                  open={Boolean(pendingFeatureDisable)}
+                  onOpenChange={(open) => {
+                    if (!open) {
+                      setPendingFeatureDisable(null);
+                    }
+                  }}
+                >
+                  <AlertDialogContent className="w-[calc(100vw-1rem)] sm:max-w-md">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Pause Staff Access?</AlertDialogTitle>
+                      <AlertDialogDescription className="space-y-2">
+                        <span className="block">
+                          Turning off Staff Management immediately deactivates active staff accounts and signs those staff members out. The business owner remains active.
+                        </span>
+                        <span className="block">
+                          Staff profiles, history, and permissions are kept. Re-enabling the feature restores only accounts paused by this feature; accounts manually disabled stay disabled.
+                        </span>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={isUpdatingFeatures}>Keep Staff Access</AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={isUpdatingFeatures || !pendingFeatureDisable}
+                        onClick={() => {
+                          if (pendingFeatureDisable) {
+                            void handleToggleFeature(pendingFeatureDisable.id, false);
+                          }
+                          setPendingFeatureDisable(null);
+                        }}
+                      >
+                        Turn Off Staff Management
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             </CardHeader>
             <CardContent>

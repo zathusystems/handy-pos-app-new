@@ -487,6 +487,13 @@ class AppointmentAPITests(APITestCase):
         self.assertEqual(Decimal(str(totals['scheduled_value'])), Decimal('15000.00'))
         self.assertEqual(Decimal(str(totals['deposits_received'])), Decimal('4000.00'))
         self.assertEqual(Decimal(str(totals['outstanding_scheduled_value'])), Decimal('11000.00'))
+        self.assertEqual(len(response.data['services']), 1)
+        service = response.data['services'][0]
+        self.assertEqual(service['name'], self.service.name)
+        self.assertEqual(service['appointments'], 1)
+        self.assertEqual(Decimal(str(service['quantity'])), Decimal('1.00'))
+        self.assertEqual(Decimal(str(service['scheduled_value'])), Decimal('15000.00'))
+        self.assertEqual(Decimal(str(service['completed_value'])), Decimal('0.00'))
 
     def test_appointments_are_not_visible_to_another_business(self):
         Appointment.objects.create(

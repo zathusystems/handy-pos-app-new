@@ -37,6 +37,7 @@ class CustomerAPITest(TestCase):
             name='Main Branch',
             address='Main Street',
         )
+
         self.client = APIClient()
         self.client.force_authenticate(self.user)
 
@@ -134,6 +135,92 @@ class CustomerAPITest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['summary']['appointment_count'], 1)
         self.assertEqual(response.data['appointments'][0]['customer_name'], customer.name)
+
+
+class SalonDashboardAPITest(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            email='salon-dashboard-owner@example.com',
+            password='testpass123',
+        )
+        self.business = Business.objects.create(
+            owner=self.user,
+            name='Salon Dashboard Business',
+            business_type='beauty_salon',
+        )
+        self.branch = Branch.objects.create(
+            business=self.business,
+            name='Main Branch',
+            address='Main Street',
+        )
+        self.customer = Customer.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Salon Client',
+            phone='0999000123',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_salon_dashboard_includes_appointment_progress_and_service_data(self):
+        from appointments.models import Appointment
+
+        now = timezone.now()
+        Appointment.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=self.customer,
+            scheduled_start=now + timedelta(hours=1),
+            scheduled_end=now + timedelta(hours=2),
+            status=Appointment.STATUS_BOOKED,
+            total=Decimal('15000.00'),
+            services=[
+                {'name': 'Hair treatment', 'quantity': '1', 'total': '15000.00'},
+            ],
+        )
+        Appointment.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=self.customer,
+            scheduled_start=now + timedelta(hours=3),
+            scheduled_end=now + timedelta(hours=4),
+            status=Appointment.STATUS_IN_SERVICE,
+            total=Decimal('5000.00'),
+            services=[
+                {'name': 'Hair treatment', 'quantity': '1', 'total': '5000.00'},
+            ],
+        )
+
+        response = self.client.get(
+            '/api/business/dashboard/summary/',
+            {
+                'branch_id': self.branch.id,
+                'from_date': (now - timedelta(hours=1)).isoformat(),
+                'to_date': (now + timedelta(days=1)).isoformat(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        salon_dashboard = response.data['salonDashboard']
+        self.assertEqual(salon_dashboard['totals']['appointments'], 2)
+        self.assertEqual(salon_dashboard['totals']['booked'], 1)
+        self.assertEqual(salon_dashboard['totals']['in_service'], 1)
+        self.assertEqual(salon_dashboard['totals']['openBalance'], 20000.0)
+        self.assertEqual(salon_dashboard['topServices'][0]['name'], 'Hair treatment')
+        self.assertEqual(salon_dashboard['topServices'][0]['appointments'], 2)
+        self.assertEqual(len(salon_dashboard['upcomingAppointments']), 2)
+
+    def test_non_salon_dashboard_does_not_include_salon_dashboard_data(self):
+        self.business.business_type = 'grocery'
+        self.business.save(update_fields=['business_type', 'updated_at'])
+
+        response = self.client.get(
+            '/api/business/dashboard/summary/',
+            {'branch_id': self.branch.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('salonDashboard', response.data)
 
 
 class CustomerBillPaymentAccountSettingsAPITest(TestCase):
