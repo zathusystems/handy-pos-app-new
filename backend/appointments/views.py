@@ -353,7 +353,27 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             recorded_by=request.user,
         )
         appointment.refresh_from_db()
-        return Response(AppointmentSerializer(appointment).data, status=status.HTTP_201_CREATED)
+        # Deposits affect the active cashier session even though they are not a
+        # POS order. Return the ledger-derived snapshot so this device's
+        # session and report screens update without waiting for a later sync.
+        from pos_sessions.mark_dirty_on_update import recompute_session_totals
+
+        recompute_session_totals(active_session)
+        active_session.refresh_from_db()
+        payload = AppointmentSerializer(appointment).data
+        payload['session_totals'] = {
+            'id': str(active_session.id),
+            'total_sales': float(active_session.total_sales or 0),
+            'total_cash_sales': float(active_session.total_cash_sales or 0),
+            'total_card_sales': float(active_session.total_card_sales or 0),
+            'total_mobile_money_sales': float(active_session.total_mobile_money_sales or 0),
+            'total_bank_transfer_sales': float(active_session.total_bank_transfer_sales or 0),
+            'total_on_account_sales': float(active_session.total_on_account_sales or 0),
+            'total_other_sales': float(active_session.total_other_sales or 0),
+            'total_tips': float(active_session.total_tips or 0),
+            'expected_cash': float(active_session.expected_cash or 0),
+        }
+        return Response(payload, status=status.HTTP_201_CREATED)
 
     def _record_booked_outcome(self, request, appointment, *, outcome):
         if not _user_can_manage_appointment_outcome(request.user, appointment):

@@ -54,6 +54,10 @@ export type ZReportEisSummary = {
 export type ZReportOrderRecord = {
   status?: string;
   paymentMethod?: string;
+  paymentBreakdown?: Array<Record<string, unknown>>;
+  payment_breakdown?: Array<Record<string, unknown>>;
+  appointmentSettlement?: Record<string, unknown>;
+  appointment_settlement?: Record<string, unknown>;
   total?: number;
   tip?: number;
   subtotal?: number;
@@ -448,6 +452,31 @@ export const calculateZReportSummary = (
 
       const depositMethod = toTrimmedString(order.laybuyPaymentMethod ?? order.laybuy_payment_method) || 'Cash';
       addPaymentAmount(depositMethod, depositAmount);
+    } else if (paymentMethod.toLowerCase() === 'appointment settlement') {
+      const rawBreakdown = (order as any).paymentBreakdown ?? (order as any).payment_breakdown;
+      const checkoutPayment = Array.isArray(rawBreakdown)
+        ? rawBreakdown.find((entry: any) => (
+          toTrimmedString(entry?.source).toLowerCase() === 'checkout'
+        ))
+        : null;
+      const settlement = (order as any).appointmentSettlement ?? (order as any).appointment_settlement ?? {};
+      const depositTotal = Math.max(0, toFiniteNumber(
+        settlement?.depositTotal ?? settlement?.deposit_total
+      ));
+      const checkoutAmount = checkoutPayment
+        ? Math.max(0, toFiniteNumber(checkoutPayment.amount))
+        : Math.max(0, grossValue - depositTotal);
+      const checkoutMethod = toTrimmedString(
+        checkoutPayment?.payment_method ??
+        checkoutPayment?.paymentMethod ??
+        settlement?.finalPaymentMethod ??
+        settlement?.final_payment_method
+      );
+
+      // The deposit was collected in the session where it was recorded. This
+      // checkout session records only the remaining payment, while its sales
+      // value still contains the full appointment total.
+      addPaymentAmount(checkoutMethod || 'Other', checkoutAmount);
     } else {
       addPaymentAmount(paymentMethod, grossValue);
     }

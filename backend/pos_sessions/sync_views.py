@@ -26,7 +26,7 @@ from business.customer_accounts import (
     resolve_customer_for_account_payload,
 )
 from business.access import get_accessible_business_ids
-from business.models import Business, Branch, CustomerLaybuy, TaxRate
+from business.models import Business, Branch, Customer, CustomerLaybuy, TaxRate
 from .stock_validation import (
     _business_allows_negative_stock,
     _modifier_quantity,
@@ -205,6 +205,18 @@ def _build_order_sync_payload(order):
     if not order:
         return {}
 
+    customer_current_balance = None
+    customer_available_credit = None
+    if order.customer_id:
+        customer = Customer.objects.filter(pk=order.customer_id).only(
+            'current_balance',
+            'credit_limit',
+        ).first()
+        if customer:
+            customer_current_balance = float(customer.current_balance or 0)
+            available_credit = customer.available_credit
+            customer_available_credit = float(available_credit) if available_credit is not None else None
+
     payload = {
         'server_id': str(order.id),
         'customer': str(order.customer_id) if order.customer_id else None,
@@ -243,8 +255,37 @@ def _build_order_sync_payload(order):
         'gross_amount': float(order.gross_amount) if order.gross_amount is not None else None,
         'charges_amount': float(order.charges_amount) if order.charges_amount is not None else 0,
         'charges_snapshot': order.charges_snapshot or [],
+        'customer_current_balance': customer_current_balance,
+        'customer_available_credit': customer_available_credit,
         'updated_at': order.updated_at.isoformat() if order.updated_at else None,
     }
+
+    if order.session_id:
+        session = Session.objects.filter(pk=order.session_id).only(
+            'id',
+            'total_sales',
+            'total_cash_sales',
+            'total_card_sales',
+            'total_mobile_money_sales',
+            'total_bank_transfer_sales',
+            'total_on_account_sales',
+            'total_other_sales',
+            'total_tips',
+            'expected_cash',
+        ).first()
+        if session:
+            payload['session_totals'] = {
+                'id': str(session.id),
+                'total_sales': float(session.total_sales or 0),
+                'total_cash_sales': float(session.total_cash_sales or 0),
+                'total_card_sales': float(session.total_card_sales or 0),
+                'total_mobile_money_sales': float(session.total_mobile_money_sales or 0),
+                'total_bank_transfer_sales': float(session.total_bank_transfer_sales or 0),
+                'total_on_account_sales': float(session.total_on_account_sales or 0),
+                'total_other_sales': float(session.total_other_sales or 0),
+                'total_tips': float(session.total_tips or 0),
+                'expected_cash': float(session.expected_cash or 0),
+            }
 
     if str(order.payment_method or '').strip().lower() == 'laybuy':
         laybuy = CustomerLaybuy.objects.filter(
@@ -422,6 +463,8 @@ def sync_push(request):
 
                         for key in [
                             'order_number',
+                            'customer',
+                            'customer_id',
                             'customer_name',
                             'customer_phone',
                             'customer_tin',
@@ -433,6 +476,9 @@ def sync_push(request):
                             'is_invoice_sale',
                             'invoice_id',
                             'is_paid',
+                            'payment_method',
+                            'payment_breakdown',
+                            'appointment_settlement',
                             'fiscal_invoice_number',
                             'eis_status',
                             'eis_uuid',
@@ -444,6 +490,9 @@ def sync_push(request):
                             'gross_amount',
                             'charges_amount',
                             'charges_snapshot',
+                            'customer_current_balance',
+                            'customer_available_credit',
+                            'session_totals',
                             'updated_at',
                         ]:
                             if key in result:
@@ -715,30 +764,16 @@ def handle_update_session(session_id, data, business, branch_id):
             session.pump_name = data.get('pump_name') or data.get('pumpName')
         if 'openingFloat' in data:
             session.opening_float = data['openingFloat']
-        if 'expectedCash' in data:
-            session.expected_cash = data['expectedCash']
         if 'actualCash' in data:
             session.actual_cash = data['actualCash']
         if 'closingFloat' in data:
             session.closing_float = data['closingFloat']
         if 'difference' in data:
             session.difference = data['difference']
-        if 'totalSales' in data:
-            session.total_sales = data['totalSales']
-        if 'totalCashSales' in data:
-            session.total_cash_sales = data['totalCashSales']
-        if 'totalCardSales' in data:
-            session.total_card_sales = data['totalCardSales']
-        if 'totalMobileMoneySales' in data:
-            session.total_mobile_money_sales = data['totalMobileMoneySales']
-        if 'totalBankTransferSales' in data:
-            session.total_bank_transfer_sales = data['totalBankTransferSales']
-        if 'totalOnAccountSales' in data:
-            session.total_on_account_sales = data['totalOnAccountSales']
-        if 'totalOtherSales' in data:
-            session.total_other_sales = data['totalOtherSales']
-        if 'totalTips' in data:
-            session.total_tips = data['totalTips']
+        # Sales and collection totals are calculated from orders and account
+        # payments on the server. A device may have an older local copy after a
+        # deposit is recorded elsewhere, so accepting those aggregate values
+        # here could erase a valid collection or completed appointment sale.
         if 'openingStock' in data:
             session.opening_stock = data['openingStock']
         if 'closingStock' in data:

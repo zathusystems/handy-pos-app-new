@@ -99,6 +99,18 @@ type Appointment = {
     recorded_by_name?: string | null;
     created_at: string;
   }>;
+  session_totals?: {
+    id: string;
+    total_sales: number;
+    total_cash_sales: number;
+    total_card_sales: number;
+    total_mobile_money_sales: number;
+    total_bank_transfer_sales: number;
+    total_on_account_sales: number;
+    total_other_sales: number;
+    total_tips: number;
+    expected_cash: number;
+  };
 };
 
 type AppointmentSummary = {
@@ -628,7 +640,7 @@ export default function AppointmentsPage() {
     }
     setIsRecordingDeposit(true);
     try {
-      await authFetch.fetch<Appointment>(
+      const updatedAppointment = await authFetch.fetch<Appointment>(
         `/appointments/appointments/${depositAppointment.id}/record-deposit/`,
         {
           method: 'POST',
@@ -641,6 +653,23 @@ export default function AppointmentsPage() {
           queueOnFailure: false,
         },
       );
+      const sessionTotals = updatedAppointment.session_totals;
+      if (sessionTotals?.id) {
+        const localSession = await db.sessions.get(sessionTotals.id);
+        if (localSession) {
+          await db.sessions.update(sessionTotals.id, {
+            totalSales: Number(sessionTotals.total_sales || 0),
+            totalCashSales: Number(sessionTotals.total_cash_sales || 0),
+            totalCardSales: Number(sessionTotals.total_card_sales || 0),
+            totalMobileMoneySales: Number(sessionTotals.total_mobile_money_sales || 0),
+            totalBankTransferSales: Number(sessionTotals.total_bank_transfer_sales || 0),
+            totalOnAccountSales: Number(sessionTotals.total_on_account_sales || 0),
+            totalOtherSales: Number(sessionTotals.total_other_sales || 0),
+            totalTips: Number(sessionTotals.total_tips || 0),
+            expectedCash: Number(sessionTotals.expected_cash || 0),
+          });
+        }
+      }
       toast({ title: 'Deposit recorded', description: 'The payment is now in the customer account and this active session.' });
       setDepositAppointment(null);
       await Promise.all([loadSchedule(), loadSummary()]);

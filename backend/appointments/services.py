@@ -230,11 +230,13 @@ def settle_appointment_order(order, *, created_by=None):
             appointment_settlement=settled_metadata,
             is_paid=True,
             is_dirty=True,
+            updated_at=settled_at,
         )
         order.payment_breakdown = payment_breakdown
         order.appointment_settlement = settled_metadata
         order.is_paid = True
         order.is_dirty = True
+        order.updated_at = settled_at
 
         appointment_update_fields = []
         if appointment.settled_order_id != order.id:
@@ -259,6 +261,14 @@ def settle_appointment_order(order, *, created_by=None):
                 take_order.completed_by = created_by
                 update_fields.append('completed_by')
             take_order.save(update_fields=update_fields)
+
+        # The payment rows above are the accounting source of truth. Rebuild the
+        # sale session now as a fully-paid appointment may not create a separate
+        # checkout payment row (for example, when its deposit covers the total).
+        if order.session_id:
+            from pos_sessions.mark_dirty_on_update import recompute_session_totals
+
+            recompute_session_totals(order.session)
         return {
             'appointment': appointment,
             'invoice': invoice,

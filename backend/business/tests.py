@@ -258,6 +258,100 @@ class SalonDashboardAPITest(TestCase):
         self.assertEqual(salon_dashboard['topServices'][0]['name'], expected_label)
         self.assertEqual(salon_dashboard['upcomingAppointments'][0]['services'], [expected_label])
 
+    def test_dashboard_reconciles_appointment_deposit_and_final_payment_by_method(self):
+        from appointments.models import Appointment, AppointmentDeposit
+        from pos_sessions.models import Session
+
+        now = timezone.now()
+        session = Session.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=self.user,
+            status='active',
+            opening_float=Decimal('0.00'),
+            expected_cash=Decimal('0.00'),
+            started_at=now,
+        )
+        appointment = Appointment.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=self.customer,
+            scheduled_start=now,
+            scheduled_end=now + timedelta(hours=1),
+            status=Appointment.STATUS_COMPLETED,
+            total=Decimal('15000.00'),
+            services=[{'name': 'Hair treatment', 'quantity': '1', 'total': '15000.00'}],
+        )
+        sale = Order.objects.create(
+            business=self.business,
+            branch=self.branch,
+            session=session,
+            customer=self.customer,
+            order_number=1,
+            status='Completed',
+            payment_method='Appointment Settlement',
+            subtotal=Decimal('15000.00'),
+            total=Decimal('15000.00'),
+        )
+        deposit_transaction = CustomerAccountTransaction.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=self.customer,
+            session=session,
+            entry_type='payment',
+            direction='credit',
+            amount=Decimal('5000.00'),
+            balance_after=Decimal('-5000.00'),
+            payment_method='Mobile Money',
+            reference='Appointment deposit',
+            created_by=self.user,
+        )
+        AppointmentDeposit.objects.create(
+            appointment=appointment,
+            payment_transaction=deposit_transaction,
+            amount=Decimal('5000.00'),
+            payment_method='Mobile Money',
+            reference='Appointment deposit',
+            recorded_by=self.user,
+        )
+        CustomerAccountTransaction.objects.create(
+            business=self.business,
+            branch=self.branch,
+            customer=self.customer,
+            session=session,
+            entry_type='payment',
+            direction='credit',
+            amount=Decimal('10000.00'),
+            balance_after=Decimal('0.00'),
+            order_id=str(sale.id),
+            payment_method='Cash',
+            reference='Appointment checkout',
+            created_by=self.user,
+        )
+
+        response = self.client.get(
+            '/api/business/dashboard/summary/',
+            {
+                'branch_id': self.branch.id,
+                'from_date': (now - timedelta(minutes=1)).isoformat(),
+                'to_date': (now + timedelta(minutes=1)).isoformat(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        by_method = {row['name']: Decimal(str(row['value'])) for row in response.data['paymentData']}
+        self.assertEqual(by_method['Cash'], Decimal('10000.00'))
+        self.assertEqual(by_method['Mobile Money'], Decimal('5000.00'))
+        self.assertEqual(Decimal(str(response.data['collectionSummary']['total_collected'])), Decimal('15000.00'))
+        self.assertEqual(
+            Decimal(str(response.data['collectionSummary']['appointment_deposits_received'])),
+            Decimal('5000.00'),
+        )
+        self.assertEqual(
+            Decimal(str(response.data['collectionSummary']['appointment_final_payments'])),
+            Decimal('10000.00'),
+        )
+
     def test_dashboard_recent_sales_include_selected_item_options(self):
         sale = Order.objects.create(
             business=self.business,

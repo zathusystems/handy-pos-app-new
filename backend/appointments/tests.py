@@ -18,6 +18,7 @@ from business.models import (
 from digitalmenu.models import Menu, MenuOption, MenuOptionGroup
 from inventory.models import InventoryItem
 from pos_sessions.models import Order, Session
+from pos_sessions.sync_views import _build_order_sync_payload, handle_update_session
 from staff.models import Staff, StaffRole
 from take_orders.models import TakeOrder
 
@@ -345,6 +346,9 @@ class AppointmentAPITests(APITestCase):
         self.assertEqual(deposit.payment_transaction.direction, 'credit')
         self.assertEqual(Decimal(str(response.data['deposit_total'])), Decimal('5000.00'))
         self.assertEqual(Decimal(str(response.data['balance_due'])), Decimal('10000.00'))
+        self.assertEqual(response.data['session_totals']['id'], str(session.id))
+        self.assertEqual(Decimal(str(response.data['session_totals']['total_mobile_money_sales'])), Decimal('5000.00'))
+        self.assertEqual(Decimal(str(response.data['session_totals']['total_sales'])), Decimal('0.00'))
         self.customer.refresh_from_db()
         self.assertEqual(self.customer.current_balance, Decimal('-5000.00'))
         self.assertTrue(CustomerAccountTransaction.objects.filter(
@@ -357,6 +361,11 @@ class AppointmentAPITests(APITestCase):
         appointment_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')
         appointment = Appointment.objects.get(pk=appointment_response.data['id'])
         deposit_session = self.create_active_session()
+        checkout_cashier = User.objects.create_user(
+            email='appointment-checkout@example.com',
+            password='test-pass',
+        )
+        checkout_session = self.create_active_session(checkout_cashier)
         deposit_response = self.client.post(
             f'/api/appointments/appointments/{appointment.id}/record-deposit/',
             {'amount': '5000.00', 'payment_method': 'Mobile Money'},
@@ -374,7 +383,7 @@ class AppointmentAPITests(APITestCase):
         checkout_order = Order.objects.create(
             business=self.business,
             branch=self.branch,
-            session=deposit_session,
+            session=checkout_session,
             customer=self.customer,
             order_number=1,
             status='Completed',
@@ -420,11 +429,41 @@ class AppointmentAPITests(APITestCase):
         self.assertEqual(appointment_detail.data['balance_due'], Decimal('0.00'))
         self.assertEqual(appointment_detail.data['settled_order_id'], str(checkout_order.id))
         deposit_session.refresh_from_db()
-        self.assertEqual(deposit_session.total_sales, Decimal('15000.00'))
+        self.assertEqual(deposit_session.total_sales, Decimal('0.00'))
         self.assertEqual(deposit_session.total_mobile_money_sales, Decimal('5000.00'))
-        self.assertEqual(deposit_session.total_cash_sales, Decimal('10000.00'))
+        self.assertEqual(deposit_session.total_cash_sales, Decimal('0.00'))
         self.assertEqual(deposit_session.total_other_sales, Decimal('0.00'))
-        self.assertEqual(deposit_session.expected_cash, Decimal('10000.00'))
+        self.assertEqual(deposit_session.expected_cash, Decimal('0.00'))
+        checkout_session.refresh_from_db()
+        self.assertEqual(checkout_session.total_sales, Decimal('15000.00'))
+        self.assertEqual(checkout_session.total_cash_sales, Decimal('10000.00'))
+        self.assertEqual(checkout_session.total_mobile_money_sales, Decimal('0.00'))
+        self.assertEqual(checkout_session.expected_cash, Decimal('10000.00'))
+
+        # A stale device must not overwrite the ledger-derived session totals.
+        stale_session_result = handle_update_session(
+            str(checkout_session.id),
+            {
+                'totalSales': 0,
+                'totalCashSales': 0,
+                'totalMobileMoneySales': 5000,
+                'expectedCash': 0,
+            },
+            self.business,
+            self.branch.id,
+        )
+        self.assertTrue(stale_session_result['success'])
+        checkout_session.refresh_from_db()
+        self.assertEqual(checkout_session.total_sales, Decimal('15000.00'))
+        self.assertEqual(checkout_session.total_cash_sales, Decimal('10000.00'))
+
+        # The next sync acknowledgement carries the authoritative customer and
+        # session snapshot so the current device updates immediately.
+        sync_payload = _build_order_sync_payload(checkout_order)
+        self.assertEqual(sync_payload['customer_current_balance'], 0.0)
+        self.assertEqual(sync_payload['session_totals']['id'], str(checkout_session.id))
+        self.assertEqual(sync_payload['session_totals']['total_sales'], 15000.0)
+        self.assertEqual(sync_payload['session_totals']['total_cash_sales'], 10000.0)
 
     def test_appointment_without_deposit_sync_checkout_keeps_customer_and_sale_linked(self):
         appointment_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')

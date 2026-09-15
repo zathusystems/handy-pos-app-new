@@ -120,6 +120,17 @@ const mapBackendOrderToLocal = (
     : Array.isArray(order?.chargesSnapshot)
       ? order.chargesSnapshot
       : [];
+  const paymentBreakdown = Array.isArray(order?.payment_breakdown)
+    ? order.payment_breakdown
+    : Array.isArray(order?.paymentBreakdown)
+      ? order.paymentBreakdown
+      : [];
+  const rawAppointmentSettlement =
+    order?.appointment_settlement ?? order?.appointmentSettlement;
+  const appointmentSettlement =
+    rawAppointmentSettlement && typeof rawAppointmentSettlement === 'object'
+      ? rawAppointmentSettlement
+      : {};
   const items = Array.isArray(order?.items)
     ? order.items.map((item: any) => mapBackendOrderItemToLocal(item))
     : [];
@@ -142,6 +153,10 @@ const mapBackendOrderToLocal = (
     tax: toNumber(order?.vat_amount ?? order?.vatAmount ?? order?.tax),
     tip: toNumber(order?.tip),
     paymentMethod,
+    paymentBreakdown,
+    payment_breakdown: paymentBreakdown,
+    appointmentSettlement,
+    appointment_settlement: appointmentSettlement,
     laybuyDeposit: toNumber(order?.laybuy_deposit ?? order?.laybuyDeposit ?? order?.deposit_amount ?? order?.depositAmount),
     laybuy_deposit: toNumber(order?.laybuy_deposit ?? order?.laybuyDeposit ?? order?.deposit_amount ?? order?.depositAmount),
     depositAmount: toNumber(order?.deposit_amount ?? order?.depositAmount ?? order?.laybuy_deposit ?? order?.laybuyDeposit),

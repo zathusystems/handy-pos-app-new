@@ -248,6 +248,37 @@ class DashboardViewSet(viewsets.ViewSet):
             outstanding = max(Decimal('0.00'), (order.total or Decimal('0.00')) - payment_total)
         payment_totals['Laybuy Outstanding'] += max(Decimal('0.00'), outstanding)
 
+    def _apply_appointment_deposits_to_payment_totals(
+        self,
+        payment_totals,
+        *,
+        branch,
+        from_date,
+        to_date,
+        session_id=None,
+    ):
+        """Include appointment deposits as collections on the day they were received."""
+        from appointments.models import AppointmentDeposit
+
+        deposits = AppointmentDeposit.objects.filter(
+            appointment__branch=branch,
+            created_at__gte=from_date,
+            created_at__lte=to_date,
+        )
+        if session_id:
+            deposits = deposits.filter(payment_transaction__session_id=session_id)
+
+        total = Decimal('0.00')
+        for payment_total in deposits.values('payment_method').annotate(total=Sum('amount')):
+            amount = payment_total.get('total') or Decimal('0.00')
+            total += amount
+            self._add_collection_amount(
+                payment_totals,
+                payment_total.get('payment_method'),
+                amount,
+            )
+        return total
+
     def _build_salon_dashboard(self, branch, from_date, to_date):
         """Return the appointment-focused dashboard data used by salon and spa businesses."""
         from appointments.models import Appointment, AppointmentDeposit
@@ -546,12 +577,25 @@ class DashboardViewSet(viewsets.ViewSet):
                 .values('payment_method')
                 .annotate(total=Sum('amount'))
             )
+            appointment_final_payments = Decimal('0.00')
             for payment_total in appointment_payment_totals:
+                amount = payment_total.get('total') or Decimal('0.00')
+                appointment_final_payments += amount
                 self._add_collection_amount(
                     payment_totals,
                     payment_total.get('payment_method'),
-                    payment_total.get('total') or Decimal('0.00'),
+                    amount,
                 )
+        else:
+            appointment_final_payments = Decimal('0.00')
+
+        appointment_deposits_received = self._apply_appointment_deposits_to_payment_totals(
+            payment_totals,
+            branch=branch,
+            from_date=from_date,
+            to_date=to_date,
+            session_id=active_session.id if not is_admin_user and active_session else None,
+        )
         
         gross_profit = total_sales_before_tax - total_cogs
         avg_sale_value = total_sales / total_transactions if total_transactions > 0 else Decimal('0.00')
@@ -614,6 +658,8 @@ class DashboardViewSet(viewsets.ViewSet):
             ),
             'account_invoice_due': float(payment_totals.get('On Account', Decimal('0.00'))),
             'laybuy_outstanding': float(payment_totals.get('Laybuy Outstanding', Decimal('0.00'))),
+            'appointment_deposits_received': float(appointment_deposits_received),
+            'appointment_final_payments': float(appointment_final_payments),
             'total_due': float(
                 payment_totals.get('On Account', Decimal('0.00'))
                 + payment_totals.get('Laybuy Outstanding', Decimal('0.00'))

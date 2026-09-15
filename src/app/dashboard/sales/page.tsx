@@ -332,6 +332,7 @@ const getOrderCollectionAmounts = (order: Order) => {
             accountDue: 0,
             laybuyDeposit: deposit,
             laybuyOutstanding: Math.max(grossValue - deposit, 0),
+            appointmentDepositApplied: 0,
         };
     }
 
@@ -341,6 +342,30 @@ const getOrderCollectionAmounts = (order: Order) => {
             accountDue: grossValue,
             laybuyDeposit: 0,
             laybuyOutstanding: 0,
+            appointmentDepositApplied: 0,
+        };
+    }
+
+    if (paymentMethod === 'appointment settlement') {
+        const rawBreakdown = (order as any).paymentBreakdown ?? (order as any).payment_breakdown;
+        const checkoutPayment = Array.isArray(rawBreakdown)
+            ? rawBreakdown.find((entry: any) => toTrimmedString(entry?.source).toLowerCase() === 'checkout')
+            : null;
+        const settlement = (order as any).appointmentSettlement ?? (order as any).appointment_settlement ?? {};
+        const depositApplied = Math.max(0, toFiniteNumber(
+            settlement?.depositTotal ?? settlement?.deposit_total,
+            0,
+        ));
+        const checkoutAmount = checkoutPayment
+            ? Math.max(0, toFiniteNumber(checkoutPayment.amount, 0))
+            : Math.max(0, grossValue - depositApplied);
+
+        return {
+            collected: checkoutAmount,
+            accountDue: 0,
+            laybuyDeposit: 0,
+            laybuyOutstanding: 0,
+            appointmentDepositApplied: depositApplied,
         };
     }
 
@@ -349,6 +374,7 @@ const getOrderCollectionAmounts = (order: Order) => {
         accountDue: 0,
         laybuyDeposit: 0,
         laybuyOutstanding: 0,
+        appointmentDepositApplied: 0,
     };
 };
 
@@ -823,6 +849,7 @@ export default function ReportsPage() {
                 other_charges: chargeBreakdown.otherCharges,
                 total: Number(order.total ?? order.grossAmount ?? order.gross_amount ?? 0),
                 amount_collected: collection.collected,
+                appointment_deposit_applied: collection.appointmentDepositApplied,
                 account_invoice_due: collection.accountDue,
                 laybuy_deposit: collection.laybuyDeposit,
                 items: formatOrderItemSummary(order.items),

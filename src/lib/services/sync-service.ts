@@ -1897,6 +1897,40 @@ class SyncService {
 
       await db.orders.update(id, updatePayload);
 
+      const acknowledgedCustomerId = String(
+        normalizedAck.customerId ?? normalizedAck.customer_id ?? existingOrder.customerId ?? existingOrder.customer_id ?? ''
+      ).trim();
+      if (acknowledgedCustomerId && normalizedAck.customer_current_balance !== undefined) {
+        const localCustomer = await db.customers.get(acknowledgedCustomerId);
+        if (localCustomer) {
+          await db.customers.update(acknowledgedCustomerId, {
+            currentBalance: Number(normalizedAck.customer_current_balance),
+            current_balance: Number(normalizedAck.customer_current_balance),
+            availableCredit: normalizedAck.customer_available_credit ?? localCustomer.availableCredit,
+            available_credit: normalizedAck.customer_available_credit ?? localCustomer.availableCredit,
+          } as any);
+        }
+      }
+
+      const sessionTotals = normalizedAck.session_totals ?? normalizedAck.sessionTotals;
+      const acknowledgedSessionId = String(sessionTotals?.id ?? existingOrder.sessionId ?? '').trim();
+      if (acknowledgedSessionId && sessionTotals && typeof sessionTotals === 'object') {
+        const localSession = await db.sessions.get(acknowledgedSessionId);
+        if (localSession) {
+          await db.sessions.update(acknowledgedSessionId, {
+            totalSales: Number(sessionTotals.total_sales ?? sessionTotals.totalSales ?? localSession.totalSales ?? 0),
+            totalCashSales: Number(sessionTotals.total_cash_sales ?? sessionTotals.totalCashSales ?? localSession.totalCashSales ?? 0),
+            totalCardSales: Number(sessionTotals.total_card_sales ?? sessionTotals.totalCardSales ?? localSession.totalCardSales ?? 0),
+            totalMobileMoneySales: Number(sessionTotals.total_mobile_money_sales ?? sessionTotals.totalMobileMoneySales ?? localSession.totalMobileMoneySales ?? 0),
+            totalBankTransferSales: Number(sessionTotals.total_bank_transfer_sales ?? sessionTotals.totalBankTransferSales ?? localSession.totalBankTransferSales ?? 0),
+            totalOnAccountSales: Number(sessionTotals.total_on_account_sales ?? sessionTotals.totalOnAccountSales ?? localSession.totalOnAccountSales ?? 0),
+            totalOtherSales: Number(sessionTotals.total_other_sales ?? sessionTotals.totalOtherSales ?? localSession.totalOtherSales ?? 0),
+            totalTips: Number(sessionTotals.total_tips ?? sessionTotals.totalTips ?? localSession.totalTips ?? 0),
+            expectedCash: Number(sessionTotals.expected_cash ?? sessionTotals.expectedCash ?? localSession.expectedCash ?? 0),
+          });
+        }
+      }
+
       const fiscalNumber = String(
         updatePayload.fiscalInvoiceNumber ?? updatePayload.fiscal_invoice_number ?? ''
       ).trim();

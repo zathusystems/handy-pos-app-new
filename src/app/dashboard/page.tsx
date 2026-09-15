@@ -99,6 +99,8 @@ interface DashboardData {
     total_collected: number;
     account_invoice_due: number;
     laybuy_outstanding: number;
+    appointment_deposits_received?: number;
+    appointment_final_payments?: number;
     total_due: number;
   };
   salesData?: Array<{
@@ -500,6 +502,8 @@ function CollectionsDueCard({
     collectionSummary?.total_due ??
       amountDueData.reduce((sum, entry) => sum + Number(entry.value || 0), 0)
   );
+  const appointmentDeposits = Number(collectionSummary?.appointment_deposits_received || 0);
+  const appointmentFinalPayments = Number(collectionSummary?.appointment_final_payments || 0);
 
   return (
     <Card>
@@ -516,6 +520,13 @@ function CollectionsDueCard({
               <div className="rounded-lg border bg-muted/30 p-4">
                 <div className="text-xs font-medium text-muted-foreground">Collected</div>
                 <div className="mt-1 text-xl font-bold text-green-700">{formatCurrency(totalCollected)}</div>
+                {(appointmentDeposits > 0 || appointmentFinalPayments > 0) && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {appointmentDeposits > 0 && `${formatCurrency(appointmentDeposits)} appointment deposits`}
+                    {appointmentDeposits > 0 && appointmentFinalPayments > 0 && ' · '}
+                    {appointmentFinalPayments > 0 && `${formatCurrency(appointmentFinalPayments)} appointment checkout`}
+                  </p>
+                )}
               </div>
               <div className="rounded-lg border bg-muted/30 p-4">
                 <div className="text-xs font-medium text-muted-foreground">Still Due</div>
@@ -616,8 +627,8 @@ function SalonDashboardOverview({
                 detail: `${totals?.checked_in ?? 0} checked in`,
               },
               {
-                label: 'Ready for payment',
-                value: totals?.ready_for_payment ?? 0,
+                label: 'Completed service sales',
+                value: formatCurrency(Number(totals?.completedServiceValue ?? 0)),
                 detail: `${totals?.completed ?? 0} completed`,
               },
               {
@@ -1458,6 +1469,11 @@ export default function DashboardPage() {
           section: 'Appointments',
           metric: 'Completed services',
           value: Number(totals.completed || 0),
+        },
+        {
+          section: 'Appointments',
+          metric: 'Completed service sales',
+          value: Number(totals.completedServiceValue || 0),
         },
         {
           section: 'Appointments',
