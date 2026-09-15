@@ -426,6 +426,9 @@ export interface TakeOrder {
     orderType: 'staff' | 'self_service';
     isTakeaway?: boolean;
     is_takeaway?: boolean;
+    customer?: string;
+    customerId?: string;
+    customer_id?: string;
     customerName?: string;
     customerPhone?: string;
     customerNotes?: string;

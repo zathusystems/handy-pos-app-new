@@ -45,6 +45,38 @@ def _settlement_metadata(order):
     return metadata if isinstance(metadata, dict) else {}
 
 
+def complete_appointment_service_order(appointment, *, completed_by=None, completed_at=None):
+    """Mark the service order linked to a paid appointment as completed.
+
+    Payment is the final event for an appointment checkout. The linked service
+    order can therefore be completed from any active service stage without
+    relying on a separate kitchen/status transition first.
+    """
+    take_order = appointment.take_order
+    if not take_order:
+        return None
+
+    settled_at = completed_at or timezone.now()
+    take_order.status = 'Completed'
+    take_order.completed_at = settled_at
+    take_order.cancellation_reason = ''
+    take_order.cancelled_at = None
+    take_order.cancelled_by = None
+    update_fields = [
+        'status',
+        'completed_at',
+        'cancellation_reason',
+        'cancelled_at',
+        'cancelled_by',
+        'updated_at',
+    ]
+    if getattr(completed_by, 'pk', None):
+        take_order.completed_by = completed_by
+        update_fields.append('completed_by')
+    take_order.save(update_fields=update_fields)
+    return take_order
+
+
 def settle_appointment_order(order, *, created_by=None):
     """Settle an appointment sale and apply its deposit when one was recorded.
 
@@ -252,28 +284,11 @@ def settle_appointment_order(order, *, created_by=None):
             appointment_update_fields.append('updated_at')
             appointment.save(update_fields=appointment_update_fields)
 
-        # Settlement is the final event for the linked service order. Do not
-        # depend on its kitchen/service status here: an appointment may be
-        # checked in, in service, or ready when the cashier takes payment.
-        take_order = appointment.take_order
-        if take_order:
-            take_order.status = 'Completed'
-            take_order.completed_at = settled_at
-            take_order.cancellation_reason = ''
-            take_order.cancelled_at = None
-            take_order.cancelled_by = None
-            update_fields = [
-                'status',
-                'completed_at',
-                'cancellation_reason',
-                'cancelled_at',
-                'cancelled_by',
-                'updated_at',
-            ]
-            if getattr(created_by, 'pk', None):
-                take_order.completed_by = created_by
-                update_fields.append('completed_by')
-            take_order.save(update_fields=update_fields)
+        complete_appointment_service_order(
+            appointment,
+            completed_by=created_by,
+            completed_at=settled_at,
+        )
 
         # The payment rows above are the accounting source of truth. Rebuild the
         # sale session now as a fully-paid appointment may not create a separate

@@ -154,6 +154,77 @@ def _money_close_payload(value):
         raise ValidationError({'error': f'Invalid money amount: {value}'})
 
 
+def _normalize_appointment_settlement_payload(data, branch):
+    """Make appointment checkout metadata authoritative for direct POS sales.
+
+    Older desktop builds can submit the final tender (for example, ``Cash``)
+    together with appointment metadata. Treating that as an ordinary sale
+    leaves the appointment service order open and its deposit unallocated.
+    """
+    raw_settlement = data.get('appointment_settlement') or data.get('appointmentSettlement')
+    if not isinstance(raw_settlement, dict):
+        return
+
+    appointment_id = str(
+        raw_settlement.get('appointment_id') or raw_settlement.get('appointmentId') or ''
+    ).strip()
+    take_order_id = str(
+        raw_settlement.get('take_order_id') or raw_settlement.get('takeOrderId') or ''
+    ).strip()
+    if not appointment_id and not take_order_id:
+        return
+    if not appointment_id or not take_order_id:
+        raise ValidationError({
+            'appointment_settlement': 'Appointment and service order details are both required.',
+        })
+
+    requested_method = str(
+        data.get('payment_method') or data.get('paymentMethod') or ''
+    ).strip()
+    final_payment_method = str(
+        raw_settlement.get('final_payment_method')
+        or raw_settlement.get('finalPaymentMethod')
+        or (requested_method if requested_method.lower() != 'appointment settlement' else '')
+    ).strip()
+    if final_payment_method not in {'Cash', 'Card', 'Mobile Money', 'Bank Transfer', 'Other'}:
+        raise ValidationError({
+            'appointment_settlement': 'Choose a valid final payment method for this appointment.',
+        })
+
+    from appointments.models import Appointment
+
+    appointment = Appointment.objects.select_related('customer', 'take_order').filter(
+        id=appointment_id,
+        business=branch.business,
+        branch=branch,
+    ).first()
+    if not appointment:
+        raise ValidationError({'appointment_settlement': 'Appointment was not found for this branch.'})
+    if str(appointment.take_order_id or '') != take_order_id:
+        raise ValidationError({
+            'appointment_settlement': 'Appointment service order does not match this checkout.',
+        })
+    if appointment.status in {'cancelled', 'no_show'}:
+        raise ValidationError({
+            'appointment_settlement': 'Cancelled or no-show appointments cannot be settled.',
+        })
+
+    settlement = {
+        'appointment_id': str(appointment.id),
+        'take_order_id': str(appointment.take_order_id),
+        'final_payment_method': final_payment_method,
+    }
+    data['payment_method'] = 'Appointment Settlement'
+    data['paymentMethod'] = 'Appointment Settlement'
+    data['appointment_settlement'] = settlement
+    data['appointmentSettlement'] = settlement
+    data['customer'] = str(appointment.customer_id)
+    data['customerId'] = str(appointment.customer_id)
+    data['customer_name'] = appointment.customer.name
+    data['customer_phone'] = appointment.customer.phone
+    data['customer_tin'] = appointment.customer.customer_tin
+
+
 class OrderItemViewSet(viewsets.ModelViewSet):
     """ViewSet for managing order items"""
     queryset = OrderItem.objects.all()
@@ -255,6 +326,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
 
         data['session'] = active_session.id
+        _normalize_appointment_settlement_payload(data, branch_obj or active_session.branch)
         if str(data.get('payment_method') or data.get('paymentMethod') or '').strip().lower() == 'laybuy':
             data['cogs'] = 0
         

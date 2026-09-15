@@ -18,7 +18,7 @@ from business.models import (
 from digitalmenu.models import Menu, MenuOption, MenuOptionGroup
 from inventory.models import InventoryItem
 from pos_sessions.models import Order, Session
-from pos_sessions.sync_views import _build_order_sync_payload, handle_update_session
+from pos_sessions.sync_views import _build_order_sync_payload, handle_create_order, handle_update_session
 from staff.models import Staff, StaffRole
 from take_orders.models import TakeOrder
 
@@ -561,6 +561,221 @@ class AppointmentAPITests(APITestCase):
         self.assertEqual(checkout_session.total_sales, Decimal('15000.00'))
         self.assertEqual(checkout_session.total_card_sales, Decimal('15000.00'))
         self.assertEqual(checkout_session.total_cash_sales, Decimal('0.00'))
+
+    def test_appointment_metadata_forces_settlement_for_older_cash_payment_payload(self):
+        appointment_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')
+        appointment = Appointment.objects.get(pk=appointment_response.data['id'])
+        self.create_active_session()
+        deposit_response = self.client.post(
+            f'/api/appointments/appointments/{appointment.id}/record-deposit/',
+            {'amount': '5000.00', 'payment_method': 'Mobile Money'},
+            format='json',
+        )
+        self.assertEqual(deposit_response.status_code, status.HTTP_201_CREATED, deposit_response.data)
+
+        check_in_response = self.client.post(
+            f'/api/appointments/appointments/{appointment.id}/check-in/',
+            format='json',
+        )
+        self.assertEqual(check_in_response.status_code, status.HTTP_200_OK, check_in_response.data)
+        appointment.refresh_from_db()
+
+        checkout_session = self.create_active_session()
+        order_id = str(uuid.uuid4())
+        result = handle_create_order(
+            order_id,
+            {
+                'id': order_id,
+                'orderNumber': 2,
+                'orderType': 'sale',
+                'status': 'Completed',
+                # Older clients sent the final method instead of the internal
+                # appointment settlement label. The metadata must still win.
+                'paymentMethod': 'Cash',
+                'subtotal': 15000.0,
+                'total': 15000.0,
+                'sessionId': str(checkout_session.id),
+                'appointmentSettlement': {
+                    'appointmentId': str(appointment.id),
+                    'takeOrderId': str(appointment.take_order_id),
+                    'finalPaymentMethod': 'Cash',
+                    'depositTotal': 5000,
+                },
+                'items': [{
+                    'id': str(uuid.uuid4()),
+                    'inventoryItemId': str(self.service.id),
+                    'name': self.service.name,
+                    'quantity': 1,
+                    'price': 15000.0,
+                    'notes': '',
+                }],
+            },
+            self.business,
+            self.branch.id,
+            self.owner,
+        )
+
+        self.assertTrue(result['success'], result)
+        checkout_order = Order.objects.get(pk=order_id)
+        appointment.refresh_from_db()
+        appointment.take_order.refresh_from_db()
+        self.customer.refresh_from_db()
+        invoice = Invoice.objects.get(id=checkout_order.invoice_id)
+        allocation = CustomerAccountPaymentAllocation.objects.get(invoice=invoice)
+
+        self.assertEqual(checkout_order.payment_method, 'Appointment Settlement')
+        self.assertTrue(checkout_order.is_paid)
+        self.assertEqual(invoice.status, 'Paid')
+        self.assertEqual(allocation.amount, Decimal('5000.00'))
+        self.assertEqual(self.customer.current_balance, Decimal('0.00'))
+        self.assertEqual(appointment.status, Appointment.STATUS_COMPLETED)
+        self.assertEqual(appointment.take_order.status, 'Completed')
+        self.assertEqual(appointment.settled_order_id, checkout_order.id)
+
+    def test_appointment_checkout_completes_every_active_service_stage_and_updates_session(self):
+        checkout_session = self.create_active_session()
+        active_service_statuses = (
+            'Pending',
+            'Confirmed',
+            'Sent to Kitchen',
+            'Preparing',
+            'Ready',
+        )
+
+        for order_number, service_status in enumerate(active_service_statuses, start=1):
+            with self.subTest(service_status=service_status):
+                appointment_response = self.client.post(
+                    '/api/appointments/appointments/',
+                    self.payload(),
+                    format='json',
+                )
+                self.assertEqual(
+                    appointment_response.status_code,
+                    status.HTTP_201_CREATED,
+                    appointment_response.data,
+                )
+                appointment = Appointment.objects.get(pk=appointment_response.data['id'])
+                check_in_response = self.client.post(
+                    f'/api/appointments/appointments/{appointment.id}/check-in/',
+                    format='json',
+                )
+                self.assertEqual(check_in_response.status_code, status.HTTP_200_OK, check_in_response.data)
+
+                appointment.refresh_from_db()
+                take_order = appointment.take_order
+                take_order.status = service_status
+                take_order.save(update_fields=['status', 'updated_at'])
+
+                checkout_order_id = str(uuid.uuid4())
+                result = handle_create_order(
+                    checkout_order_id,
+                    {
+                        'id': checkout_order_id,
+                        'orderNumber': order_number,
+                        'orderType': 'sale',
+                        'status': 'Completed',
+                        # The old tender label must still settle the appointment.
+                        'paymentMethod': 'Cash',
+                        'subtotal': 15000.0,
+                        'total': 15000.0,
+                        'sessionId': str(checkout_session.id),
+                        'appointmentSettlement': {
+                            'appointmentId': str(appointment.id),
+                            'takeOrderId': str(take_order.id),
+                            'finalPaymentMethod': 'Cash',
+                        },
+                        'items': [{
+                            'id': str(uuid.uuid4()),
+                            'inventoryItemId': str(self.service.id),
+                            'name': self.service.name,
+                            'quantity': 1,
+                            'price': 15000.0,
+                            'notes': '',
+                        }],
+                    },
+                    self.business,
+                    self.branch.id,
+                    self.owner,
+                )
+
+                self.assertTrue(result['success'], result)
+                appointment.refresh_from_db()
+                appointment.take_order.refresh_from_db()
+                checkout_order = Order.objects.get(pk=checkout_order_id)
+
+                self.assertEqual(appointment.status, Appointment.STATUS_COMPLETED)
+                self.assertEqual(appointment.take_order.status, 'Completed')
+                self.assertIsNotNone(appointment.take_order.completed_at)
+                self.assertEqual(appointment.settled_order_id, checkout_order.id)
+                self.assertTrue(checkout_order.is_paid)
+
+        checkout_session.refresh_from_db()
+        self.assertEqual(checkout_session.total_sales, Decimal('75000.00'))
+        self.assertEqual(checkout_session.total_cash_sales, Decimal('75000.00'))
+        self.assertEqual(checkout_session.expected_cash, Decimal('75000.00'))
+
+    def test_direct_pos_checkout_normalizes_appointment_metadata_and_completes_service_order(self):
+        appointment_response = self.client.post(
+            '/api/appointments/appointments/',
+            self.payload(),
+            format='json',
+        )
+        self.assertEqual(appointment_response.status_code, status.HTTP_201_CREATED, appointment_response.data)
+        appointment = Appointment.objects.get(pk=appointment_response.data['id'])
+        checkout_session = self.create_active_session()
+        check_in_response = self.client.post(
+            f'/api/appointments/appointments/{appointment.id}/check-in/',
+            format='json',
+        )
+        self.assertEqual(check_in_response.status_code, status.HTTP_200_OK, check_in_response.data)
+        appointment.refresh_from_db()
+        appointment.take_order.status = 'Ready'
+        appointment.take_order.save(update_fields=['status', 'updated_at'])
+
+        checkout_order_id = str(uuid.uuid4())
+        response = self.client.post(
+            '/sessions/orders/',
+            {
+                'id': checkout_order_id,
+                'branch': self.branch.id,
+                'orderNumber': 99,
+                'orderType': 'sale',
+                'status': 'Completed',
+                # Simulate an older direct POS client which still sends Cash.
+                'paymentMethod': 'Cash',
+                'subtotal': 15000.0,
+                'total': 15000.0,
+                'sessionId': str(checkout_session.id),
+                'appointmentSettlement': {
+                    'appointmentId': str(appointment.id),
+                    'takeOrderId': str(appointment.take_order_id),
+                    'finalPaymentMethod': 'Cash',
+                },
+                'items': [{
+                    'id': str(uuid.uuid4()),
+                    'inventoryItemId': str(self.service.id),
+                    'name': self.service.name,
+                    'quantity': 1,
+                    'price': 15000.0,
+                    'notes': '',
+                }],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        checkout_order = Order.objects.get(pk=checkout_order_id)
+        appointment.refresh_from_db()
+        appointment.take_order.refresh_from_db()
+        checkout_session.refresh_from_db()
+
+        self.assertEqual(checkout_order.payment_method, 'Appointment Settlement')
+        self.assertTrue(checkout_order.is_paid)
+        self.assertEqual(appointment.status, Appointment.STATUS_COMPLETED)
+        self.assertEqual(appointment.take_order.status, 'Completed')
+        self.assertEqual(appointment.settled_order_id, checkout_order.id)
+        self.assertEqual(checkout_session.total_sales, Decimal('15000.00'))
+        self.assertEqual(checkout_session.total_cash_sales, Decimal('15000.00'))
 
     def test_deposit_cannot_exceed_appointment_value(self):
         create_response = self.client.post('/api/appointments/appointments/', self.payload(), format='json')

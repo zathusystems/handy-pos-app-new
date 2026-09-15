@@ -543,7 +543,7 @@ export default function KitchenPage() {
             <Clock className="h-4 w-4" />
             {autoRefresh ? 'Live On' : 'Live Off'}
           </Button>
-          <Button variant="outline" onClick={fetchTakeOrders} disabled={isLoading} className="w-full gap-2 sm:w-auto">
+          <Button variant="outline" onClick={() => void fetchTakeOrders()} disabled={isLoading} className="w-full gap-2 sm:w-auto">
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (

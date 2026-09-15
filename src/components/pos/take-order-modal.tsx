@@ -358,6 +358,8 @@ export function TakeOrderModal({
     const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
     const [kitchenTicketBusinessName, setKitchenTicketBusinessName] = useState('');
     const kitchenTicketPrintLockRef = React.useRef(false);
+    const preventParentDismissRef = useRef(false);
+    const parentDismissResetRef = useRef<number | null>(null);
     const menuSearchInputRef = useRef<HTMLInputElement>(null);
     const categoryTabsRef = useRef<HTMLDivElement>(null);
     const orderFulfillmentEnabled = isOrderFulfillmentBusinessType(businessType);
@@ -370,6 +372,36 @@ export function TakeOrderModal({
             setMenuSearchQuery('');
         }
     }, [existingOrder, isOpen]);
+
+    useEffect(() => () => {
+        if (parentDismissResetRef.current) {
+            window.clearTimeout(parentDismissResetRef.current);
+        }
+    }, []);
+
+    const keepTakeOrderDialogOpen = useCallback(() => {
+        preventParentDismissRef.current = true;
+        if (parentDismissResetRef.current) {
+            window.clearTimeout(parentDismissResetRef.current);
+        }
+        // Radix receives the final mobile tap after a child dialog unmounts.
+        // Keep the parent open through that handoff, then restore normal dismissal.
+        parentDismissResetRef.current = window.setTimeout(() => {
+            preventParentDismissRef.current = false;
+            parentDismissResetRef.current = null;
+        }, 300);
+    }, []);
+
+    const handleTakeOrderDialogOpenChange = useCallback((open: boolean) => {
+        if (!open && (
+            preventParentDismissRef.current
+            || selectedOptionsItem
+            || selectedPortionItem
+        )) {
+            return;
+        }
+        onOpenChange(open);
+    }, [onOpenChange, selectedOptionsItem, selectedPortionItem]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -697,17 +729,19 @@ export function TakeOrderModal({
         setSelectedMenuItemId(getMenuItemKey(item));
         const optionGroups = getMenuOptionGroups(item);
         if (optionGroups.length > 0) {
+            keepTakeOrderDialogOpen();
             setSelectedOptionsItem(item);
             setSelectedOptionIds(getDefaultOptionIds(item));
             return;
         }
         if (canSellInPortions(item)) {
+            keepTakeOrderDialogOpen();
             setPendingSelectedOptions([]);
             setSelectedPortionItem(item);
             return;
         }
         handleAddToCart(item);
-    }, [handleAddToCart]);
+    }, [handleAddToCart, keepTakeOrderDialogOpen]);
 
     const handleOptionToggle = (group: MenuOptionGroup, optionId: string, checked: boolean) => {
         const groupId = String(group.id);
@@ -750,6 +784,7 @@ export function TakeOrderModal({
 
         const item = selectedOptionsItem;
         const options = selectedOptionSnapshots;
+        keepTakeOrderDialogOpen();
         setSelectedOptionsItem(null);
         setSelectedOptionIds({});
         if (canSellInPortions(item)) {
@@ -1273,11 +1308,16 @@ export function TakeOrderModal({
 
   return (
     <>
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={handleTakeOrderDialogOpenChange}>
       <DialogContent
         className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-screen h-[100dvh] max-h-screen max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-[90vh] sm:max-h-[90vh] sm:w-[95vw] sm:max-w-[95vw] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4"
         onInteractOutside={(event) => {
-          if (selectedOptionsItem || selectedPortionItem) {
+          if (preventParentDismissRef.current || selectedOptionsItem || selectedPortionItem) {
+            event.preventDefault();
+          }
+        }}
+        onPointerDownOutside={(event) => {
+          if (preventParentDismissRef.current || selectedOptionsItem || selectedPortionItem) {
             event.preventDefault();
           }
         }}
@@ -1672,6 +1712,7 @@ export function TakeOrderModal({
         open={Boolean(selectedOptionsItem)}
         onOpenChange={(open) => {
             if (!open) {
+                keepTakeOrderDialogOpen();
                 setSelectedOptionsItem(null);
                 setSelectedOptionIds({});
             }
@@ -1777,6 +1818,7 @@ export function TakeOrderModal({
         open={!!selectedPortionItem}
         onOpenChange={(open) => {
             if (!open) {
+                keepTakeOrderDialogOpen();
                 setSelectedPortionItem(null);
                 setPendingSelectedOptions([]);
             }

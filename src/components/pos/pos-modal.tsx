@@ -5,7 +5,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, ScanBarcode, LayoutGrid, List, AlertTriangle, Loader2, X, Printer, Barcode, Grid3x3, ListIcon, Camera, Plus, Minus, ClipboardList } from 'lucide-react';
 
 import { db, type InventoryItem, type Order, type Session, type TakeOrder, type TaxRate } from '@/lib/db';
-import { isKitchenBusinessType, normalizeBusinessType, type BusinessType } from '@/lib/inventory/config';
+import { isKitchenBusinessType, isSalonServiceBusinessType, normalizeBusinessType, type BusinessType } from '@/lib/inventory/config';
 import { PharmacyPos } from './pharmacy-pos';
 import { RestaurantPos } from './restaurant-pos';
 import { BarLiquorPos } from './bar-liquor-pos';
@@ -83,6 +83,26 @@ const LOCAL_STORAGE_KEYS = {
     POS_MODAL_VIEW_MODE: 'handypos-pos-modal-view-mode',
 };
 const SCAN_FEEDBACK_TOAST_DURATION_MS = 800;
+
+const getAppointmentSettlementContext = (order: TakeOrder): AppointmentSettlementContext | null => {
+  const raw = order.appointmentSettlement ?? order.appointment_settlement;
+  const appointmentId = String(raw?.appointmentId ?? raw?.appointment_id ?? '').trim();
+  const takeOrderId = String(raw?.takeOrderId ?? raw?.take_order_id ?? '').trim();
+  const customerId = String(raw?.customerId ?? raw?.customer_id ?? '').trim();
+  if (!appointmentId || !takeOrderId || !customerId) {
+    return null;
+  }
+
+  const parsedDeposit = Number(raw?.depositTotal ?? raw?.deposit_total ?? 0);
+  return {
+    appointmentId,
+    takeOrderId,
+    customerId,
+    customerName: String(raw?.customerName ?? raw?.customer_name ?? '').trim() || undefined,
+    customerPhone: String(raw?.customerPhone ?? raw?.customer_phone ?? '').trim() || undefined,
+    depositTotal: Number.isFinite(parsedDeposit) ? Math.max(0, parsedDeposit) : 0,
+  };
+};
 
 const buildPosCartStorageKey = (businessId?: string | number | null, branchId?: string | null): string => {
   const normalizedBusinessId = String(businessId ?? 'unknown').trim() || 'unknown';
@@ -1758,26 +1778,38 @@ export function PosModal({
       return false;
     }
 
-    const rawAppointmentSettlement = order.appointmentSettlement ?? order.appointment_settlement;
-    const appointmentDepositTotal = Number(
-      rawAppointmentSettlement?.depositTotal ?? rawAppointmentSettlement?.deposit_total ?? 0
+    let sourceOrder = order;
+    let appointmentContext = getAppointmentSettlementContext(sourceOrder);
+    const orderHasCustomer = Boolean(
+      sourceOrder.customer ??
+      sourceOrder.customerId ??
+      sourceOrder.customer_id ??
+      sourceOrder.customerName ??
+      sourceOrder.customerPhone
     );
-    const normalizedAppointmentDepositTotal = Number.isFinite(appointmentDepositTotal)
-      ? Math.max(0, appointmentDepositTotal)
-      : 0;
-    const appointmentContext: AppointmentSettlementContext | null = (
-      rawAppointmentSettlement &&
-      String(rawAppointmentSettlement.appointmentId ?? rawAppointmentSettlement.appointment_id ?? '').trim() &&
-      String(rawAppointmentSettlement.takeOrderId ?? rawAppointmentSettlement.take_order_id ?? '').trim() &&
-      String(rawAppointmentSettlement.customerId ?? rawAppointmentSettlement.customer_id ?? '').trim()
-    ) ? {
-      appointmentId: String(rawAppointmentSettlement.appointmentId ?? rawAppointmentSettlement.appointment_id).trim(),
-      takeOrderId: String(rawAppointmentSettlement.takeOrderId ?? rawAppointmentSettlement.take_order_id).trim(),
-      customerId: String(rawAppointmentSettlement.customerId ?? rawAppointmentSettlement.customer_id).trim(),
-      customerName: String(rawAppointmentSettlement.customerName ?? rawAppointmentSettlement.customer_name ?? '').trim() || undefined,
-      customerPhone: String(rawAppointmentSettlement.customerPhone ?? rawAppointmentSettlement.customer_phone ?? '').trim() || undefined,
-      depositTotal: normalizedAppointmentDepositTotal,
-    } : null;
+
+    // Checked-in appointments always have a customer. A single refresh here
+    // repairs local snapshots created before appointment metadata was added,
+    // instead of letting their deposits be processed as a normal sale.
+    if (
+      !appointmentContext &&
+      isSalonServiceBusinessType(currentBusinessType) &&
+      orderHasCustomer &&
+      typeof navigator !== 'undefined' &&
+      navigator.onLine
+    ) {
+      try {
+        const { syncService } = await import('@/lib/services/sync-service');
+        await syncService.fetchAllTakeOrdersFromBackend(branchId);
+        const refreshedOrder = await db.takeOrders.get(order.id);
+        if (refreshedOrder) {
+          sourceOrder = refreshedOrder;
+          appointmentContext = getAppointmentSettlementContext(sourceOrder);
+        }
+      } catch (error) {
+        console.warn('[POS Modal] Could not refresh order before checkout:', error);
+      }
+    }
 
     if (appointmentContext && cart.length > 0) {
       toast({
@@ -1788,7 +1820,7 @@ export function PosModal({
       return false;
     }
 
-    if (!canProcessTakeOrderPayment(order, user?.uid, user?.role)) {
+    if (!canProcessTakeOrderPayment(sourceOrder, user?.uid, user?.role)) {
       toast({
         variant: 'destructive',
         title: 'Payment restricted',
@@ -1798,7 +1830,7 @@ export function PosModal({
     }
 
     const result = await addTakeOrderToSaleCart({
-      order,
+      order: sourceOrder,
       branchId,
       onAddToCart: handleAddToCart,
     });
@@ -1817,10 +1849,10 @@ export function PosModal({
     setIsMobileCartOpen(true);
     toast({
       title: 'Order ready for checkout',
-      description: `Order #${order.orderNumber} has been added to the sale cart.`,
+      description: `Order #${sourceOrder.orderNumber} has been added to the sale cart.`,
     });
     return true;
-  }, [activeSession, branchId, cart.length, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast, user?.role, user?.uid]);
+  }, [activeSession, branchId, cart.length, currentBusinessType, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast, user?.role, user?.uid]);
 
   useEffect(() => {
     if (!processTakeOrderId) {

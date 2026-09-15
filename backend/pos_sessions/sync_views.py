@@ -1248,6 +1248,40 @@ def handle_create_order(
         tip_amount = _quantize_money(_to_decimal(data.get('tip'), Decimal('0')))
         total = float(_quantize_money(gross_amount + tip_amount))
         
+        # Appointment metadata is authoritative for a service-order checkout.
+        # Older desktop clients may send the final method (for example, Cash)
+        # instead of the internal Appointment Settlement label. If that is
+        # treated as a regular sale, the deposit is never allocated and the
+        # appointment remains open.
+        raw_appointment_settlement = data.get('appointment_settlement') or data.get('appointmentSettlement')
+        has_appointment_reference = isinstance(raw_appointment_settlement, dict) and bool(
+            raw_appointment_settlement.get('appointment_id')
+            or raw_appointment_settlement.get('appointmentId')
+            or raw_appointment_settlement.get('take_order_id')
+            or raw_appointment_settlement.get('takeOrderId')
+        )
+        if has_appointment_reference:
+            raw_appointment_settlement = dict(raw_appointment_settlement)
+            normalized_requested_method = str(payment_method or '').strip().lower()
+            final_payment_method = str(
+                raw_appointment_settlement.get('final_payment_method')
+                or raw_appointment_settlement.get('finalPaymentMethod')
+                or (
+                    payment_method
+                    if normalized_requested_method != 'appointment settlement'
+                    else ''
+                )
+            ).strip()
+            if final_payment_method:
+                raw_appointment_settlement.setdefault('final_payment_method', final_payment_method)
+                raw_appointment_settlement.setdefault('finalPaymentMethod', final_payment_method)
+            data = {
+                **data,
+                'appointment_settlement': raw_appointment_settlement,
+                'appointmentSettlement': raw_appointment_settlement,
+            }
+            payment_method = 'Appointment Settlement'
+
         normalized_payment_method = str(payment_method or '').strip().lower()
         payment_method_is_credit = normalized_payment_method == 'on account'
         payment_method_is_laybuy = normalized_payment_method == 'laybuy'
@@ -1257,7 +1291,6 @@ def handle_create_order(
         )
         appointment_settlement = {}
         if payment_method_is_appointment_settlement:
-            raw_appointment_settlement = data.get('appointment_settlement') or data.get('appointmentSettlement')
             if not isinstance(raw_appointment_settlement, dict):
                 return {
                     'success': False,
