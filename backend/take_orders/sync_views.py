@@ -2,10 +2,14 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from .models import TakeOrder, TakeOrderItem
 from .serializers import TakeOrderSerializer
 from business.models import Branch
+from business.access import user_can_access_business
+from pos_sessions.stock_validation import validate_stock_available_for_order_lines
+from .takeaway import normalise_takeaway_items
 from .session_access import (
     get_active_staff_session,
     user_can_cancel_take_order,
@@ -103,6 +107,41 @@ def _clean_take_order_item_sync_data(item_data):
     return cleaned
 
 
+def _sync_validation_error_text(exc):
+    """Return one useful message for the sync retry queue."""
+    details = getattr(exc, 'message_dict', None)
+    if isinstance(details, dict):
+        message = details.get('error')
+        if isinstance(message, (list, tuple)):
+            return ' '.join(str(part) for part in message)
+        if message:
+            return str(message)
+    messages = getattr(exc, 'messages', None)
+    if messages:
+        return ' '.join(str(message) for message in messages)
+    return str(exc)
+
+
+def _prepare_sync_items(items_data, branch, requested_takeaway=False):
+    """Apply the same packaging and stock rules used by the online order API."""
+    cleaned_items = [_clean_take_order_item_sync_data(item) for item in (items_data or [])]
+    normalized_items, is_takeaway = normalise_takeaway_items(
+        cleaned_items,
+        branch,
+        requested_takeaway,
+    )
+    normalized_items = [
+        _clean_take_order_item_sync_data(item)
+        for item in normalized_items
+    ]
+    validate_stock_available_for_order_lines(
+        normalized_items,
+        branch.business,
+        branch,
+    )
+    return normalized_items, is_takeaway
+
+
 def _apply_completion_audit(take_order, user):
     if take_order.status == 'Completed':
         take_order.completed_at = take_order.completed_at or timezone.now()
@@ -147,6 +186,12 @@ def sync_push(request):
                 {'error': 'Branch not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        if not user_can_access_business(request.user, branch.business_id):
+            return Response(
+                {'error': 'You do not have access to this branch.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         
         acknowledged = []
         conflicts = []
@@ -170,7 +215,18 @@ def sync_push(request):
                             'error': 'Orders cannot be created as cancelled. Cancel an existing order with an admin user.',
                         })
                         continue
-                    items_data = change_data.pop('items', [])
+                    try:
+                        items_data, is_takeaway = _prepare_sync_items(
+                            change_data.pop('items', []),
+                            branch,
+                            change_data.get('is_takeaway', False),
+                        )
+                    except DjangoValidationError as exc:
+                        errors.append({
+                            'id': change_id,
+                            'error': _sync_validation_error_text(exc),
+                        })
+                        continue
                     take_order_data = {
                         'id': change_id,
                         'branch_id': branch_id,
@@ -178,6 +234,7 @@ def sync_push(request):
                         'created_by_id': request.user.id,
                         **change_data
                     }
+                    take_order_data['is_takeaway'] = is_takeaway
                     
                     take_order_data['order_number'] = TakeOrder.next_order_number_for_branch(branch)
                     if take_order_data.get('order_type', 'staff') == 'staff':
@@ -205,10 +262,14 @@ def sync_push(request):
                     for item_data in items_data:
                         TakeOrderItem.objects.create(
                             take_order=take_order,
-                            **_clean_take_order_item_sync_data(item_data)
+                            **item_data
                         )
                     
-                    acknowledged.append({'id': change_id})
+                    acknowledged.append({
+                        'id': change_id,
+                        'take_order': TakeOrderSerializer(take_order).data,
+                        'branch_id': str(branch_id),
+                    })
                 
                 elif op == 'update':
                     # Update existing take order, or create if it doesn't exist
@@ -221,6 +282,15 @@ def sync_push(request):
                             errors.append({
                                 'id': change_id,
                                 'error': 'Orders cannot be created as cancelled. Cancel an existing order with an admin user.',
+                            })
+                            continue
+                        if (
+                            'status' in change_data
+                            and change_data['status'] not in dict(TakeOrder.STATUS_CHOICES)
+                        ):
+                            errors.append({
+                                'id': change_id,
+                                'error': 'Invalid order status.',
                             })
                             continue
 
@@ -245,6 +315,25 @@ def sync_push(request):
                                     'error': 'Start an active session before taking orders for this branch.',
                                 })
                                 continue
+
+                        if 'items' in change_data:
+                            try:
+                                items_data, is_takeaway = _prepare_sync_items(
+                                    change_data['items'],
+                                    branch,
+                                    change_data.get(
+                                        'is_takeaway',
+                                        existing_take_order.is_takeaway if existing_take_order else False,
+                                    ),
+                                )
+                            except DjangoValidationError as exc:
+                                errors.append({
+                                    'id': change_id,
+                                    'error': _sync_validation_error_text(exc),
+                                })
+                                continue
+                            change_data['items'] = items_data
+                            change_data['is_takeaway'] = is_takeaway
 
                         take_order, created = TakeOrder.objects.get_or_create(
                             id=change_id,
@@ -298,6 +387,36 @@ def sync_push(request):
                                 'error': 'Only the staff member who took this order can process its payment.',
                             })
                             continue
+
+                        if (
+                            take_order.status in {'Sent to Kitchen', 'Preparing', 'Ready'}
+                            and 'items' not in change_data
+                        ):
+                            existing_items = [
+                                {
+                                    'inventory_item_id': item.inventory_item_id,
+                                    'menu_item_id': item.menu_item_id,
+                                    'name': item.name,
+                                    'quantity': item.quantity,
+                                    'recipe': item.recipe or [],
+                                    'is_prepared_menu_item': item.is_prepared_menu_item,
+                                    'selected_options': item.selected_options or [],
+                                    'is_takeaway_packaging': item.is_takeaway_packaging,
+                                }
+                                for item in take_order.items.all()
+                            ]
+                            try:
+                                validate_stock_available_for_order_lines(
+                                    existing_items,
+                                    take_order.business,
+                                    take_order.branch,
+                                )
+                            except DjangoValidationError as exc:
+                                errors.append({
+                                    'id': change_id,
+                                    'error': _sync_validation_error_text(exc),
+                                })
+                                continue
                         
                         _apply_completion_audit(take_order, request.user)
                         _apply_cancellation_audit(take_order, request.user)
@@ -311,10 +430,14 @@ def sync_push(request):
                             for item_data in change_data['items']:
                                 TakeOrderItem.objects.create(
                                     take_order=take_order,
-                                    **_clean_take_order_item_sync_data(item_data)
+                                    **item_data
                                 )
                         
-                        acknowledged.append({'id': change_id})
+                        acknowledged.append({
+                            'id': change_id,
+                            'take_order': TakeOrderSerializer(take_order).data,
+                            'branch_id': str(branch_id),
+                        })
                     
                     except Exception as e:
                         errors.append({

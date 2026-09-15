@@ -32,6 +32,7 @@ class SyncService {
   };
 
   private syncInProgress = false;
+  private connectivityListenerRegistered = false;
   private readonly INVENTORY_SYNC_KEY = 'inventory_last_synced_at';
   private retryIntervalId: NodeJS.Timeout | null = null;
   private readonly RETRY_INTERVAL = 30000; // 30 seconds
@@ -612,7 +613,7 @@ class SyncService {
         c.entity_type !== 'BusinessCharge' &&
         c.entity_type !== 'Expense'
       );
-      const takeOrderChanges = changes.filter(c => c.entity_type === 'TakeOrder');
+      let takeOrderChanges = changes.filter(c => c.entity_type === 'TakeOrder');
       const pushCustomerChanges = async (): Promise<boolean> => {
         if (customerChanges.length === 0) {
           return true;
@@ -623,6 +624,7 @@ class SyncService {
 
           const result = await authFetch.fetch('/business/sync/push/', {
             method: 'POST',
+            queueOnFailure: false,
             body: JSON.stringify({
               last_synced_at: this.syncState.last_synced_at,
               changes: customerChanges,
@@ -664,6 +666,7 @@ class SyncService {
         try {
           const result = await authFetch.fetch('/sessions/sync/push/', {
             method: 'POST',
+            queueOnFailure: false,
             body: JSON.stringify({
               last_synced_at: this.syncState.last_synced_at,
               changes: sessionChanges,
@@ -703,6 +706,7 @@ class SyncService {
         try {
           const result = await authFetch.fetch('/sessions/sync/push/', {
             method: 'POST',
+            queueOnFailure: false,
             body: JSON.stringify({
               last_synced_at: this.syncState.last_synced_at,
               changes: orderChanges,
@@ -760,6 +764,15 @@ class SyncService {
         return;
       }
 
+      // An appointment settlement can complete its linked service order while
+      // the order acknowledgement is being applied. Re-read dirty take orders
+      // so this sync cycle cannot submit a stale Preparing/Ready snapshot after
+      // that authoritative completion.
+      if (takeOrderChanges.length > 0 || orderChanges.length > 0) {
+        const refreshedChanges = await this.collectLocalChanges(branchId);
+        takeOrderChanges = refreshedChanges.filter(c => c.entity_type === 'TakeOrder');
+      }
+
       // Push inventory changes to inventory sync endpoint
       if (inventoryChanges.length > 0) {
         try {
@@ -779,6 +792,7 @@ class SyncService {
 
             const result = await authFetch.fetch('/inventory/sync/push/', {
               method: 'POST',
+              queueOnFailure: false,
               body: JSON.stringify({
                 last_synced_at: this.syncState.last_synced_at,
                 changes: chunk,
@@ -812,6 +826,7 @@ class SyncService {
         try {
           const result = await authFetch.fetch('/orders/sync/push/', {
             method: 'POST',
+            queueOnFailure: false,
             body: JSON.stringify({
               last_synced_at: this.syncState.last_synced_at,
               changes: takeOrderChanges,
@@ -822,7 +837,7 @@ class SyncService {
           if (result.results?.acknowledged && Array.isArray(result.results.acknowledged)) {
             console.log(`[Sync] ${result.results.acknowledged.length} take order changes acknowledged`);
             for (const ack of result.results.acknowledged) {
-              await this.markChangeAsSynced(ack.id);
+              await this.applyTakeOrderSyncAck(ack);
             }
           }
 
@@ -833,6 +848,14 @@ class SyncService {
 
           if (result.results?.errors && result.results.errors.length > 0) {
             console.error(`[Sync] ${result.results.errors.length} take order sync errors:`, result.results.errors);
+            for (const syncError of result.results.errors) {
+              const id = String(syncError?.id ?? '').trim();
+              if (!id) continue;
+              await db.takeOrders.update(id, {
+                syncPending: true,
+                syncError: String(syncError?.error ?? 'Order could not be synced.').trim(),
+              });
+            }
           }
         } catch (error) {
           console.error('[Sync] Take order push failed:', error);
@@ -846,6 +869,7 @@ class SyncService {
 
           const result = await authFetch.fetch('/business/sync/push/', {
             method: 'POST',
+            queueOnFailure: false,
             body: JSON.stringify({
               last_synced_at: this.syncState.last_synced_at,
               changes: taxChanges,
@@ -875,6 +899,7 @@ class SyncService {
 
           const result = await authFetch.fetch('/business/sync/push/', {
             method: 'POST',
+            queueOnFailure: false,
             body: JSON.stringify({
               last_synced_at: this.syncState.last_synced_at,
               changes: chargeChanges,
@@ -905,6 +930,7 @@ class SyncService {
 
           const result = await authFetch.fetch('/business/sync/push/', {
             method: 'POST',
+            queueOnFailure: false,
             body: JSON.stringify({
               last_synced_at: this.syncState.last_synced_at,
               changes: expenseChanges,
@@ -1553,7 +1579,16 @@ class SyncService {
    * Note: Large base64 images are kept for sync but may need compression in production
    */
   private sanitizeForSync(data: any): any {
-    const { _dirty, _operation, _synced_at, initialStockViaPurchase, _purchaseSyncPending, ...clean } = data;
+    const {
+      _dirty,
+      _operation,
+      _synced_at,
+      initialStockViaPurchase,
+      _purchaseSyncPending,
+      syncPending,
+      syncError,
+      ...clean
+    } = data;
     if (_operation === 'create' && initialStockViaPurchase) {
       clean.stockUnits = 0;
       clean.value = 0;
@@ -1931,6 +1966,54 @@ class SyncService {
         }
       }
 
+      const appointmentTakeOrder = normalizedAck.appointmentTakeOrder
+        ?? normalizedAck.appointment_take_order;
+      const appointmentTakeOrderId = String(appointmentTakeOrder?.id ?? '').trim();
+      if (appointmentTakeOrderId && appointmentTakeOrder?.status === 'Completed') {
+        const localTakeOrder = await db.takeOrders.get(appointmentTakeOrderId);
+        if (localTakeOrder) {
+          const completedAt = String(
+            appointmentTakeOrder.completedAt
+            ?? appointmentTakeOrder.completed_at
+            ?? ''
+          ).trim() || undefined;
+          const completedBy = String(
+            appointmentTakeOrder.completedBy
+            ?? appointmentTakeOrder.completed_by
+            ?? ''
+          ).trim() || undefined;
+          const completedByName = String(
+            appointmentTakeOrder.completedByName
+            ?? appointmentTakeOrder.completed_by_name
+            ?? ''
+          ).trim() || undefined;
+          const updatedAt = String(
+            appointmentTakeOrder.updatedAt
+            ?? appointmentTakeOrder.updated_at
+            ?? normalizedAck.updatedAt
+            ?? normalizedAck.updated_at
+            ?? new Date().toISOString()
+          ).trim();
+
+          await db.takeOrders.update(appointmentTakeOrderId, {
+            status: 'Completed',
+            completedAt,
+            completedBy,
+            completedByName,
+            cancellationReason: '',
+            cancellation_reason: '',
+            updatedAt,
+            _dirty: false,
+            _operation: undefined,
+            _synced_at: updatedAt,
+          });
+
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+          }
+        }
+      }
+
       const fiscalNumber = String(
         updatePayload.fiscalInvoiceNumber ?? updatePayload.fiscal_invoice_number ?? ''
       ).trim();
@@ -1941,6 +2024,46 @@ class SyncService {
       }
     } catch (error) {
       console.error(`[Sync] Failed to apply order acknowledgement for ${id}:`, error);
+      await this.markChangeAsSynced(id);
+    }
+  }
+
+  /**
+   * Replace a locally queued take order with the server-confirmed version.
+   * This immediately swaps the provisional offline sequence number for the
+   * authoritative branch number instead of waiting for the next pull.
+   */
+  private async applyTakeOrderSyncAck(ack: any): Promise<void> {
+    const id = String(ack?.id ?? '').trim();
+    if (!id) return;
+
+    try {
+      const localTakeOrder = await db.takeOrders.get(id);
+      const serverTakeOrder = ack?.take_order;
+
+      if (!localTakeOrder || !serverTakeOrder) {
+        await this.markChangeAsSynced(id);
+        return;
+      }
+
+      const normalized = this.snakeToCamel(serverTakeOrder);
+      await db.takeOrders.put({
+        ...localTakeOrder,
+        ...normalized,
+        id,
+        branchId: localTakeOrder.branchId || String(ack?.branch_id || ''),
+        _dirty: false,
+        _operation: undefined,
+        _synced_at: normalized.updatedAt || normalized.updated_at || new Date().toISOString(),
+        syncPending: undefined,
+        syncError: undefined,
+      });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+      }
+      console.log(`[Sync] Applied server acknowledgement for take order ${id}`);
+    } catch (error) {
+      console.error(`[Sync] Failed to apply take order acknowledgement for ${id}:`, error);
       await this.markChangeAsSynced(id);
     }
   }
@@ -2255,7 +2378,12 @@ class SyncService {
       // Try take orders
       const takeOrder = await db.takeOrders.get(id);
       if (takeOrder) {
-        await db.takeOrders.update(id, { _dirty: false, _operation: undefined });
+        await db.takeOrders.update(id, {
+          _dirty: false,
+          _operation: undefined,
+          syncPending: undefined,
+          syncError: undefined,
+        });
         console.log(`[Sync] Marked take order ${id} as synced`);
         return;
       }
@@ -2989,6 +3117,10 @@ class SyncService {
             // Get existing take order to preserve local fields
             const existingTakeOrder = await db.takeOrders.get(takeOrder.id);
             if (existingTakeOrder) {
+              if (existingTakeOrder._dirty) {
+                console.log(`[Sync] Kept local pending take order ${takeOrder.id} during pull`);
+                continue;
+              }
               // Merge: keep local data, update with server data
               await db.takeOrders.put({
                 ...existingTakeOrder,
@@ -3451,6 +3583,11 @@ class SyncService {
           try {
             // Convert snake_case from backend to camelCase for frontend
             const convertedOrder = this.snakeToCamel(takeOrder);
+            const existingTakeOrder = await db.takeOrders.get(String(takeOrder.id));
+            if (existingTakeOrder?._dirty) {
+              console.log(`[Sync] Kept local pending take order ${takeOrder.id} during refresh`);
+              continue;
+            }
             
             const orderToStore = {
               ...convertedOrder,
@@ -3481,6 +3618,8 @@ class SyncService {
    */
   setupConnectivityListener(): void {
     if (typeof window === 'undefined') return;
+    if (this.connectivityListenerRegistered) return;
+    this.connectivityListenerRegistered = true;
 
     window.addEventListener('online', () => {
       console.log('[Sync] Back online, triggering sync');
@@ -3514,6 +3653,7 @@ class SyncService {
    */
   private startRetryInterval(): void {
     if (typeof window === 'undefined') return;
+    if (this.retryIntervalId) return;
 
     this.retryIntervalId = setInterval(async () => {
       if (!navigator.onLine) return;

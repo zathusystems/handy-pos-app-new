@@ -1,4 +1,5 @@
 import json
+import uuid
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -861,6 +862,123 @@ class TakeOrderStatusManagementTests(TestCase):
         self.assertIn('Only the staff member', response.data['results']['errors'][0]['error'])
         order.refresh_from_db()
         self.assertEqual(order.status, 'Ready')
+
+    def test_offline_sync_create_applies_stock_rules_and_returns_server_order(self):
+        offline_order_id = str(uuid.uuid4())
+        offline_item_id = str(uuid.uuid4())
+
+        response = self.client.post(
+            '/api/orders/sync/push/',
+            {
+                'branch_id': str(self.branch.id),
+                'changes': [{
+                    'entity_type': 'TakeOrder',
+                    'op': 'create',
+                    'id': offline_order_id,
+                    'data': {
+                        'orderNumber': 999,
+                        'status': 'Ready',
+                        'customerName': 'Offline guest',
+                        'items': [{
+                            'id': offline_item_id,
+                            'inventoryItemId': str(self.item.id),
+                            'name': self.item.name,
+                            'quantity': '1.000',
+                            'price': '8.50',
+                        }],
+                    },
+                }],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        acknowledged = response.data['results']['acknowledged']
+        self.assertEqual(len(acknowledged), 1)
+        self.assertEqual(acknowledged[0]['id'], offline_order_id)
+        self.assertEqual(acknowledged[0]['take_order']['order_number'], 1)
+        self.assertEqual(
+            acknowledged[0]['take_order']['items'][0]['inventory_item_id'],
+            str(self.item.id),
+        )
+
+        synced_order = TakeOrder.objects.get(id=offline_order_id)
+        self.assertEqual(synced_order.order_number, 1)
+        self.assertEqual(synced_order.session, self.active_session)
+
+    def test_offline_sync_create_rejects_insufficient_stock_without_creating_order(self):
+        offline_order_id = str(uuid.uuid4())
+
+        response = self.client.post(
+            '/api/orders/sync/push/',
+            {
+                'branch_id': str(self.branch.id),
+                'changes': [{
+                    'entity_type': 'TakeOrder',
+                    'op': 'create',
+                    'id': offline_order_id,
+                    'data': {
+                        'status': 'Ready',
+                        'items': [{
+                            'inventoryItemId': str(self.item.id),
+                            'name': self.item.name,
+                            'quantity': '11.000',
+                            'price': '8.50',
+                        }],
+                    },
+                }],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['results']['acknowledged'], [])
+        self.assertIn('Not enough Chicken Wrap', response.data['results']['errors'][0]['error'])
+        self.assertFalse(TakeOrder.objects.filter(id=offline_order_id).exists())
+
+    def test_offline_sync_status_update_rechecks_stock_before_order_is_ready(self):
+        order = self._create_order(status='Pending')
+        self.item.stock_units = Decimal('0.000')
+        self.item.save(update_fields=['stock_units', 'updated_at'])
+
+        response = self.client.post(
+            '/api/orders/sync/push/',
+            {
+                'branch_id': str(self.branch.id),
+                'changes': [{
+                    'entity_type': 'TakeOrder',
+                    'op': 'update',
+                    'id': str(order.id),
+                    'data': {'status': 'Ready'},
+                }],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['results']['acknowledged'], [])
+        self.assertIn('Not enough Chicken Wrap', response.data['results']['errors'][0]['error'])
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'Pending')
+
+    def test_take_order_sync_rejects_a_branch_outside_the_users_access(self):
+        outsider = User.objects.create_user(
+            email='take-order-outsider@example.com',
+            password='test12345',
+        )
+        self.client.force_authenticate(outsider)
+
+        response = self.client.post(
+            '/api/orders/sync/push/',
+            {
+                'branch_id': str(self.branch.id),
+                'changes': [],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.data['error'], 'You do not have access to this branch.')
 
     def test_reopened_completed_order_clears_cashier_name(self):
         order = self._create_order(status='Ready')

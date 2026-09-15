@@ -2174,6 +2174,26 @@ export function PosModal({
       appointmentCheckout?.takeOrderId &&
       appointmentCheckout?.finalPaymentMethod
     );
+    if (isAppointmentCheckout && typeof navigator !== 'undefined' && !navigator.onLine) {
+      toast({
+        variant: 'destructive',
+        title: 'Appointment settlement needs a connection',
+        description: 'Deposits and appointment balances are reconciled on the server. Reconnect before completing this payment.',
+      });
+      return null;
+    }
+    if (
+      (paymentMethod === 'On Account' || paymentMethod === 'Laybuy') &&
+      typeof navigator !== 'undefined' &&
+      !navigator.onLine
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'This payment needs a connection',
+        description: 'On-account and laybuy payments check the customer balance and credit limit on the server. Reconnect before completing this sale.',
+      });
+      return null;
+    }
     const orderPaymentMethod: PaymentMethod = isAppointmentCheckout
       ? 'Appointment Settlement'
       : paymentMethod;

@@ -752,11 +752,13 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       try {
         const printedOrder = await authFetch.fetch<any>(
           `/orders/take-orders/${order.id}/mark_kitchen_ticket_printed/`,
-          { method: 'POST' },
+          { method: 'POST', queueOnFailure: false },
         );
         await db.takeOrders.update(order.id, {
           kitchenTicketPrinted: true,
           kitchenTicketPrintedAt: printedOrder?.kitchen_ticket_printed_at || new Date().toISOString(),
+          _dirty: order._dirty,
+          _operation: order._operation,
         });
         setSelectedOrder((current) => current?.id === order.id
           ? {
@@ -768,6 +770,28 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
       } catch (markError) {
         console.warn('[Orders Kitchen Ticket] Ticket printed but print state was not saved:', markError);
+        if ((markError as { isNetworkError?: boolean } | null)?.isNetworkError) {
+          const printedAt = new Date().toISOString();
+          await db.takeOrders.update(order.id, {
+            kitchenTicketPrinted: true,
+            kitchenTicketPrintedAt: printedAt,
+            updatedAt: printedAt,
+            _dirty: true,
+            _operation: order._operation === 'create' ? 'create' : 'update',
+            syncPending: true,
+          });
+          setSelectedOrder((current) => current?.id === order.id
+            ? {
+                ...current,
+                kitchenTicketPrinted: true,
+                kitchenTicketPrintedAt: printedAt,
+                _dirty: true,
+                _operation: order._operation === 'create' ? 'create' : 'update',
+                syncPending: true,
+              }
+            : current);
+          window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+        }
       }
 
       toast({
@@ -816,37 +840,64 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       }
       console.log(`[ViewOrdersModal] Updating order ${orderId} to status: ${resolvedStatus}`);
 
-      await authFetch.fetch(
-        `/orders/take-orders/${orderId}/update_status/`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            status: resolvedStatus,
-            ...(resolvedStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
-          })
+      if (resolvedStatus === 'Cancelled' && targetOrder?._operation === 'create') {
+        throw new Error('Wait for this order to sync before cancelling it so the administrator approval is recorded securely.');
+      }
+
+      let savedLocally = targetOrder?._operation === 'create';
+      if (!savedLocally) {
+        try {
+          await authFetch.fetch(
+            `/orders/take-orders/${orderId}/update_status/`,
+            {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                status: resolvedStatus,
+                ...(resolvedStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
+              }),
+              queueOnFailure: false,
+            }
+          );
+        } catch (error) {
+          if (!((error as { isNetworkError?: boolean } | null)?.isNetworkError)) {
+            throw error;
+          }
+          if (resolvedStatus === 'Cancelled') {
+            throw new Error('Order cancellations require a connection so the administrator approval is recorded securely.');
+          }
+          savedLocally = true;
         }
-      );
+      }
 
       await db.takeOrders.update(orderId, {
         status: resolvedStatus as TakeOrder['status'],
         cancellationReason: resolvedStatus === 'Cancelled' ? trimmedReason : '',
         cancellation_reason: resolvedStatus === 'Cancelled' ? trimmedReason : '',
         updatedAt: new Date().toISOString(),
+        _dirty: savedLocally || targetOrder?._dirty || undefined,
+        _operation: savedLocally
+          ? (targetOrder?._operation === 'create' ? 'create' : 'update')
+          : targetOrder?._operation,
+        syncPending: savedLocally || targetOrder?.syncPending || undefined,
       });
       const destinationFilter = getDestinationFilter(resolvedStatus, targetOrder);
       if (destinationFilter !== activeFilter) {
         setActiveFilter(destinationFilter);
         toast({
           title: `Order moved to ${orderFilterLabels[destinationFilter]}`,
-          description: `You are now viewing ${orderFilterLabels[destinationFilter]}.`,
+          description: savedLocally
+            ? `Saved on this device and will sync when the connection returns. You are now viewing ${orderFilterLabels[destinationFilter]}.`
+            : `You are now viewing ${orderFilterLabels[destinationFilter]}.`,
         });
       }
       console.log(`[ViewOrdersModal] Order ${orderId} updated to ${resolvedStatus}`);
-      const { syncService } = require('@/lib/services/sync-service');
-      syncService.fetchAllTakeOrdersFromBackend(branchId);
+      if (!savedLocally) {
+        const { syncService } = require('@/lib/services/sync-service');
+        syncService.fetchAllTakeOrdersFromBackend(branchId);
+      }
       window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
       return true;
     } catch (error) {
@@ -913,6 +964,17 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               <Badge className={`${getOrderTypeColor(order.orderType)} text-xs`}>
                 {order.orderType === 'staff' ? 'Staff' : 'QR Order'}
               </Badge>
+              {(order.syncPending || order._dirty) && (
+                <Badge variant="outline" className="flex items-center gap-1 text-xs text-amber-700">
+                  <RefreshCw className="h-3 w-3" />
+                  Sync pending
+                </Badge>
+              )}
+              {order.syncError && (
+                <Badge variant="destructive" className="text-xs">
+                  Needs attention
+                </Badge>
+              )}
               {appointmentOrder && (
                 <Badge variant="outline" className="flex items-center gap-1 text-xs">
                   <Calendar className="h-3 w-3" />

@@ -19,6 +19,7 @@ export const markTakeOrdersCompleted = async (
 
   for (const takeOrderId of uniqueIds) {
     const completedAt = new Date().toISOString();
+    const localTakeOrder = await db.takeOrders.get(takeOrderId);
     let backendUpdated = false;
 
     try {
@@ -30,6 +31,7 @@ export const markTakeOrdersCompleted = async (
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ status: 'Completed' }),
+          queueOnFailure: false,
         }
       );
       backendUpdated = true;
@@ -55,9 +57,12 @@ export const markTakeOrdersCompleted = async (
         cancellation_reason: '',
         completedAt,
         updatedAt: completedAt,
-        _dirty: !backendUpdated,
-        _operation: backendUpdated ? undefined : 'update',
-        _synced_at: backendUpdated ? completedAt : undefined,
+        _dirty: !backendUpdated || localTakeOrder?._dirty,
+        _operation: !backendUpdated
+          ? (localTakeOrder?._operation === 'create' ? 'create' : 'update')
+          : localTakeOrder?._operation,
+        _synced_at: backendUpdated && !localTakeOrder?._dirty ? completedAt : undefined,
+        syncPending: !backendUpdated || localTakeOrder?.syncPending || undefined,
       });
       completed.push(takeOrderId);
     } catch (error) {

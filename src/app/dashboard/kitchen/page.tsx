@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 import { useOrderNotificationSound } from '@/hooks/use-order-notification-sound';
 import { useSubscriptionFeatureAccess } from '@/hooks/use-subscription-feature-access';
-import { authFetch } from '@/lib/auth-fetch';
 import { db } from '@/lib/db';
+import { syncService } from '@/lib/services/sync-service';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -84,6 +84,10 @@ interface TakeOrder {
   items: TakeOrderItem[];
   created_at: string;
   updated_at: string;
+  _dirty?: boolean;
+  _operation?: 'create' | 'update' | 'delete';
+  syncPending?: boolean;
+  syncError?: string;
 }
 
 const statusColors: Record<string, string> = {
@@ -117,27 +121,35 @@ const normalizeBranchId = (value: string | null): string => {
   return normalized;
 };
 
+const getBranchIdCandidates = (branchId: string): string[] => {
+  const backendId = normalizeBranchId(branchId);
+  const candidates = new Set([String(branchId || '').trim(), backendId]);
+  if (/^\d+$/.test(backendId)) {
+    candidates.add(`BRN-${backendId}`);
+    candidates.add(`branch-${backendId}`);
+  }
+  return Array.from(candidates).filter(Boolean);
+};
+
+const toKitchenTakeOrder = (order: any): TakeOrder => ({
+  ...order,
+  order_number: Number(order?.order_number ?? order?.orderNumber ?? 0),
+  customer_name: order?.customer_name ?? order?.customerName,
+  customer_phone: order?.customer_phone ?? order?.customerPhone,
+  customer_notes: order?.customer_notes ?? order?.customerNotes,
+  table_number: order?.table_number ?? order?.tableNumber,
+  special_instructions: order?.special_instructions ?? order?.specialInstructions,
+  cancellation_reason: order?.cancellation_reason ?? order?.cancellationReason,
+  created_at: String(order?.created_at ?? order?.createdAt ?? new Date().toISOString()),
+  updated_at: String(order?.updated_at ?? order?.updatedAt ?? new Date().toISOString()),
+  items: Array.isArray(order?.items) ? order.items : [],
+});
+
 const getOrderAccentColor = (status: TakeOrder['status']): string => {
   if (status === 'Preparing') return '#eab308';
   if (status === 'Ready') return '#16a34a';
   if (status === 'Sent to Kitchen') return '#f97316';
   return '#a855f7';
-};
-
-const readTakeOrdersFromResponse = (response: unknown): TakeOrder[] => {
-  if (Array.isArray(response)) return response as TakeOrder[];
-  if (response && typeof response === 'object' && Array.isArray((response as any).results)) {
-    return (response as any).results as TakeOrder[];
-  }
-  return [];
-};
-
-const readItemsFromResponse = (response: unknown): any[] => {
-  if (Array.isArray(response)) return response;
-  if (response && typeof response === 'object' && Array.isArray((response as any).results)) {
-    return (response as any).results;
-  }
-  return [];
 };
 
 const getMinutesAgo = (dateString: string): string => {
@@ -214,6 +226,7 @@ export default function KitchenPage() {
   const [cancellationReason, setCancellationReason] = useState('');
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [activeMobileLane, setActiveMobileLane] = useState<KitchenLaneKey>('New');
+  const inventoryCacheLoadedRef = useRef(false);
   const canCancelOrders = user?.role === 'Admin';
 
   // Get active branch from localStorage
@@ -225,26 +238,34 @@ export default function KitchenPage() {
   }, []);
 
   // Fetch take orders
-  const fetchTakeOrders = async () => {
+  const fetchTakeOrders = async (includeInventory = false) => {
     if (!branchId) return;
 
     try {
       setIsLoading(true);
-      const backendBranchId = normalizeBranchId(branchId);
-      const [ordersData, inventoryData] = await Promise.all([
-        authFetch.fetch(`/orders/take-orders/?branch_id=${encodeURIComponent(backendBranchId)}`),
-        authFetch.fetch(`/inventory/items/?branch_id=${encodeURIComponent(backendBranchId)}`),
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        await syncService.fetchAllTakeOrdersFromBackend(branchId);
+        if (includeInventory || !inventoryCacheLoadedRef.current) {
+          await syncService.fetchAllInventoryFromBackend(branchId);
+          inventoryCacheLoadedRef.current = true;
+        }
+      }
+
+      const branchCandidates = getBranchIdCandidates(branchId);
+      const [cachedOrders, cachedInventory] = await Promise.all([
+        db.takeOrders.where('branchId').anyOf(branchCandidates).toArray(),
+        db.inventory.where('branchId').anyOf(branchCandidates).toArray(),
       ]);
 
-      setTakeOrders(readTakeOrdersFromResponse(ordersData));
-      setInventoryItems(readItemsFromResponse(inventoryData));
+      setTakeOrders(cachedOrders.map(toKitchenTakeOrder));
+      setInventoryItems(cachedInventory);
       setLastUpdatedAt(new Date().toISOString());
     } catch (error) {
       console.error('Error fetching take orders:', error);
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'Failed to fetch queued orders.',
+        description: 'Could not refresh orders. Cached orders remain available on this device.',
       });
     } finally {
       setIsLoading(false);
@@ -254,7 +275,7 @@ export default function KitchenPage() {
   // Initial fetch and auto-refresh
   useEffect(() => {
     if (branchId) {
-      fetchTakeOrders();
+      fetchTakeOrders(true);
     }
 
     if (!autoRefresh) return;
@@ -263,7 +284,7 @@ export default function KitchenPage() {
       if (branchId) {
         fetchTakeOrders();
       }
-    }, 5000); // Refresh every 5 seconds
+    }, 10000);
 
     return () => clearInterval(interval);
   }, [branchId, autoRefresh]);
@@ -280,90 +301,92 @@ export default function KitchenPage() {
         });
         return;
       }
-      await authFetch.fetch(
-        `/orders/take-orders/${orderId}/update_status/`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            status: newStatus,
-            ...(newStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
-          }),
-        }
-      );
+      const localOrder = await db.takeOrders.get(orderId);
+      if (newStatus === 'Cancelled' && localOrder?._operation === 'create') {
+        throw new Error('Wait for this order to sync before cancelling it so the administrator approval is recorded securely.');
+      }
 
-      await fetchTakeOrders();
+      let savedLocally = localOrder?._operation === 'create' || navigator.onLine === false;
+      if (newStatus === 'Cancelled' && savedLocally) {
+        throw new Error('Order cancellations require a connection so the administrator approval is recorded securely.');
+      }
+
+      if (!savedLocally) {
+        try {
+          const { authFetch } = await import('@/lib/auth-fetch');
+          await authFetch.fetch(
+            `/orders/take-orders/${orderId}/update_status/`,
+            {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                status: newStatus,
+                ...(newStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
+              }),
+              queueOnFailure: false,
+            }
+          );
+        } catch (error) {
+          if (!(error as { isNetworkError?: boolean } | null)?.isNetworkError) {
+            throw error;
+          }
+          if (newStatus === 'Cancelled') {
+            throw new Error('Order cancellations require a connection so the administrator approval is recorded securely.');
+          }
+          savedLocally = true;
+        }
+      }
+
+      const updatedAt = new Date().toISOString();
+      if (localOrder) {
+        await db.takeOrders.update(orderId, {
+          status: newStatus as TakeOrder['status'],
+          cancellationReason: newStatus === 'Cancelled' ? trimmedReason : '',
+          cancellation_reason: newStatus === 'Cancelled' ? trimmedReason : '',
+          updatedAt,
+          _dirty: savedLocally || localOrder._dirty || undefined,
+          _operation: savedLocally
+            ? (localOrder._operation === 'create' ? 'create' : 'update')
+            : localOrder._operation,
+          syncPending: savedLocally || localOrder.syncPending || undefined,
+        });
+      }
+      setTakeOrders((current) => current.map((order) => (
+        order.id === orderId
+          ? {
+              ...order,
+              status: newStatus as TakeOrder['status'],
+              cancellation_reason: newStatus === 'Cancelled' ? trimmedReason : '',
+              updated_at: updatedAt,
+              _dirty: savedLocally || localOrder?._dirty || undefined,
+              _operation: savedLocally
+                ? (localOrder?._operation === 'create' ? 'create' : 'update')
+                : localOrder?._operation,
+              syncPending: savedLocally || localOrder?.syncPending || undefined,
+            }
+          : order
+      )));
+
+      if (!savedLocally) {
+        await fetchTakeOrders();
+      }
       window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
       toast({
-        title: 'Success',
-        description: `Order status updated to ${getWorkflowStatusLabel(
+        title: savedLocally ? 'Status saved offline' : 'Success',
+        description: `${savedLocally ? 'This update will sync when the connection returns. ' : ''}Order status updated to ${getWorkflowStatusLabel(
           newStatus as TakeOrder['status'],
           isSalonServiceBusinessType(businessRecord?.type ?? business?.type)
         )}`,
       });
     } catch (error: any) {
       console.error('Error updating order status:', error);
-
-      if (error?.message?.includes('404') || error?.message?.includes('not found')) {
-        try {
-          console.log('Take order not found on backend, attempting to sync...');
-          const takeOrder = await (window as any).db?.takeOrders?.get(orderId);
-
-          if (takeOrder) {
-            await (window as any).db?.takeOrders?.update(orderId, {
-              _dirty: true,
-              _operation: 'update',
-              status: newStatus,
-              ...(newStatus === 'Cancelled' ? {
-                cancellationReason: trimmedReason,
-                cancellation_reason: trimmedReason,
-              } : {}),
-            });
-
-            const { syncService } = await import('@/lib/services/sync-service');
-            await syncService.performFullSync(branchId!);
-
-            await authFetch.fetch(
-              `/orders/take-orders/${orderId}/update_status/`,
-              {
-                method: 'PATCH',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  status: newStatus,
-                  ...(newStatus === 'Cancelled' ? { cancellation_reason: trimmedReason } : {}),
-                }),
-              }
-            );
-
-            await fetchTakeOrders();
-            window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
-            toast({
-              title: 'Success',
-              description: `Order status updated to ${getWorkflowStatusLabel(
-                newStatus as TakeOrder['status'],
-                isSalonServiceBusinessType(businessRecord?.type ?? business?.type)
-              )}`,
-            });
-          }
-        } catch (syncError) {
-          console.error('Error syncing take order:', syncError);
-          toast({
-            variant: 'destructive',
-            title: 'Error',
-            description: 'Take order not found. Please sync and try again.',
-          });
-        }
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: 'Failed to update order status',
-        });
-      }
+      toast({
+        variant: 'destructive',
+        title: 'Status not changed',
+        description: error instanceof Error ? error.message : 'Could not update this order.',
+      });
     }
   };
 
@@ -762,6 +785,16 @@ function OrderCard({
             {getWorkflowStatusLabel(order.status, isSalonServiceWorkflow)}
           </Badge>
         </div>
+
+        {(order.syncPending || order._dirty) && (
+          <Badge variant="outline" className="w-fit gap-1 text-amber-700">
+            <RefreshCw className="h-3 w-3" />
+            Sync pending
+          </Badge>
+        )}
+        {order.syncError && (
+          <p className="text-xs text-destructive">{order.syncError}</p>
+        )}
 
         {(order.table_number || order.customer_name || order.customer_phone) && (
           <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">

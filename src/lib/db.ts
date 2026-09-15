@@ -443,6 +443,10 @@ export interface TakeOrder {
     completedAt?: string; // ISO string
     kitchenTicketPrinted?: boolean;
     kitchenTicketPrintedAt?: string;
+    // Local-only marker while an offline order is waiting for server acceptance.
+    // The server assigns the final branch sequence number when it syncs.
+    syncPending?: boolean;
+    syncError?: string;
     appointmentSettlement?: {
         appointmentId?: string;
         appointment_id?: string;

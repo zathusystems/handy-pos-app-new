@@ -252,11 +252,24 @@ def settle_appointment_order(order, *, created_by=None):
             appointment_update_fields.append('updated_at')
             appointment.save(update_fields=appointment_update_fields)
 
+        # Settlement is the final event for the linked service order. Do not
+        # depend on its kitchen/service status here: an appointment may be
+        # checked in, in service, or ready when the cashier takes payment.
         take_order = appointment.take_order
-        if take_order and take_order.status != 'Completed':
+        if take_order:
             take_order.status = 'Completed'
             take_order.completed_at = settled_at
-            update_fields = ['status', 'completed_at', 'updated_at']
+            take_order.cancellation_reason = ''
+            take_order.cancelled_at = None
+            take_order.cancelled_by = None
+            update_fields = [
+                'status',
+                'completed_at',
+                'cancellation_reason',
+                'cancelled_at',
+                'cancelled_by',
+                'updated_at',
+            ]
             if getattr(created_by, 'pk', None):
                 take_order.completed_by = created_by
                 update_fields.append('completed_by')

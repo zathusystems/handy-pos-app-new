@@ -287,6 +287,42 @@ def _build_order_sync_payload(order):
                 'expected_cash': float(session.expected_cash or 0),
             }
 
+    settlement_metadata = order.appointment_settlement if isinstance(
+        order.appointment_settlement, dict
+    ) else {}
+    appointment_take_order_id = str(
+        settlement_metadata.get('take_order_id')
+        or settlement_metadata.get('takeOrderId')
+        or ''
+    ).strip()
+    if appointment_take_order_id:
+        from take_orders.models import TakeOrder
+
+        appointment_take_order = TakeOrder.objects.select_related('completed_by').filter(
+            pk=appointment_take_order_id,
+            business=order.business,
+            branch=order.branch,
+        ).first()
+        if appointment_take_order:
+            completed_by = appointment_take_order.completed_by
+            completed_by_name = None
+            if completed_by:
+                completed_by_name = (
+                    getattr(completed_by, 'full_name', None)
+                    or completed_by.get_username()
+                )
+            payload['appointment_take_order'] = {
+                'id': str(appointment_take_order.id),
+                'status': appointment_take_order.status,
+                'completed_at': (
+                    appointment_take_order.completed_at.isoformat()
+                    if appointment_take_order.completed_at else None
+                ),
+                'completed_by': str(completed_by.id) if completed_by else None,
+                'completed_by_name': completed_by_name,
+                'updated_at': appointment_take_order.updated_at.isoformat(),
+            }
+
     if str(order.payment_method or '').strip().lower() == 'laybuy':
         laybuy = CustomerLaybuy.objects.filter(
             business=order.business,
@@ -493,6 +529,7 @@ def sync_push(request):
                             'customer_current_balance',
                             'customer_available_credit',
                             'session_totals',
+                            'appointment_take_order',
                             'updated_at',
                         ]:
                             if key in result:

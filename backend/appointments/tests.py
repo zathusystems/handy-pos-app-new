@@ -476,6 +476,8 @@ class AppointmentAPITests(APITestCase):
         )
         self.assertEqual(check_in_response.status_code, status.HTTP_200_OK, check_in_response.data)
         appointment.refresh_from_db()
+        appointment.take_order.status = 'Preparing'
+        appointment.take_order.save(update_fields=['status', 'updated_at'])
 
         order_id = str(uuid.uuid4())
         now = timezone.now().isoformat()
@@ -522,6 +524,9 @@ class AppointmentAPITests(APITestCase):
         )
         self.assertEqual(sync_response.status_code, status.HTTP_200_OK, sync_response.data)
         self.assertEqual(sync_response.data['results']['errors'], [])
+        order_ack = sync_response.data['results']['acknowledged'][0]
+        self.assertEqual(order_ack['appointment_take_order']['id'], str(appointment.take_order_id))
+        self.assertEqual(order_ack['appointment_take_order']['status'], 'Completed')
 
         checkout_order = Order.objects.get(pk=order_id)
 

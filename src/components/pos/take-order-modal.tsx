@@ -3,7 +3,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type InventoryItem, type TakeOrder } from '@/lib/db';
+import { db, type InventoryItem, type Session, type TakeOrder } from '@/lib/db';
 import {
   Dialog,
   DialogContent,
@@ -34,6 +34,7 @@ import { PortionSaleDialog, canSellInPortions } from './portion-sale-dialog';
 import { getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { KitchenTicket } from './kitchen-ticket';
 import { getOfflineBusinessProfile } from '@/lib/business-profile';
+import { useAuth } from '@/hooks/use-auth';
 
 type TakeOrderModalProps = {
   branchId: string;
@@ -144,6 +145,10 @@ const getBackendBranchId = (branchId?: string | number | null): number | null =>
     const parsed = branchIdMatch ? Number.parseInt(branchIdMatch[0], 10) : Number.parseInt(normalized, 10);
 
     return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isOfflineRequestError = (error: unknown): boolean => {
+    return Boolean((error as { isNetworkError?: boolean } | null)?.isNetworkError);
 };
 
 const getConfigObject = (response: any): any => {
@@ -332,6 +337,7 @@ export function TakeOrderModal({
     onOrderUpdated,
 }: TakeOrderModalProps) {
     const { format: formatCurrency } = useCurrency();
+    const { user } = useAuth();
     const [cart, setCart] = useState<OrderCartItem[]>([]);
     const [selectedPortionItem, setSelectedPortionItem] = useState<MenuItemWithOptions | null>(null);
     const [selectedOptionsItem, setSelectedOptionsItem] = useState<MenuItemWithOptions | null>(null);
@@ -394,6 +400,14 @@ export function TakeOrderModal({
     const cachedMenu = useLiveQuery(
         () => menuCacheId ? db.menuEntryCache.get(menuCacheId) : undefined,
         [menuCacheId]
+    );
+    const takeawayConfigCacheId = useMemo(() => {
+        const backendBranchId = getBackendBranchId(branchId);
+        return backendBranchId === null ? null : `take-order-takeaway:${backendBranchId}`;
+    }, [branchId]);
+    const cachedTakeawayConfig = useLiveQuery(
+        () => takeawayConfigCacheId ? db.menuEntryCache.get(takeawayConfigCacheId) : undefined,
+        [takeawayConfigCacheId]
     );
 
     useEffect(() => {
@@ -541,13 +555,30 @@ export function TakeOrderModal({
                     setTakeawayConfig(config);
                     setTakeawayPackagingItem(packageItem);
                     setIsLoadingTakeawayConfig(false);
+                    void db.menuEntryCache.put({
+                        id: `take-order-takeaway:${backendBranchId}`,
+                        branchId: String(backendBranchId),
+                        items: [{ config, packageItem }] as unknown as Array<Record<string, unknown>>,
+                        updatedAt: new Date().toISOString(),
+                    }).catch((cacheError) => {
+                        console.warn('[TakeOrderModal] Could not cache takeaway configuration:', cacheError);
+                    });
                 }
             } catch (error) {
                 console.warn('[TakeOrderModal] Could not load takeaway configuration:', error);
+                const cachedEntry = cachedTakeawayConfig?.items?.[0] as {
+                    config?: TakeawayConfig;
+                    packageItem?: InventoryItem;
+                } | undefined;
                 if (!cancelled) {
-                    setTakeawayConfig(null);
-                    setTakeawayPackagingItem(null);
-                    setIsTakeaway(false);
+                    if (cachedEntry?.config?.enabled && cachedEntry.packageItem) {
+                        setTakeawayConfig(cachedEntry.config);
+                        setTakeawayPackagingItem(cachedEntry.packageItem);
+                    } else {
+                        setTakeawayConfig(null);
+                        setTakeawayPackagingItem(null);
+                        setIsTakeaway(false);
+                    }
                     setIsLoadingTakeawayConfig(false);
                 }
             }
@@ -557,7 +588,7 @@ export function TakeOrderModal({
         return () => {
             cancelled = true;
         };
-    }, [branchId, isOpen]);
+    }, [branchId, cachedTakeawayConfig, isOpen]);
 
     const menuItems = useMemo(() => {
         if (backendMenuItems) return backendMenuItems;
@@ -889,6 +920,40 @@ export function TakeOrderModal({
         updatedAt: new Date().toISOString(),
     }));
 
+    const getCurrentLocalSession = async (): Promise<Session | null> => {
+        const branchCandidates = getBranchIdCandidates(branchId);
+        if (branchCandidates.length === 0) return null;
+
+        const sessions = await db.sessions
+            .where('branchId')
+            .anyOf(branchCandidates)
+            .filter((session) => session.status === 'active')
+            .toArray();
+        const currentUserId = String(user?.uid || '').trim();
+        const currentUserEmail = String(user?.email || '').trim().toLowerCase();
+
+        return sessions.find((session) => {
+            const sessionUserId = String(session.userId || '').trim();
+            const sessionUserEmail = String(session.userEmail || '').trim().toLowerCase();
+            return (
+                (currentUserId !== '' && sessionUserId === currentUserId) ||
+                (currentUserEmail !== '' && sessionUserEmail === currentUserEmail)
+            );
+        }) || null;
+    };
+
+    const getNextProvisionalOrderNumber = async (): Promise<number> => {
+        const branchCandidates = getBranchIdCandidates(branchId);
+        const orders = branchCandidates.length > 0
+            ? await db.takeOrders.where('branchId').anyOf(branchCandidates).toArray()
+            : [];
+        const highestOrderNumber = orders.reduce((highest, order) => {
+            const orderNumber = Number(order.orderNumber || 0);
+            return Number.isFinite(orderNumber) ? Math.max(highest, orderNumber) : highest;
+        }, 0);
+        return highestOrderNumber + 1;
+    };
+
     const handlePrintKitchenTicket = async (order: TakeOrder) => {
         if (kitchenTicketPrintLockRef.current) return;
 
@@ -967,15 +1032,28 @@ export function TakeOrderModal({
             try {
                 const printedOrder = await authFetch.fetch<any>(
                     `/orders/take-orders/${order.id}/mark_kitchen_ticket_printed/`,
-                    { method: 'POST' },
+                    { method: 'POST', queueOnFailure: false },
                 );
                 await db.takeOrders.update(order.id, {
                     kitchenTicketPrinted: true,
                     kitchenTicketPrintedAt: printedOrder?.kitchen_ticket_printed_at || new Date().toISOString(),
+                    _dirty: order._dirty,
+                    _operation: order._operation,
                 });
                 window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
             } catch (markError) {
                 console.warn('[Take Order Kitchen Ticket] Ticket printed but print state was not saved:', markError);
+                if (isOfflineRequestError(markError)) {
+                    const printedAt = new Date().toISOString();
+                    await db.takeOrders.update(order.id, {
+                        kitchenTicketPrinted: true,
+                        kitchenTicketPrintedAt: printedAt,
+                        updatedAt: printedAt,
+                        _dirty: true,
+                        _operation: order._operation === 'create' ? 'create' : 'update',
+                    });
+                    window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
+                }
             }
 
             toast({
@@ -1004,16 +1082,26 @@ export function TakeOrderModal({
             const itemsPayload = buildOrderItemsPayload();
 
             if (isAddingToExistingOrder && existingOrder) {
-                const updatedOrder = await authFetch.fetch<any>(`/orders/take-orders/${existingOrder.id}/add_items/`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        items: itemsPayload,
-                        is_takeaway: isTakeaway,
-                    }),
-                });
+                let updatedOrder: any = null;
+                let savedLocally = existingOrder._operation === 'create';
+                if (!savedLocally) {
+                    try {
+                        updatedOrder = await authFetch.fetch<any>(`/orders/take-orders/${existingOrder.id}/add_items/`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                items: itemsPayload,
+                                is_takeaway: isTakeaway,
+                            }),
+                            queueOnFailure: false,
+                        });
+                    } catch (error) {
+                        if (!isOfflineRequestError(error)) throw error;
+                        savedLocally = true;
+                    }
+                }
 
                 const localNewItems = mapCartItemsToLocalOrderItems();
                 const mergedOrder: TakeOrder = {
@@ -1039,14 +1127,21 @@ export function TakeOrderModal({
                         }))
                         : [...(existingOrder.items || []), ...localNewItems],
                     updatedAt: updatedOrder?.updated_at || new Date().toISOString(),
+                    _dirty: savedLocally || existingOrder._dirty || undefined,
+                    _operation: savedLocally
+                        ? (existingOrder._operation === 'create' ? 'create' : 'update')
+                        : existingOrder._operation,
+                    syncPending: savedLocally || existingOrder.syncPending || undefined,
                 };
 
                 await db.takeOrders.put(mergedOrder);
                 onOrderUpdated?.(mergedOrder);
                 window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
                 toast({
-                    title: 'Items added',
-                    description: `Order ${existingOrder.orderNumber} has been updated.`,
+                    title: savedLocally ? 'Items saved locally' : 'Items added',
+                    description: savedLocally
+                        ? `Order ${existingOrder.orderNumber} will update when the connection returns.`
+                        : `Order ${existingOrder.orderNumber} has been updated.`,
                 });
                 handleClearCart();
                 onOpenChange(false);
@@ -1065,15 +1160,43 @@ export function TakeOrderModal({
                 items: itemsPayload,
             };
 
-            // Send to backend API
+            // Attempt the normal authoritative create first. If the server cannot
+            // be reached, persist one local sync change instead of queuing a raw
+            // HTTP request as well, which would risk duplicating the order later.
             console.log('[TakeOrderModal] Sending payload:', payload);
-            const createdOrder = await authFetch.fetch('/orders/take-orders/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload),
-            });
+            let createdOrder: any;
+            let savedOffline = false;
+            try {
+                createdOrder = await authFetch.fetch('/orders/take-orders/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                    queueOnFailure: false,
+                });
+            } catch (error) {
+                if (!isOfflineRequestError(error)) throw error;
+
+                const activeSession = await getCurrentLocalSession();
+                if (!activeSession) {
+                    throw new Error('Start a session while connected before taking orders offline.');
+                }
+
+                savedOffline = true;
+                createdOrder = {
+                    id: crypto.randomUUID(),
+                    order_number: await getNextProvisionalOrderNumber(),
+                    session: activeSession.id,
+                    status: orderStatus,
+                    customer_name: customerName || undefined,
+                    customer_phone: customerPhone || undefined,
+                    customer_notes: customerNotes || undefined,
+                    created_by: user?.uid || undefined,
+                    created_by_name: user?.displayName || user?.email || undefined,
+                    kitchen_ticket_printed: false,
+                };
+            }
 
             console.log('[TakeOrderModal] Response from backend:', createdOrder);
             
@@ -1101,9 +1224,12 @@ export function TakeOrderModal({
                     orderType: 'staff',
                     isTakeaway,
                     is_takeaway: isTakeaway,
-                    kitchenTicketPrinted: Boolean(createdOrder.kitchen_ticket_printed),
-                    kitchenTicketPrintedAt: createdOrder.kitchen_ticket_printed_at || undefined,
-                };
+                kitchenTicketPrinted: Boolean(createdOrder.kitchen_ticket_printed),
+                kitchenTicketPrintedAt: createdOrder.kitchen_ticket_printed_at || undefined,
+                _dirty: savedOffline,
+                _operation: savedOffline ? 'create' : undefined,
+                syncPending: savedOffline || undefined,
+            };
 
             await db.takeOrders.add(takeOrder);
             window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
@@ -1113,10 +1239,14 @@ export function TakeOrderModal({
             }
 
             toast({
-                title: resolvedDestination === 'pos' ? 'Order Ready for Sale' : `Order ${workflowCopy.sentLabel}`,
-                description: resolvedDestination === 'pos'
-                    ? `Order ${createdOrder.order_number} is ready for sale processing from Orders.`
-                    : `Order ${createdOrder.order_number} has been created successfully.`,
+                title: savedOffline
+                    ? 'Order saved offline'
+                    : (resolvedDestination === 'pos' ? 'Order Ready for Sale' : `Order ${workflowCopy.sentLabel}`),
+                description: savedOffline
+                    ? `Order ${createdOrder.order_number} will sync when the connection returns.`
+                    : (resolvedDestination === 'pos'
+                        ? `Order ${createdOrder.order_number} is ready for sale processing from Orders.`
+                        : `Order ${createdOrder.order_number} has been created successfully.`),
             });
 
             // Reset form
