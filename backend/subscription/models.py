@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.db import models, transaction
 from django.db.models import F
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.contrib.auth import get_user_model
 from business.models import Business
 from django.utils import timezone
@@ -42,6 +43,16 @@ class Subscription(models.Model):
     
     # Pricing (persisted snapshot; default pulled from SystemConfig)
     base_price_per_day = models.DecimalField(max_digits=10, decimal_places=2, default=5.00, help_text="Base daily subscription price")
+    custom_credit_discount_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('99'))],
+        help_text=(
+            "Admin-only discount for credit purchases. A value above 0 overrides "
+            "the normal funding-plan discount for every future credit purchase."
+        ),
+    )
     
     # Payment info
     stripe_customer_id = models.CharField(max_length=255, blank=True)

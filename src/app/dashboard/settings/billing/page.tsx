@@ -82,6 +82,7 @@ interface SubscriptionData {
   account_balance: number;
   total_spent: number;
   base_price_per_day: number;
+  custom_credit_discount_percent?: number;
   daily_charge: number;
   monthly_charge: number;
   last_payment_date: string | null;
@@ -463,6 +464,11 @@ export default function BillingPage() {
     return 0;
   }, [configuredMinimumDepositAmount, fundingPricing]);
 
+  const specialCreditDiscountPercent = useMemo(() => {
+    const value = Number(subscription?.custom_credit_discount_percent || 0);
+    return Number.isFinite(value) && value > 0 ? Math.min(value, 99) : 0;
+  }, [subscription?.custom_credit_discount_percent]);
+
   const fundingPlanQuotes = useMemo<FundingPlanQuote[]>(() => {
     const serverQuotes = new Map(
       (fundingPricing?.quotes || []).map((quote) => [quote.funding_period, quote] as const)
@@ -470,25 +476,34 @@ export default function BillingPage() {
     const dailyCharge = Number(fundingPricing?.daily_charge ?? subscription?.daily_charge ?? 0);
     return FUNDING_PLAN_PRESETS.map((preset) => {
       const serverQuote = serverQuotes.get(preset.id);
+      // The admin discount is an explicit override. Use it for the displayed
+      // rate as well, rather than retaining the static plan's 5/10/15% label.
+      const discountRate = specialCreditDiscountPercent > 0
+        ? specialCreditDiscountPercent / 100
+        : Number(serverQuote?.discount_rate ?? preset.discountRate);
       if (serverQuote) {
+        const baseAmount = toCurrencyAmount(Number(serverQuote.base_amount || 0));
+        const discountAmount = toCurrencyAmount(baseAmount * discountRate);
         return {
           ...preset,
-          baseAmount: toCurrencyAmount(Number(serverQuote.base_amount || 0)),
-          discountAmount: toCurrencyAmount(Number(serverQuote.discount_amount || 0)),
-          finalAmount: toCurrencyAmount(Number(serverQuote.final_amount || 0)),
+          discountRate,
+          baseAmount,
+          discountAmount,
+          finalAmount: toCurrencyAmount(baseAmount - discountAmount),
         };
       }
 
       const baseAmount = toCurrencyAmount(dailyCharge * preset.days);
-      const discountAmount = toCurrencyAmount(baseAmount * preset.discountRate);
+      const discountAmount = toCurrencyAmount(baseAmount * discountRate);
       return {
         ...preset,
+        discountRate,
         baseAmount,
         discountAmount,
         finalAmount: toCurrencyAmount(baseAmount - discountAmount),
       };
     });
-  }, [fundingPricing?.daily_charge, fundingPricing?.quotes, subscription?.daily_charge]);
+  }, [fundingPricing?.daily_charge, fundingPricing?.quotes, specialCreditDiscountPercent, subscription?.daily_charge]);
 
   const selectedFundingQuote = useMemo(
     () => fundingPlanQuotes.find((option) => option.id === selectedFundingPlan) || null,
@@ -817,10 +832,13 @@ export default function BillingPage() {
 
   const resolveSelectedCreditAmount = useCallback(() => {
     if (selectedFundingPlan === 'custom') {
-      return toCurrencyAmount(depositAmountValue);
+      const discountRate = specialCreditDiscountPercent / 100;
+      return toCurrencyAmount(
+        discountRate > 0 ? depositAmountValue / (1 - discountRate) : depositAmountValue
+      );
     }
     return toCurrencyAmount(selectedFundingQuote?.baseAmount || 0);
-  }, [depositAmountValue, selectedFundingPlan, selectedFundingQuote]);
+  }, [depositAmountValue, selectedFundingPlan, selectedFundingQuote, specialCreditDiscountPercent]);
 
   const resolveSelectedBonusCreditAmount = useCallback(() => {
     return toCurrencyAmount(Math.max(resolveSelectedCreditAmount() - resolveSelectedDepositAmount(), 0));
@@ -1605,12 +1623,21 @@ export default function BillingPage() {
 
   const formatPaymentMethodLabel = (method: string) => method.replace(/_/g, ' ');
 
+  // Keep the base-plan features together and list optional (not included)
+  // features together everywhere Billing presents them. This prevents the
+  // included badge from being scattered through an alphabetical list.
+  const compareFeaturesByInclusion = useCallback((left: Feature, right: Feature) => {
+    const inclusionOrder = Number(isFreeFeature(left)) - Number(isFreeFeature(right));
+    if (inclusionOrder !== 0) {
+      return -inclusionOrder;
+    }
+    return getFeaturePresentation(left).name.localeCompare(getFeaturePresentation(right).name);
+  }, []);
+
   const sortedAvailableFeatures = useMemo(
     () =>
-      [...features].sort((left, right) =>
-        getFeaturePresentation(left).name.localeCompare(getFeaturePresentation(right).name)
-      ),
-    [features]
+      [...features].sort(compareFeaturesByInclusion),
+    [compareFeaturesByInclusion, features]
   );
 
   const enabledFeatureDetails = useMemo(
@@ -1637,10 +1664,8 @@ export default function BillingPage() {
             isIncludedFeature: boolean;
           } => Boolean(detail)
         )
-        .sort((left, right) =>
-          getFeaturePresentation(left.feature).name.localeCompare(getFeaturePresentation(right.feature).name)
-        ),
-    [features, subscriptionFeatures]
+        .sort((left, right) => compareFeaturesByInclusion(left.feature, right.feature)),
+    [compareFeaturesByInclusion, features, subscriptionFeatures]
   );
 
   const enabledFeaturesDailyTotal = useMemo(
@@ -1711,6 +1736,15 @@ export default function BillingPage() {
           <AlertDescription>
             Subscription access is currently restricted. Update billing, resume the subscription,
             or add credits to restore full dashboard access.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {specialCreditDiscountPercent > 0 && (
+        <Alert className="border-emerald-200 bg-emerald-50 text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100">
+          <Zap className="h-4 w-4" />
+          <AlertDescription>
+            You have a special {specialCreditDiscountPercent}% credit discount.
           </AlertDescription>
         </Alert>
       )}
@@ -1807,7 +1841,9 @@ export default function BillingPage() {
                             <div>
                               <p className="font-semibold">Custom</p>
                               <p className="text-xs text-muted-foreground">
-                                Choose how much to pay and receive the same amount in credits
+                                {specialCreditDiscountPercent > 0
+                                  ? `Your ${specialCreditDiscountPercent}% special discount applies to this top-up`
+                                  : 'Choose how much to pay and receive the same amount in credits'}
                               </p>
                             </div>
                             <Badge variant="outline">Min {formatMoney(minimumDepositAmount)}</Badge>
@@ -1841,7 +1877,9 @@ export default function BillingPage() {
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {selectedFundingPlan === 'custom'
-                          ? `Enter any amount from ${formatMoney(minimumDepositAmount)} and above.`
+                          ? specialCreditDiscountPercent > 0
+                            ? `Your ${specialCreditDiscountPercent}% special discount adds bonus credits automatically.`
+                            : `Enter any amount from ${formatMoney(minimumDepositAmount)} and above.`
                           : selectedFundingQuote?.discountAmount
                             ? `This bundle includes a ${Math.round(
                                 selectedFundingQuote.discountRate * 100
@@ -2423,11 +2461,6 @@ export default function BillingPage() {
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">Monthly Charge</p>
             <p className="text-lg font-semibold">{formatMoney(subscription.monthly_charge)}</p>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">Total Spent</p>
-            <p className="text-lg font-semibold">{formatMoney(subscription.total_spent)}</p>
           </div>
 
           <div className="space-y-2">

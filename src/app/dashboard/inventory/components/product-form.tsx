@@ -213,6 +213,7 @@ export const AddProductForm = ({
         control,
         name: "recipe",
     });
+    const hasRecipeComponents = fields.length > 0;
 
     const itemType = useWatch({ control, name: 'itemType' });
     const isVariablePrice = useWatch({ control, name: 'isVariablePrice' });
@@ -533,7 +534,9 @@ export const AddProductForm = ({
                         : calculatedPortionPrice
                 )
                 : undefined;
-            const normalizedRecipe = (supportsProducedItems && normalizedIsProduced) || normalizedIsService
+            const normalizedRecipe = (supportsProducedItems && normalizedIsProduced)
+                || normalizedIsService
+                || (isRestaurantOrBar && finalItemType === 'sellable' && Array.isArray(data.recipe) && data.recipe.length > 0)
                 ? data.recipe
                     ?.map((recipeItem) => ({
                         ...recipeItem,
@@ -1204,7 +1207,7 @@ export const AddProductForm = ({
 
                         <Separator />
 
-                        {((isRestaurantOrBar && isProduced) || (isSalonBusiness && isService)) && (
+                        {((isRestaurantOrBar && (isProduced || hasRecipeComponents)) || (isSalonBusiness && isService)) && (
                             <>
                             <div>
                                 <h3 className="text-lg font-medium flex items-center gap-2"><BookOpen className="h-5 w-5"/>{isService ? 'Consumables used' : 'Recipe / Bill of Materials'}</h3>

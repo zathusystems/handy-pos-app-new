@@ -364,6 +364,41 @@ class SubscriptionPaymentFlowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Decimal(str(response.data['minimum_custom_amount'])), Decimal('100.00'))
 
+    def test_subscription_custom_credit_discount_overrides_bundle_discount(self):
+        self.subscription.custom_credit_discount_percent = Decimal('20.00')
+        self.subscription.save(update_fields=['custom_credit_discount_percent'])
+
+        quote = build_subscription_funding_quote(self.subscription, 'yearly')
+
+        # Yearly normally carries 15%; the subscription-specific 20% wins.
+        self.assertEqual(quote['discount_rate'], Decimal('0.20'))
+        self.assertEqual(quote['base_amount'], Decimal('1800.00'))
+        self.assertEqual(quote['discount_amount'], Decimal('360.00'))
+        self.assertEqual(quote['final_amount'], Decimal('1440.00'))
+
+    def test_subscription_custom_credit_discount_applies_to_custom_credit_topups(self):
+        self.subscription.custom_credit_discount_percent = Decimal('10.00')
+        self.subscription.save(update_fields=['custom_credit_discount_percent'])
+
+        validation = validate_subscription_payment_amount(
+            self.subscription,
+            Decimal('90.00'),
+            funding_period='custom',
+        )
+
+        self.assertTrue(validation['is_valid'], validation)
+        self.assertEqual(validation['quote']['credit_amount'], Decimal('100.00'))
+        self.assertEqual(validation['quote']['discount_amount'], Decimal('10.00'))
+
+    def test_subscription_custom_credit_discount_applies_to_unbundled_credit_topups(self):
+        self.subscription.custom_credit_discount_percent = Decimal('10.00')
+        self.subscription.save(update_fields=['custom_credit_discount_percent'])
+
+        validation = validate_subscription_payment_amount(self.subscription, Decimal('90.00'))
+
+        self.assertTrue(validation['is_valid'], validation)
+        self.assertEqual(validation['quote']['credit_amount'], Decimal('100.00'))
+
     def test_custom_payment_validation_uses_configured_minimum_instead_of_monthly_charge(self):
         monthly_minimum = get_custom_monthly_minimum(self.subscription)
         custom_amount = monthly_minimum - Decimal('0.01')

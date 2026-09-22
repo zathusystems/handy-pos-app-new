@@ -27,7 +27,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         model = Subscription
         fields = [
             'id', 'business', 'status', 'status_display',
-            'account_balance', 'total_spent', 'base_price_per_day',
+            'account_balance', 'total_spent', 'base_price_per_day', 'custom_credit_discount_percent',
             'daily_charge', 'monthly_charge', 'currency_code',
             'last_payment_date', 'last_billing_date', 'last_charge_date',
             'start_date',
@@ -65,7 +65,10 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             'is_active',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'total_spent', 'currency_code', 'last_charge_date']
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'total_spent', 'currency_code', 'last_charge_date',
+            'custom_credit_discount_percent',
+        ]
 
     def get_is_active(self, obj):
         return obj.is_active()

@@ -181,7 +181,11 @@ class SubscriptionAdmin(admin.ModelAdmin):
             'fields': ('business', 'status')
         }),
         ('Pricing', {
-            'fields': ('base_price_per_day',)
+            'fields': ('base_price_per_day', 'custom_credit_discount_percent'),
+            'description': (
+                'Set a percentage above 0 to override the normal bundle discount '
+                'for every future credit purchase on this subscription.'
+            ),
         }),
         ('Account', {
             'fields': ('account_balance', 'total_spent', 'last_payment_date', 'last_billing_date', 'last_charge_date')

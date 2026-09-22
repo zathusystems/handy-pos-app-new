@@ -38,10 +38,12 @@ import {
 } from '@/components/ui/select';
 import Image from 'next/image';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/use-auth';
 import { useCurrency } from '@/hooks/use-currency';
 import { formatQuantityWithUnit } from '@/lib/quantity-format';
 import { useSubscriptionFeatureAccess } from '@/hooks/use-subscription-feature-access';
 import { syncService } from '@/lib/services/sync-service';
+import { updateProduct } from '@/lib/services/product-service';
 import { MenuTemplates } from '@/components/menu/menu-templates';
 import { QRCodeTemplates } from '@/components/menu/qr-code-templates';
 import { SubscriptionFeatureDisabledCard } from '@/components/subscription-feature-disabled-card';
@@ -1077,6 +1079,7 @@ const EditMenuItemModal = ({
   onItemSaved: (item: InventoryItem) => void;
 }) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [name, setName] = useState('');
   const [category, setCategory] = useState('');
@@ -1110,6 +1113,10 @@ const EditMenuItemModal = ({
   const getStockItemName = (stockItemId: string) => (
     stockRecipeItems.find((stockItem) => String(stockItem.id) === String(stockItemId))?.name || ''
   );
+  const getStockItemUnit = (stockItemId: string) => {
+    const stockItem = stockRecipeItems.find((candidate) => String(candidate.id) === String(stockItemId));
+    return stockItem?.unitType || stockItem?.unit_type || 'unit';
+  };
 
   const buildRecipePayload = () => (
     recipeRows
@@ -1178,6 +1185,50 @@ const EditMenuItemModal = ({
       recipe: buildRecipePayload(),
       is_visible: isMenuItemVisible(item),
     };
+    const localUpdates: Partial<InventoryItem> = {
+      name: trimmedName,
+      category: category.trim(),
+      description: description.trim(),
+      price: parsedPrice,
+      image,
+      recipe: payload.recipe,
+    };
+
+    // Inventory is the canonical recipe record. Queue menu recipe changes
+    // through the same offline-first path when no connection is available.
+    if (!isPrepared && typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (!user) {
+        toast({ variant: 'destructive', title: 'Not authenticated' });
+        return;
+      }
+
+      setIsSaving(true);
+      try {
+        await updateProduct(
+          item.id,
+          localUpdates,
+          user.uid,
+          user.displayName || user.email || 'Unknown',
+          activeBranchId
+        );
+        onItemSaved({ ...item, ...localUpdates });
+        toast({
+          title: 'Menu item saved offline',
+          description: 'Its ingredients will sync to Inventory and Menu when you are online.',
+        });
+        onOpenChange(false);
+      } catch (error) {
+        console.error('[Menu] Could not queue offline menu item update:', error);
+        toast({
+          variant: 'destructive',
+          title: 'Could not save menu item',
+          description: error instanceof Error ? error.message : 'Please try again.',
+        });
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -1185,15 +1236,6 @@ const EditMenuItemModal = ({
         method: 'PATCH',
         body: JSON.stringify(payload),
       });
-
-      const localUpdates: Partial<InventoryItem> = {
-        name: trimmedName,
-        category: category.trim(),
-        description: description.trim(),
-        price: parsedPrice,
-        image,
-        recipe: payload.recipe,
-      };
 
       if (!isPrepared) {
         await db.inventory.update(item.id, localUpdates);
@@ -1288,7 +1330,7 @@ const EditMenuItemModal = ({
               </div>
               <div className="space-y-2">
                 {recipeRows.map((row, index) => (
-                  <div key={`edit-menu-recipe-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_auto]">
+                  <div key={`edit-menu-recipe-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_72px_auto]">
                     <Select
                       value={row.ingredientId}
                       onValueChange={(value) => setRecipeRows((rows) => rows.map((current, rowIndex) => (
@@ -1317,6 +1359,9 @@ const EditMenuItemModal = ({
                       )))}
                       placeholder="Qty"
                     />
+                    <div className="flex min-h-10 items-center rounded-md border bg-muted px-2 text-sm text-muted-foreground" aria-label="Ingredient unit">
+                      {getStockItemUnit(row.ingredientId)}
+                    </div>
                     <Button
                       type="button"
                       variant="ghost"
