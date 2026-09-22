@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { ArrowLeft, ArrowRight, Plus, Minus, Search, Send, ShoppingBasket, Trash2, Loader2, X } from 'lucide-react';
 import { useCurrency } from '@/hooks/use-currency';
 import { toast } from '@/hooks/use-toast';
@@ -234,6 +234,11 @@ const getConfiguredMenuPrice = (
     return Math.max(0, price);
 };
 
+const getOrderCreatorName = (order: TakeOrder): string => {
+    const name = String(order.createdByName ?? (order as any).created_by_name ?? '').trim();
+    return name && !name.includes('@') ? name : 'Staff member';
+};
+
 const getDefaultOptionIds = (item: InventoryItem): Record<string, string[]> => {
     return Object.fromEntries(
         getMenuOptionGroups(item).map((group) => {
@@ -353,6 +358,11 @@ export function TakeOrderModal({
     const [takeawayPackagingItem, setTakeawayPackagingItem] = useState<InventoryItem | null>(null);
     const [isLoadingTakeawayConfig, setIsLoadingTakeawayConfig] = useState(false);
     const [isTakeaway, setIsTakeaway] = useState(false);
+    const [showCustomerForm, setShowCustomerForm] = useState(false);
+    const [customerName, setCustomerName] = useState('');
+    const [customerPhone, setCustomerPhone] = useState('');
+    const [customerNotes, setCustomerNotes] = useState('');
+    const [tableNumber, setTableNumber] = useState('');
     const [mobilePanel, setMobilePanel] = useState<'menu' | 'order'>('menu');
     const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
     const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
@@ -395,13 +405,21 @@ export function TakeOrderModal({
     const handleTakeOrderDialogOpenChange = useCallback((open: boolean) => {
         if (!open && (
             preventParentDismissRef.current
+            || showCustomerForm
             || selectedOptionsItem
             || selectedPortionItem
         )) {
             return;
         }
         onOpenChange(open);
-    }, [onOpenChange, selectedOptionsItem, selectedPortionItem]);
+    }, [onOpenChange, selectedOptionsItem, selectedPortionItem, showCustomerForm]);
+
+    const handleCustomerFormOpenChange = useCallback((open: boolean) => {
+        if (!open) {
+            keepTakeOrderDialogOpen();
+        }
+        setShowCustomerForm(open);
+    }, [keepTakeOrderDialogOpen]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -456,6 +474,16 @@ export function TakeOrderModal({
             if (backendBranchId === null) {
                 setBackendMenuItems(null);
                 setMenuLoadError('A valid branch is required to load menu options.');
+                setIsLoadingMenuItems(false);
+                return;
+            }
+
+            // Cached menu entries and locally synced inventory remain usable when
+            // the device has no connection. Do not make staff wait for a request
+            // that cannot succeed before they can take an order.
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                setBackendMenuItems(null);
+                setMenuLoadError(null);
                 setIsLoadingMenuItems(false);
                 return;
             }
@@ -526,6 +554,27 @@ export function TakeOrderModal({
                 setTakeawayConfig(null);
                 setTakeawayPackagingItem(null);
                 setIsLoadingTakeawayConfig(false);
+                return;
+            }
+
+            // Takeaway packaging is also cached locally. Use that snapshot
+            // straight away when offline so a takeaway order can still be taken.
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                const cachedEntry = cachedTakeawayConfig?.items?.[0] as {
+                    config?: TakeawayConfig;
+                    packageItem?: InventoryItem;
+                } | undefined;
+                if (!cancelled) {
+                    if (cachedEntry?.config?.enabled && cachedEntry.packageItem) {
+                        setTakeawayConfig(cachedEntry.config);
+                        setTakeawayPackagingItem(cachedEntry.packageItem);
+                    } else {
+                        setTakeawayConfig(null);
+                        setTakeawayPackagingItem(null);
+                        setIsTakeaway(false);
+                    }
+                    setIsLoadingTakeawayConfig(false);
+                }
                 return;
             }
 
@@ -624,8 +673,11 @@ export function TakeOrderModal({
 
     const menuItems = useMemo(() => {
         if (backendMenuItems) return backendMenuItems;
-        return (cachedMenu?.items || []) as unknown as MenuItemWithOptions[];
-    }, [backendMenuItems, cachedMenu]);
+        const cachedItems = (cachedMenu?.items || []) as unknown as MenuItemWithOptions[];
+        return cachedItems.length > 0
+            ? cachedItems
+            : localMenuItems as MenuItemWithOptions[];
+    }, [backendMenuItems, cachedMenu, localMenuItems]);
 
     const categories = useMemo(() => {
         const uniqueCategories = [...new Set(menuItems.map(item => item.category || 'Uncategorized'))];
@@ -829,11 +881,6 @@ export function TakeOrderModal({
     };
 
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [showCustomerForm, setShowCustomerForm] = useState(false);
-    const [customerName, setCustomerName] = useState('');
-    const [customerPhone, setCustomerPhone] = useState('');
-    const [customerNotes, setCustomerNotes] = useState('');
-    const [tableNumber, setTableNumber] = useState('');
     const [orderDestination, setOrderDestination] = useState<OrderDestination>('kitchen');
     const fulfillmentCartItemCount = useMemo(
         () => orderFulfillmentEnabled
@@ -1215,7 +1262,7 @@ export function TakeOrderModal({
 
                 const activeSession = await getCurrentLocalSession();
                 if (!activeSession) {
-                    throw new Error('Start a session while connected before taking orders offline.');
+                    throw new Error('Start an active session before taking orders offline.');
                 }
 
                 savedOffline = true;
@@ -1228,7 +1275,7 @@ export function TakeOrderModal({
                     customer_phone: customerPhone || undefined,
                     customer_notes: customerNotes || undefined,
                     created_by: user?.uid || undefined,
-                    created_by_name: user?.displayName || user?.email || undefined,
+                    created_by_name: user?.displayName || 'Staff member',
                     kitchen_ticket_printed: false,
                 };
             }
@@ -1312,12 +1359,12 @@ export function TakeOrderModal({
       <DialogContent
         className="tauri-android-sidebar-safe-top left-0 top-0 m-0 flex h-screen h-[100dvh] max-h-screen max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 p-0 [&>button]:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:left-[50%] sm:top-[50%] sm:h-[90vh] sm:max-h-[90vh] sm:w-[95vw] sm:max-w-[95vw] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:[&>button]:top-4"
         onInteractOutside={(event) => {
-          if (preventParentDismissRef.current || selectedOptionsItem || selectedPortionItem) {
+          if (preventParentDismissRef.current || showCustomerForm || selectedOptionsItem || selectedPortionItem) {
             event.preventDefault();
           }
         }}
         onPointerDownOutside={(event) => {
-          if (preventParentDismissRef.current || selectedOptionsItem || selectedPortionItem) {
+          if (preventParentDismissRef.current || showCustomerForm || selectedOptionsItem || selectedPortionItem) {
             event.preventDefault();
           }
         }}
@@ -1606,107 +1653,104 @@ export function TakeOrderModal({
             </Button>
         </div>
 
-        {/* Customer Form Modal */}
-        {showCustomerForm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <Card className="w-full max-w-md">
-              <CardHeader>
-                <CardTitle>Customer Information</CardTitle>
-                <CardDescription>
-                  {orderDestination === 'pos'
-                    ? 'Send this order to the ready-for-sale queue. A cashier can process it from Orders.'
-                    : orderFulfillmentEnabled
-                      ? `Send this order to the ${workflowCopy.queueLabel.toLowerCase()}.`
-                      : 'Send this order to the ready-for-sale queue.'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
+      </DialogContent>
+    </Dialog>
+    <Dialog open={showCustomerForm} onOpenChange={handleCustomerFormOpenChange}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+            <DialogHeader>
+                <DialogTitle>Customer Information</DialogTitle>
+                <DialogDescription>
+                    {orderDestination === 'pos'
+                        ? 'Send this order to the ready-for-sale queue. A cashier can process it from Orders.'
+                        : orderFulfillmentEnabled
+                            ? `Send this order to the ${workflowCopy.queueLabel.toLowerCase()}.`
+                            : 'Send this order to the ready-for-sale queue.'}
+                </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
                 <div>
-                  <label className="text-sm font-medium">Table Number</label>
-                  <Input
-                    placeholder="Enter table number"
-                    value={tableNumber}
-                    onChange={(e) => setTableNumber(e.target.value)}
-                    className="mt-1"
-                  />
+                    <label className="text-sm font-medium">Table Number</label>
+                    <Input
+                        placeholder="Enter table number"
+                        value={tableNumber}
+                        onChange={(event) => setTableNumber(event.target.value)}
+                        className="mt-1"
+                    />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Customer Name</label>
-                  <Input
-                    placeholder="Enter customer name"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="mt-1"
-                  />
+                    <label className="text-sm font-medium">Customer Name</label>
+                    <Input
+                        placeholder="Enter customer name"
+                        value={customerName}
+                        onChange={(event) => setCustomerName(event.target.value)}
+                        className="mt-1"
+                    />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Phone Number</label>
-                  <Input
-                    placeholder="Enter phone number"
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
-                    className="mt-1"
-                  />
+                    <label className="text-sm font-medium">Phone Number</label>
+                    <Input
+                        placeholder="Enter phone number"
+                        value={customerPhone}
+                        onChange={(event) => setCustomerPhone(event.target.value)}
+                        className="mt-1"
+                    />
                 </div>
                 {takeawayConfig ? (
-                  <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-muted/40 p-3 text-left">
-                    <input
-                      type="checkbox"
-                      className="mt-1 h-4 w-4 accent-primary"
-                      checked={isTakeaway}
-                      onChange={(event) => handleTakeawayChange(event.target.checked)}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-semibold">
-                        <span>Take away order</span>
-                        <span>{formatCurrency(takeawayConfig.price)}</span>
-                      </span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        Adds {takeawayConfig.packagingName}. The packaging is deducted from stock when the sale is processed.
-                      </span>
-                    </span>
-                  </label>
+                    <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-muted/40 p-3 text-left">
+                        <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4 accent-primary"
+                            checked={isTakeaway}
+                            onChange={(event) => handleTakeawayChange(event.target.checked)}
+                        />
+                        <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-semibold">
+                                <span>Take away order</span>
+                                <span>{formatCurrency(takeawayConfig.price)}</span>
+                            </span>
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                                Adds {takeawayConfig.packagingName}. The packaging is deducted from stock when the sale is processed.
+                            </span>
+                        </span>
+                    </label>
                 ) : !isLoadingTakeawayConfig ? (
-                  <p className="rounded-lg border border-dashed bg-muted/20 p-3 text-left text-xs text-muted-foreground">
-                    Takeaway is not configured for this branch. Choose a packaging item in Menu settings to enable it for staff orders.
-                  </p>
+                    <p className="rounded-lg border border-dashed bg-muted/20 p-3 text-left text-xs text-muted-foreground">
+                        Takeaway is not configured for this branch. Choose a packaging item in Menu settings to enable it for staff orders.
+                    </p>
                 ) : null}
                 <div>
-                  <label className="text-sm font-medium">Special Instructions</label>
-                  <Textarea
-                    placeholder="Add any special instructions..."
-                    value={customerNotes}
-                    onChange={(e) => setCustomerNotes(e.target.value)}
-                    className="mt-1"
-                  />
+                    <label className="text-sm font-medium">Special Instructions</label>
+                    <Textarea
+                        placeholder="Add any special instructions..."
+                        value={customerNotes}
+                        onChange={(event) => setCustomerNotes(event.target.value)}
+                        className="mt-1"
+                    />
                 </div>
-              </CardContent>
-              <CardFooter className="flex gap-2">
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
                 <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => setShowCustomerForm(false)}
-                  disabled={isSubmitting}
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => handleCustomerFormOpenChange(false)}
+                    disabled={isSubmitting}
                 >
-                  Cancel
+                    Cancel
                 </Button>
                 <Button
-                  className="flex-1 bg-green-600 hover:bg-green-700"
-                  onClick={() => void handleSubmitOrder()}
-                  disabled={isSubmitting}
+                    className="flex-1 bg-green-600 hover:bg-green-700"
+                    onClick={() => void handleSubmitOrder()}
+                    disabled={isSubmitting}
                 >
-                  {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {isSubmitting
-                    ? 'Sending...'
-                    : orderDestination === 'pos'
-                      ? orderFulfillmentEnabled ? workflowCopy.readyLabel : 'Send to Orders'
-                      : orderFulfillmentEnabled ? workflowCopy.sendLabel : 'Send to Orders'}
+                    {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {isSubmitting
+                        ? 'Sending...'
+                        : orderDestination === 'pos'
+                            ? orderFulfillmentEnabled ? workflowCopy.readyLabel : 'Send to Orders'
+                            : orderFulfillmentEnabled ? workflowCopy.sendLabel : 'Send to Orders'}
                 </Button>
-              </CardFooter>
-            </Card>
-          </div>
-        )}
-      </DialogContent>
+            </DialogFooter>
+        </DialogContent>
     </Dialog>
     <Dialog
         open={Boolean(selectedOptionsItem)}
@@ -1832,7 +1876,7 @@ export function TakeOrderModal({
                 rootId={TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID}
                 orderNumber={kitchenTicketOrder.orderNumber}
                 businessName={kitchenTicketBusinessName}
-                takenByName={kitchenTicketOrder.createdByName || kitchenTicketOrder.createdBy}
+                takenByName={getOrderCreatorName(kitchenTicketOrder)}
                 customerName={kitchenTicketOrder.customerName}
                 tableNumber={kitchenTicketOrder.tableNumber}
                 createdAt={kitchenTicketOrder.createdAt}

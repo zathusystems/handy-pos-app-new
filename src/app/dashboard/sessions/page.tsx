@@ -2487,17 +2487,24 @@ export default function SessionsPage() {
 
     return (
         <div className="flex flex-col gap-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold tracking-tight">Session Management</h1>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                    <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Session Management</h1>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => setHistoryModalOpen(true)}>
+                <div className="grid w-full grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:flex sm:w-auto">
+                    <Button
+                        variant="outline"
+                        className="h-auto min-h-10 justify-center px-3 py-2 sm:h-10 sm:justify-start"
+                        onClick={() => setHistoryModalOpen(true)}
+                    >
                         <History className="mr-2 h-4 w-4" /> History
                     </Button>
                     <Dialog open={isStartModalOpen} onOpenChange={setStartModalOpen}>
                         <DialogTrigger asChild>
-                            <Button disabled={hasOwnActiveSession}>
+                            <Button
+                                className="h-auto min-h-10 justify-center whitespace-normal px-3 py-2 text-center leading-tight sm:h-10 sm:justify-start sm:whitespace-nowrap"
+                                disabled={hasOwnActiveSession}
+                            >
                                 <PlusCircle className="mr-2 h-4 w-4" /> Start New Session
                             </Button>
                         </DialogTrigger>

@@ -28,6 +28,36 @@ def _business_uses_service_dockets(business):
     )
 
 
+def _user_display_name(user):
+    """Return the person's configured name without exposing their login email."""
+    if not user:
+        return None
+
+    get_full_name = getattr(user, 'get_full_name', None)
+    if callable(get_full_name):
+        full_name = str(get_full_name() or '').strip()
+        if full_name:
+            return full_name
+
+    full_name = ' '.join(
+        part for part in (
+            str(getattr(user, 'first_name', '') or '').strip(),
+            str(getattr(user, 'last_name', '') or '').strip(),
+        ) if part
+    ).strip()
+    if full_name:
+        return full_name
+
+    try:
+        staff_name = str(getattr(user.staff_profile, 'name', '') or '').strip()
+    except AttributeError:
+        staff_name = ''
+    if staff_name:
+        return staff_name
+
+    return 'Staff member'
+
+
 class TakeOrderItemSerializer(serializers.ModelSerializer):
     item_type = serializers.SerializerMethodField()
     is_produced = serializers.SerializerMethodField()
@@ -147,20 +177,14 @@ class TakeOrderSerializer(serializers.ModelSerializer):
     
     def get_created_by_name(self, obj):
         """Get the name of the user who created the order"""
-        if obj.created_by:
-            return getattr(obj.created_by, 'full_name', None) or obj.created_by.get_username()
-        return None
+        return _user_display_name(obj.created_by)
 
     def get_completed_by_name(self, obj):
         """Get the name of the user who collected/completed the order."""
-        if obj.completed_by:
-            return getattr(obj.completed_by, 'full_name', None) or obj.completed_by.get_username()
-        return None
+        return _user_display_name(obj.completed_by)
 
     def get_cancelled_by_name(self, obj):
-        if obj.cancelled_by:
-            return getattr(obj.cancelled_by, 'full_name', None) or obj.cancelled_by.get_username()
-        return None
+        return _user_display_name(obj.cancelled_by)
 
     def get_appointment_settlement(self, obj):
         try:
@@ -195,7 +219,7 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
     status = serializers.ChoiceField(choices=TakeOrder.STATUS_CHOICES, required=False)
     order_type = serializers.CharField(read_only=True)
     order_type_display = serializers.CharField(source='get_order_type_display', read_only=True)
-    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
     completed_by_name = serializers.SerializerMethodField()
     cancelled_by_name = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(read_only=True)
@@ -306,27 +330,19 @@ class TakeOrderCreateSerializer(serializers.ModelSerializer):
         return take_order
 
     def get_completed_by_name(self, obj):
-        if obj.completed_by:
-            return getattr(obj.completed_by, 'full_name', None) or obj.completed_by.get_username()
-        return None
+        return _user_display_name(obj.completed_by)
 
     def get_cancelled_by_name(self, obj):
-        if obj.cancelled_by:
-            return getattr(obj.cancelled_by, 'full_name', None) or obj.cancelled_by.get_username()
-        return None
+        return _user_display_name(obj.cancelled_by)
+
+    def get_created_by_name(self, obj):
+        return _user_display_name(obj.created_by)
     
     def to_representation(self, instance):
         """Return full order data including items"""
-        created_by_name = None
-        if instance.created_by:
-            # Try to get full name, fallback to username
-            created_by_name = getattr(instance.created_by, 'full_name', None) or instance.created_by.get_username()
-        completed_by_name = None
-        if instance.completed_by:
-            completed_by_name = getattr(instance.completed_by, 'full_name', None) or instance.completed_by.get_username()
-        cancelled_by_name = None
-        if instance.cancelled_by:
-            cancelled_by_name = getattr(instance.cancelled_by, 'full_name', None) or instance.cancelled_by.get_username()
+        created_by_name = _user_display_name(instance.created_by)
+        completed_by_name = _user_display_name(instance.completed_by)
+        cancelled_by_name = _user_display_name(instance.cancelled_by)
         
         return {
             'id': str(instance.id),

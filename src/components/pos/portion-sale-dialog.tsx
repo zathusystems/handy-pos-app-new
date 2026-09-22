@@ -133,7 +133,7 @@ export function PortionSaleDialog({
 
   const previewPrice = saleMode === 'portion'
     ? saleQuantity * portionUnitPrice
-    : saleQuantity * fullUnitPrice;
+    : saleQuantity * configuredFullUnitPrice;
 
   const handleQuantityChange = (nextQuantity: unknown) => {
     setSaleQuantity(toPositiveInteger(nextQuantity, 1));

@@ -2,20 +2,26 @@
 
 import { useState } from 'react';
 import { Utensils } from 'lucide-react';
-import { GenericPos, type PosProps } from './generic-pos';
+import { GenericPos, type PosAddToCartHandler, type PosCartAddOptions, type PosProps } from './generic-pos';
 import type { InventoryItem } from '@/lib/db';
 import { PortionSaleDialog, canSellInPortions } from './portion-sale-dialog';
 
 export const RestaurantPos = (props: PosProps) => {
-  const [selectedPortionItem, setSelectedPortionItem] = useState<InventoryItem | null>(null);
+  const [selectedPortionSale, setSelectedPortionSale] = useState<{
+    item: InventoryItem;
+    selectedOptions: Array<Record<string, unknown>>;
+  } | null>(null);
 
-  const handleAddToCart = (item: InventoryItem) => {
+  const handleAddToCart: PosAddToCartHandler = (item, quantity, price, notes, takeOrderId, options: PosCartAddOptions = {}) => {
     if (canSellInPortions(item)) {
-      setSelectedPortionItem(item);
-      return;
+      setSelectedPortionSale({
+        item,
+        selectedOptions: Array.isArray(options.selectedOptions) ? options.selectedOptions : [],
+      });
+      return true;
     }
 
-    props.onAddToCart(item);
+    return props.onAddToCart(item, quantity, price, notes, takeOrderId, options);
   };
 
   return (
@@ -27,14 +33,17 @@ export const RestaurantPos = (props: PosProps) => {
         productIcon={<Utensils className="h-8 w-8 text-muted-foreground" data-ai-hint="restaurant food" />}
       />
       <PortionSaleDialog
-        item={selectedPortionItem}
-        open={!!selectedPortionItem}
+        item={selectedPortionSale?.item ?? null}
+        open={!!selectedPortionSale}
         onOpenChange={(open) => {
           if (!open) {
-            setSelectedPortionItem(null);
+            setSelectedPortionSale(null);
           }
         }}
-        onAddToCart={props.onAddToCart}
+        selectedOptions={selectedPortionSale?.selectedOptions}
+        onAddToCart={(item, quantity, price, selectedOptions) => (
+          props.onAddToCart(item, quantity, price, undefined, undefined, { selectedOptions })
+        )}
       />
     </>
   );

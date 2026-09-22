@@ -13,6 +13,7 @@ import { SupermarketPos } from './supermarket-pos';
 import { GroceryPos } from './grocery-pos';
 import { BeautySalonPos } from './beauty-salon-pos';
 import type { AppointmentSettlementContext, BuyerDetails } from './generic-pos';
+import { getMenuOptionGroups, type MenuOptionGroup } from './menu-option-selection-dialog';
 import { ViewOrdersModal } from './view-orders-modal';
 import { ScannerConfigModal } from './scanner-config-modal';
 import { PrinterConfigModal } from './printer-config-modal';
@@ -36,6 +37,7 @@ import { barcodeValuesMatch, normalizeBarcodeValue } from '@/lib/barcode';
 import { warmBranchMraMappingCache } from '@/lib/mra-mapping-cache';
 import { formatQuantityWithUnit, getPortionQuantityDisplay } from '@/lib/quantity-format';
 import { safeLocalStorageGetItem, safeLocalStorageSetItem } from '@/lib/safe-local-storage';
+import { getOfflineBusinessProfile } from '@/lib/business-profile';
 import { addTakeOrderToSaleCart } from '@/lib/take-order-sale';
 import { markTakeOrdersCompleted } from '@/lib/take-order-status';
 import {
@@ -172,6 +174,45 @@ const normalizeInventoryReference = (value: unknown): string => {
   }
 
   return String(value).trim();
+};
+
+const getMenuEntryInventoryItemId = (entry: unknown): string => {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const menuEntry = entry as Record<string, unknown>;
+  return normalizeInventoryReference(
+    menuEntry.inventory_item
+    ?? menuEntry.inventory_item_id
+    ?? menuEntry.item_details
+    ?? menuEntry.inventoryItem
+    ?? menuEntry.inventoryItemId
+  );
+};
+
+const buildMenuOptionGroupsByInventoryId = (entries: unknown): Record<string, MenuOptionGroup[]> => {
+  if (!Array.isArray(entries)) {
+    return {};
+  }
+
+  const groupsByInventoryId: Record<string, MenuOptionGroup[]> = {};
+  for (const entry of entries) {
+    const inventoryItemId = getMenuEntryInventoryItemId(entry);
+    if (!inventoryItemId || !entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const menuEntry = entry as Record<string, unknown>;
+    const optionGroups = menuEntry.option_groups ?? menuEntry.optionGroups;
+    if (!Array.isArray(optionGroups)) {
+      continue;
+    }
+
+    groupsByInventoryId[inventoryItemId] = optionGroups as MenuOptionGroup[];
+  }
+
+  return groupsByInventoryId;
 };
 
 const resolveMappingInventoryItemId = (mapping: any): string => {
@@ -402,6 +443,7 @@ export function PosModal({
   const [showViewOrdersModal, setShowViewOrdersModal] = useState(false);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   const [isLoadingInventory, setIsLoadingInventory] = useState(false);
+  const [menuOptionGroupsByInventoryId, setMenuOptionGroupsByInventoryId] = useState<Record<string, MenuOptionGroup[]>>({});
   const [eisEnabled, setEisEnabled] = useState(false);
   const [blockSalesIfTaxMappingMissing, setBlockSalesIfTaxMappingMissing] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(
@@ -1123,7 +1165,69 @@ export function PosModal({
     },
     [branchId]
   );
+  const offlineBusinessProfile = useLiveQuery(async () => getOfflineBusinessProfile(), []);
+  const allowNegativeStock =
+    (offlineBusinessProfile as any)?.allowNegativeIngredientStock === true ||
+    (offlineBusinessProfile as any)?.allow_negative_ingredient_stock === true;
   const hasCachedInventory = (allInventory?.length ?? 0) > 0;
+  const posMenuOptionsCacheId = useMemo(() => {
+    const backendBranchId = toBackendBranchId(branchId);
+    return backendBranchId ? `pos-menu-options:${backendBranchId}` : null;
+  }, [branchId]);
+  const cachedMenuOptions = useLiveQuery(
+    () => posMenuOptionsCacheId ? db.menuEntryCache.get(posMenuOptionsCacheId) : undefined,
+    [posMenuOptionsCacheId]
+  );
+
+  useEffect(() => {
+    const cachedEntries = Array.isArray(cachedMenuOptions?.items) ? cachedMenuOptions.items : [];
+    setMenuOptionGroupsByInventoryId(buildMenuOptionGroupsByInventoryId(cachedEntries));
+
+    if (!isOpen || !branchId) {
+      return;
+    }
+
+    const backendBranchId = toBackendBranchId(branchId);
+    if (!backendBranchId) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadMenuOptions = async () => {
+      try {
+        const menuData = await authFetch.fetch<any>(
+          `/digital-menu/menu/by_branch/?branch_id=${backendBranchId}`,
+          { queueOnFailure: false }
+        );
+        const menuEntries = Array.isArray(menuData)
+          ? menuData
+          : Array.isArray(menuData?.results)
+            ? menuData.results
+            : [];
+
+        if (cancelled) {
+          return;
+        }
+
+        setMenuOptionGroupsByInventoryId(buildMenuOptionGroupsByInventoryId(menuEntries));
+        void db.menuEntryCache.put({
+          id: `pos-menu-options:${backendBranchId}`,
+          branchId: String(backendBranchId),
+          items: menuEntries as Array<Record<string, unknown>>,
+          updatedAt: new Date().toISOString(),
+        }).catch((cacheError) => {
+          console.warn('[POS Modal] Could not cache menu option groups:', cacheError);
+        });
+      } catch (error) {
+        console.warn('[POS Modal] Could not load menu option groups. Using cached options when available.', error);
+      }
+    };
+
+    void loadMenuOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId, cachedMenuOptions?.updatedAt, isOpen]);
 
   useEffect(() => {
     if (!isOpen || !branchId || (!eisEnabled && !blockSalesIfTaxMappingMissing)) {
@@ -1357,9 +1461,24 @@ export function PosModal({
     }
   }, [eisEnabled, isOpen, branchId]);
 
+  const inventoryWithMenuOptions = useMemo(() => (
+    (allInventory || []).map((item) => {
+      const optionGroups = menuOptionGroupsByInventoryId[String(item.id || '').trim()];
+      if (!optionGroups?.length) {
+        return item;
+      }
+
+      return {
+        ...item,
+        optionGroups,
+        option_groups: optionGroups,
+      } as InventoryItem;
+    })
+  ), [allInventory, menuOptionGroupsByInventoryId]);
+
   const allSellableItems = useMemo(
-    () => (allInventory || []).filter((item) => item.itemType === 'sellable'),
-    [allInventory]
+    () => inventoryWithMenuOptions.filter((item) => item.itemType === 'sellable'),
+    [inventoryWithMenuOptions]
   );
 
   const sellableItems = useMemo(
@@ -1431,17 +1550,24 @@ export function PosModal({
         : total
     ), 0);
 
-    const remainingQuantity = Math.max(0, getAvailableStockUnits(item) - currentCartQuantity);
+    const availableQuantity = getAvailableStockUnits(item) - currentCartQuantity;
+    const remainingQuantity = Math.max(0, availableQuantity);
     return {
-      remainingQuantity,
-      canQuickAdd: remainingQuantity > 0,
+      remainingQuantity: allowNegativeStock ? null : remainingQuantity,
+      canQuickAdd: allowNegativeStock || remainingQuantity > 0,
       label:
         remainingQuantity > 0
           ? `${formatAvailableStockQuantity(item, remainingQuantity)} remaining`
-          : 'Out of stock',
-      toneClassName: remainingQuantity > 0 ? 'text-emerald-600' : 'text-destructive',
+          : allowNegativeStock
+            ? 'Negative stock allowed'
+            : 'Out of stock',
+      toneClassName: remainingQuantity > 0
+        ? 'text-emerald-600'
+        : allowNegativeStock
+          ? 'text-amber-600'
+          : 'text-destructive',
     };
-  }, [cart, toPositiveNumber]);
+  }, [allowNegativeStock, cart, toPositiveNumber]);
 
   const registerQuickAddHandler = useCallback((handler: ((item: InventoryItem) => boolean | void | Promise<boolean | void>) | null) => {
     quickAddHandlerRef.current = handler;
@@ -1673,7 +1799,7 @@ export function PosModal({
         (Array.isArray(item.recipe) && item.recipe.length > 0)
       );
 
-    if (!isRecipeManagedSaleItem) {
+    if (!allowNegativeStock && !isRecipeManagedSaleItem) {
       const currentCartQuantity = cart.reduce((acc, cartItem) =>
         resolveCartInventoryItemId(cartItem) === normalizedItemId ? acc + toPositiveNumber(cartItem.quantity, 0) : acc, 0
       );
@@ -1846,13 +1972,13 @@ export function PosModal({
 
     setAppointmentSettlementContext(appointmentContext);
     setShowViewOrdersModal(false);
-    setIsMobileCartOpen(true);
+    setIsMobileCartOpen(isMobileViewport);
     toast({
       title: 'Order ready for checkout',
       description: `Order #${sourceOrder.orderNumber} has been added to the sale cart.`,
     });
     return true;
-  }, [activeSession, branchId, cart.length, currentBusinessType, handleAddToCart, isSessionActive, isSessionOwnedByCurrentUser, toast, user?.role, user?.uid]);
+  }, [activeSession, branchId, cart.length, currentBusinessType, handleAddToCart, isMobileViewport, isSessionActive, isSessionOwnedByCurrentUser, toast, user?.role, user?.uid]);
 
   useEffect(() => {
     if (!processTakeOrderId) {
@@ -1936,7 +2062,7 @@ export function PosModal({
   const handleSearchResultSelect = useCallback(async (item: InventoryItem, quantity: number = 1) => {
     const handler = quickAddHandlerRef.current;
     const normalizedQuantity = Math.max(1, Math.floor(quantity) || 1);
-    const requiresInteractiveFlow = item.isVariablePrice || item.isSoldInPortions;
+    const requiresInteractiveFlow = item.isVariablePrice || item.isSoldInPortions || getMenuOptionGroups(item).length > 0;
 
     if (requiresInteractiveFlow && handler) {
       await handler(item);
@@ -2034,7 +2160,7 @@ export function PosModal({
       };
     }
 
-    const requiresInteractiveFlow = matchedProduct.isVariablePrice || matchedProduct.isSoldInPortions;
+    const requiresInteractiveFlow = matchedProduct.isVariablePrice || matchedProduct.isSoldInPortions || getMenuOptionGroups(matchedProduct).length > 0;
     const quickAddHandler = quickAddHandlerRef.current;
 
     if (requiresInteractiveFlow) {
@@ -2108,11 +2234,26 @@ export function PosModal({
           
           if (product) {
             console.log('[POS Modal] Found product by barcode:', product.name);
-            handleAddToCart(product, 1);
-            toast({
-              title: 'Added to Cart',
-              description: `${product.name} added to cart`,
-            });
+            const requiresInteractiveFlow = product.isVariablePrice || product.isSoldInPortions || getMenuOptionGroups(product).length > 0;
+            const quickAddHandler = quickAddHandlerRef.current;
+            if (requiresInteractiveFlow && quickAddHandler) {
+              void Promise.resolve(quickAddHandler(product)).catch((error) => {
+                console.error('[POS Modal] Failed to start product selection:', error);
+              });
+              toast({
+                title: 'Review item',
+                description: `${product.name} needs a selection before it is added to the cart.`,
+              });
+            } else {
+              void Promise.resolve(handleAddToCart(product, 1)).then((added) => {
+                if (added !== false) {
+                  toast({
+                    title: 'Added to Cart',
+                    description: `${product.name} added to cart`,
+                  });
+                }
+              });
+            }
           } else {
             console.log('[POS Modal] No product found with barcode:', normalizedBufferedBarcode);
             toast({
@@ -2177,7 +2318,7 @@ export function PosModal({
       }
       barcodeBufferRef.current = '';
     };
-  }, [isOpen, allInventory, handleAddToCart, toast]);
+  }, [allSellableItems, handleAddToCart, isOpen, toast]);
 
   const handleCreateOrder = async (paymentMethod: PaymentMethod, tip: number, buyerDetails?: BuyerDetails): Promise<Order | null> => {
     const appliedTip = Math.max(0, toNonNegativeNumber(tip, 0));
@@ -3130,12 +3271,17 @@ export function PosModal({
       }
 
       const displayOrderNumber = (finalOrder as any)?.orderNumber ?? (finalOrder as any)?.order_number ?? '-';
+      const savedOffline = typeof navigator !== 'undefined' && !navigator.onLine;
       toast({
-        title: `Order #${displayOrderNumber} Created`,
+        title: savedOffline
+          ? `Order #${displayOrderNumber} saved offline`
+          : `Order #${displayOrderNumber} Created`,
         description: isAppointmentCheckout
           ? appointmentDepositApplied > 0
             ? `Appointment deposit applied; ${appointmentCheckout?.finalPaymentMethod} balance collected for ${appointmentFinalPaymentAmount.toFixed(2)}.`
             : `Appointment checkout recorded; ${appointmentCheckout?.finalPaymentMethod} payment collected for ${appointmentFinalPaymentAmount.toFixed(2)}.`
+          : savedOffline
+            ? 'The sale, stock movement, and session totals are saved on this device and will sync automatically when the connection returns.'
           : `${paymentMethod} sale completed for ${total.toFixed(2)}.`,
       });
 
@@ -3199,7 +3345,7 @@ export function PosModal({
     }
 
     const posProps = {
-      inventory: allInventory || [],
+      inventory: inventoryWithMenuOptions,
       displayItems: sellableItems || [],
       emptyStateTitle,
       emptyStateDescription,

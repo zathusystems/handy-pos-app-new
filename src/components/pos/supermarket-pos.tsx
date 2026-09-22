@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ShoppingBasket } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 
-import { GenericPos, type PosProps } from './generic-pos';
+import { GenericPos, type PosAddToCartHandler, type PosCartAddOptions, type PosProps } from './generic-pos';
 import type { InventoryItem } from '@/lib/db';
 import { useCurrency } from '@/hooks/use-currency';
 import { Button } from '@/components/ui/button';
@@ -167,13 +167,20 @@ const VariablePriceDialog = ({
 };
 
 export const SupermarketPos = (props: PosProps) => {
-  const [variablePriceItem, setVariablePriceItem] = useState<InventoryItem | null>(null);
+  const [variablePriceSale, setVariablePriceSale] = useState<{
+    item: InventoryItem;
+    selectedOptions: Array<Record<string, unknown>>;
+  } | null>(null);
 
-  const customOnAddToCart = (item: InventoryItem) => {
+  const customOnAddToCart: PosAddToCartHandler = (item, quantity, price, notes, takeOrderId, options: PosCartAddOptions = {}) => {
     if (item.isVariablePrice) {
-      setVariablePriceItem(item);
+      setVariablePriceSale({
+        item: { ...item, price: price ?? item.price },
+        selectedOptions: Array.isArray(options.selectedOptions) ? options.selectedOptions : [],
+      });
+      return true;
     } else {
-      props.onAddToCart(item);
+      return props.onAddToCart(item, quantity, price, notes, takeOrderId, options);
     }
   };
 
@@ -182,8 +189,10 @@ export const SupermarketPos = (props: PosProps) => {
       console.error('Invalid variable-price sale inputs.');
       return;
     }
-    props.onAddToCart(item, quantity, totalPrice);
-    setVariablePriceItem(null);
+    props.onAddToCart(item, quantity, totalPrice, undefined, undefined, {
+      selectedOptions: variablePriceSale?.selectedOptions,
+    });
+    setVariablePriceSale(null);
   };
 
   return (
@@ -193,11 +202,11 @@ export const SupermarketPos = (props: PosProps) => {
         onAddToCart={customOnAddToCart}
         productIcon={<ShoppingBasket className="h-8 w-8 text-muted-foreground" data-ai-hint="supermarket product" />}
       />
-      {variablePriceItem && (
+      {variablePriceSale && (
         <VariablePriceDialog
-          isOpen={!!variablePriceItem}
-          item={variablePriceItem}
-          onClose={() => setVariablePriceItem(null)}
+          isOpen={!!variablePriceSale}
+          item={variablePriceSale.item}
+          onClose={() => setVariablePriceSale(null)}
           onConfirm={handleConfirmVariablePrice}
         />
       )}

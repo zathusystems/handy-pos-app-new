@@ -764,6 +764,9 @@ class TakeOrderStatusManagementTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_completed_order_records_cashier_name(self):
+        self.owner.first_name = 'Lina'
+        self.owner.last_name = 'Cashier'
+        self.owner.save(update_fields=['first_name', 'last_name'])
         order = self._create_order(status='Ready')
 
         complete_response = self.client.patch(
@@ -775,11 +778,29 @@ class TakeOrderStatusManagementTests(TestCase):
         self.assertEqual(complete_response.status_code, 200)
         self.assertEqual(complete_response.data['status'], 'Completed')
         self.assertEqual(complete_response.data['completed_by'], self.owner.id)
-        self.assertEqual(complete_response.data['completed_by_name'], self.owner.get_username())
+        self.assertEqual(complete_response.data['completed_by_name'], 'Lina Cashier')
         self.assertIsNotNone(complete_response.data['completed_at'])
 
         order.refresh_from_db()
         self.assertEqual(order.completed_by, self.owner)
+
+    def test_order_response_uses_staff_profile_name_instead_of_email(self):
+        Staff.objects.create(
+            business=self.business,
+            branch=self.branch,
+            user=self.owner,
+            name='Main Counter Cashier',
+            email=self.owner.email,
+            role=StaffRole.CASHIER,
+            is_active=True,
+        )
+        order = self._create_order(status='Pending')
+
+        response = self.client.get(f'/api/orders/take-orders/{order.id}/')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['created_by_name'], 'Main Counter Cashier')
+        self.assertNotEqual(response.data['created_by_name'], self.owner.email)
 
     def test_other_cashier_cannot_process_staff_order_payment(self):
         cashier = User.objects.create_user(email='other-cashier@example.com', password='test12345')

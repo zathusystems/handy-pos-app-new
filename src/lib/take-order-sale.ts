@@ -41,23 +41,44 @@ const getTakeOrderItemInventoryId = (item: TakeOrderItem): string => {
   ).trim();
 };
 
-const findInventoryItemForTakeOrderItem = async (
-  item: TakeOrderItem,
+const findInventoryItemsForTakeOrderItems = async (
+  orderItems: TakeOrderItem[],
   branchId: string
-): Promise<InventoryItem | undefined> => {
-  const inventoryItemId = getTakeOrderItemInventoryId(item);
-  if (inventoryItemId) {
-    const byId = await db.inventory.get(inventoryItemId);
-    if (byId) return byId;
+): Promise<Array<InventoryItem | undefined>> => {
+  const inventoryItemIds = Array.from(new Set(
+    orderItems
+      .map(getTakeOrderItemInventoryId)
+      .filter(Boolean)
+  ));
+  const inventoryById = new Map<string, InventoryItem>();
+
+  if (inventoryItemIds.length > 0) {
+    const inventoryItems = await db.inventory.bulkGet(inventoryItemIds);
+    inventoryItems.forEach((inventoryItem) => {
+      if (inventoryItem) {
+        inventoryById.set(String(inventoryItem.id), inventoryItem);
+      }
+    });
+  }
+
+  const needsNameLookup = orderItems.some((item) => !inventoryById.has(getTakeOrderItemInventoryId(item)));
+  if (!needsNameLookup) {
+    return orderItems.map((item) => inventoryById.get(getTakeOrderItemInventoryId(item)));
   }
 
   const normalizedBranchId = normalizeBranchId(branchId);
   const allInventory = await db.inventory.toArray();
-  return allInventory.find((inventoryItem) => (
-    String(inventoryItem.name || '').trim().toLowerCase() ===
-      String(item.name || '').trim().toLowerCase() &&
-    (!normalizedBranchId || normalizeBranchId(inventoryItem.branchId) === normalizedBranchId)
-  ));
+  return orderItems.map((item) => {
+    const inventoryItemId = getTakeOrderItemInventoryId(item);
+    const itemById = inventoryById.get(inventoryItemId);
+    if (itemById) return itemById;
+
+    return allInventory.find((inventoryItem) => (
+      String(inventoryItem.name || '').trim().toLowerCase() ===
+        String(item.name || '').trim().toLowerCase() &&
+      (!normalizedBranchId || normalizeBranchId(inventoryItem.branchId) === normalizedBranchId)
+    ));
+  });
 };
 
 const getSelectedOptions = (item: TakeOrderItem): Array<Record<string, unknown>> => {
@@ -76,11 +97,13 @@ export const addTakeOrderToSaleCart = async ({
 }): Promise<AddTakeOrderToSaleCartResult> => {
   let added = 0;
   let failed = 0;
+  const orderItems = order.items || [];
+  const inventoryItems = await findInventoryItemsForTakeOrderItems(orderItems, branchId);
 
-  for (const item of order.items || []) {
+  for (const [itemIndex, item] of orderItems.entries()) {
     const quantity = Number(item.quantity || 0);
     const takeOrderPrice = Number((item as any).price || 0);
-    const inventoryItem = await findInventoryItemForTakeOrderItem(item, branchId);
+    const inventoryItem = inventoryItems[itemIndex];
     const price = takeOrderPrice > 0 ? takeOrderPrice : Number(inventoryItem?.price || 0);
     const notes = item.notes?.trim() || undefined;
 

@@ -52,7 +52,6 @@ import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
 import { Receipt2 as Receipt } from './receipt2';
 import { PrinterConfigModal } from './printer-config-modal';
-import { BillReceipt } from './bill-receipt';
 import { db } from '@/lib/db';
 import { useToast } from '@/hooks/use-toast';
 import { getOfflineBusinessProfile } from '@/lib/business-profile';
@@ -89,6 +88,10 @@ import {
 } from '@/lib/quantity-format';
 import { withLocalReceiptNumber } from '@/lib/local-receipt-number';
 import { isKitchenBusinessType, type BusinessType } from '@/lib/inventory/config';
+import {
+  getMenuOptionGroups,
+  MenuOptionSelectionDialog,
+} from './menu-option-selection-dialog';
 
 
 export type BuyerDetails = {
@@ -121,6 +124,19 @@ export type AppointmentSettlementContext = {
   depositTotal: number;
 };
 
+export type PosCartAddOptions = {
+  selectedOptions?: Array<Record<string, unknown>>;
+};
+
+export type PosAddToCartHandler = (
+  item: InventoryItem,
+  quantity?: number,
+  price?: number,
+  notes?: string,
+  takeOrderId?: string,
+  options?: PosCartAddOptions
+) => boolean | void | Promise<boolean | void>;
+
 export interface PosProps {
   inventory: InventoryItem[];
   displayItems?: InventoryItem[];
@@ -128,7 +144,7 @@ export interface PosProps {
   emptyStateDescription?: string;
   cart: CartItem[];
   cartTitle?: string;
-  onAddToCart: (item: InventoryItem, quantity?: number, price?: number) => boolean | void | Promise<boolean | void>;
+  onAddToCart: PosAddToCartHandler;
   onUpdateQuantity: (itemId: string, quantity: number) => void;
   onClearCart: () => void;
   onCheckout: (paymentMethod: PaymentMethod, tip: number, buyerDetails?: BuyerDetails) => Promise<Order | null>;
@@ -3337,16 +3353,12 @@ export const GenericPos = ({
   const [paymentSessionId, setPaymentSessionId] = useState(0);
   const [internalMobileCartOpen, setInternalMobileCartOpen] = useState(false);
   const [inlineCheckoutState, setInlineCheckoutState] = useState<'payment' | 'confirmation'>('payment');
-  const [isPrintingBill, setIsPrintingBill] = useState(false);
-  const [billPaperWidth, setBillPaperWidth] = useState<'80mm' | '58mm'>('80mm');
-  const [billDisplaySettings, setBillDisplaySettings] = useState<ReceiptDisplaySettings>(DEFAULT_RECEIPT_DISPLAY_SETTINGS);
-  const [billNumber, setBillNumber] = useState('');
+  const [selectedOptionsItem, setSelectedOptionsItem] = useState<InventoryItem | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(
     typeof window !== 'undefined' ? window.innerWidth < 1024 : false
   );
   const { format: formatCurrency } = useCurrency();
   const { toast } = useToast();
-  const billPrintLockRef = useRef(false);
   const shouldEnforceTaxMapping = Boolean(eisEnabled || blockSalesIfTaxMappingMissing);
   const isInlineCheckout = checkoutMode === 'inline' && isMobileViewport;
   const isInlineMobileCart = mobileCartDisplay === 'inline' && isMobileViewport;
@@ -3361,14 +3373,23 @@ export const GenericPos = ({
     [activeBranchId]
   );
 
+  const handleProductSelection = useCallback((item: InventoryItem) => {
+    if (getMenuOptionGroups(item).length > 0) {
+      setSelectedOptionsItem(item);
+      return true;
+    }
+
+    return onAddToCart(item);
+  }, [onAddToCart]);
+
   useEffect(() => {
     if (!registerQuickAddHandler) {
       return;
     }
 
-    registerQuickAddHandler((item) => onAddToCart(item));
+    registerQuickAddHandler(handleProductSelection);
     return () => registerQuickAddHandler(null);
-  }, [onAddToCart, registerQuickAddHandler]);
+  }, [handleProductSelection, registerQuickAddHandler]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -3644,177 +3665,6 @@ export const GenericPos = ({
   const hasItemsInCart = cart.length > 0;
   const shouldShowDesktopCart = hasItemsInCart || (isInlineCheckout && inlineCheckoutState === 'confirmation');
 
-  const applyBillPrinterSettings = useCallback(
-    (
-      settings?: Partial<PrinterSettings> | null,
-      fallbackPaperWidth: '80mm' | '58mm' = '80mm'
-    ): '80mm' | '58mm' => {
-      const resolvedPaperWidth: '80mm' | '58mm' =
-        settings?.receiptPaperWidth === '58mm' || settings?.receiptPaperWidth === '80mm'
-          ? settings.receiptPaperWidth
-          : fallbackPaperWidth;
-
-      setBillPaperWidth(resolvedPaperWidth);
-      setBillDisplaySettings({
-        showHeader: true,
-        showFooter: true,
-        showQRCode: false,
-        showItemDetails: true,
-        showTaxBreakdown: true,
-        receiptFontSize: normalizeReceiptFontSize(settings?.receiptFontSize, resolvedPaperWidth),
-        receiptFontWeight: normalizeReceiptFontWeight(settings?.receiptFontWeight),
-        receiptLineHeight: normalizeReceiptLineHeight(settings?.receiptLineHeight),
-        receiptPaddingX: normalizeReceiptPaddingX(settings?.receiptPaddingX, resolvedPaperWidth),
-        receiptBusinessNameFontSize: normalizeReceiptBusinessNameFontSize(
-          settings?.receiptBusinessNameFontSize,
-          resolvedPaperWidth
-        ),
-        receiptBusinessNameFontWeight: normalizeReceiptFontWeight(
-          settings?.receiptBusinessNameFontWeight ?? DEFAULT_RECEIPT_BUSINESS_NAME_WEIGHT
-        ),
-        receiptBusinessNameScaleX: normalizeReceiptTextScaleX(
-          settings?.receiptBusinessNameScaleX,
-          DEFAULT_RECEIPT_BUSINESS_NAME_SCALE_X
-        ),
-        receiptHeaderDetailScaleX: normalizeReceiptTextScaleX(
-          settings?.receiptHeaderDetailScaleX,
-          DEFAULT_RECEIPT_HEADER_DETAIL_SCALE_X
-        ),
-        receiptLegalMarkerFontSize: normalizeReceiptLegalMarkerFontSize(
-          settings?.receiptLegalMarkerFontSize,
-          resolvedPaperWidth
-        ),
-        receiptLegalMarkerFontWeight: normalizeReceiptFontWeight(
-          settings?.receiptLegalMarkerFontWeight ?? DEFAULT_RECEIPT_LEGAL_MARKER_WEIGHT
-        ),
-        receiptLegalMarkerScaleX: normalizeReceiptTextScaleX(
-          settings?.receiptLegalMarkerScaleX,
-          DEFAULT_RECEIPT_LEGAL_MARKER_SCALE_X
-        ),
-        receiptQrCodeSize: normalizeReceiptQRCodeSize(settings?.receiptQrCodeSize, resolvedPaperWidth),
-      });
-
-      return resolvedPaperWidth;
-    },
-    []
-  );
-
-  const createBillNumber = useCallback((): string => {
-    return '';
-  }, []);
-
-  const handlePrintBill = useCallback(async (): Promise<void> => {
-    if (billPrintLockRef.current) {
-      return;
-    }
-
-    if (cart.length === 0) {
-      toast({
-        variant: 'destructive',
-        title: 'Nothing to print',
-        description: 'Add items to the cart before printing a bill.',
-      });
-      return;
-    }
-
-    billPrintLockRef.current = true;
-    setIsPrintingBill(true);
-
-    try {
-      const { printerService } = await import('@/lib/services/printer-service');
-      const { silentPrintService } = await import('@/lib/services/silent-print-service');
-      const [settings, defaultPrinter] = await Promise.all([
-        printerService.getPrinterSettings(activeBranchId),
-        printerService.getDefaultPrinter(activeBranchId),
-      ]);
-      const selectedPaperWidth = applyBillPrinterSettings(
-        settings,
-        (defaultPrinter?.paperWidth as '80mm' | '58mm') || '80mm'
-      );
-
-      if (!defaultPrinter) {
-        toast({
-          variant: 'destructive',
-          title: 'No Printer Configured',
-          description: 'Configure a default printer before printing customer bills.',
-        });
-        return;
-      }
-
-      setBillNumber(createBillNumber());
-      await new Promise((resolve) => setTimeout(resolve, 150));
-
-      const billElement = document.getElementById('bill-printable-area');
-      const printContents = billElement?.innerHTML;
-      if (!printContents || printContents.trim().length === 0) {
-        toast({
-          variant: 'destructive',
-          title: 'Print Failed',
-          description: 'Bill content was not ready. Please try again.',
-        });
-        return;
-      }
-
-      const isBluetoothPrinter =
-        defaultPrinter.connectionType === 'bluetooth' ||
-        String(defaultPrinter.id || '').toLowerCase().startsWith('bt:');
-      const printAttemptTimeoutMs = isBluetoothPrinter ? 45000 : 20000;
-
-      toast({
-        title: 'Printing Bill',
-        description: `Sending customer bill to ${defaultPrinter.name}`,
-      });
-
-      const printAttempt = Promise.race([
-        silentPrintService
-          .printSilentlyViaSystem(printContents, {
-            printerName: defaultPrinter.name,
-            printerId: defaultPrinter.id,
-            copies: 1,
-            paperSize: selectedPaperWidth,
-            printerPaperSize: defaultPrinter.paperWidth as '80mm' | '58mm',
-          })
-          .then((success) => ({ success, timedOut: false })),
-        new Promise<{ success: false; timedOut: true }>((resolve) =>
-          setTimeout(() => resolve({ success: false, timedOut: true }), printAttemptTimeoutMs)
-        ),
-      ]);
-
-      const result = await printAttempt;
-      if (!result.success) {
-        toast({
-          variant: 'destructive',
-          title: result.timedOut ? 'Print Timed Out' : 'Print Failed',
-          description: result.timedOut
-            ? 'Printer did not respond in time. Check the connection and try again.'
-            : 'Failed to send the customer bill to the printer.',
-        });
-        return;
-      }
-
-      toast({
-        title: 'Bill Printed',
-        description: 'The cart is still open for payment.',
-      });
-    } catch (error) {
-      console.error('[Bill Print] Failed to print bill:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Print Error',
-        description: error instanceof Error ? error.message : 'An unknown error occurred.',
-      });
-    } finally {
-      setIsPrintingBill(false);
-      billPrintLockRef.current = false;
-    }
-  }, [
-    activeBranchId,
-    applyBillPrinterSettings,
-    cart,
-    createBillNumber,
-    toast,
-  ]);
-
   useEffect(() => {
     if (!isInlineCheckout || inlineCheckoutState !== 'confirmation' || !hasItemsInCart) {
       return;
@@ -3988,7 +3838,7 @@ export const GenericPos = ({
               onClick={async (e) => {
                 e.stopPropagation();
                 if (canAddToCart) {
-                  await onAddToCart(item);
+                  await handleProductSelection(item);
                 }
               }}
               role="button"
@@ -3996,7 +3846,7 @@ export const GenericPos = ({
               onKeyDown={async (e) => {
                 if ((e.key === 'Enter' || e.key === ' ') && canAddToCart) {
                   e.preventDefault();
-                  await onAddToCart(item);
+                  await handleProductSelection(item);
                 }
               }}
             >
@@ -4042,7 +3892,7 @@ export const GenericPos = ({
                 "flex items-center gap-4 rounded-md border p-2 cursor-pointer hover:bg-muted",
                 !canAddToCart && "opacity-50 cursor-not-allowed"
               )} 
-              onClick={async () => canAddToCart && await onAddToCart(item)}
+              onClick={async () => canAddToCart && await handleProductSelection(item)}
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-md bg-muted/50">
                  {productIcon}
@@ -4172,29 +4022,9 @@ export const GenericPos = ({
             <span className="flex-shrink-0">Total (Incl VAT)</span>
             <span className="flex-shrink-0 text-right">{formatCurrency(total)}</span>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Button
-              size="lg"
-              variant="outline"
-              onClick={() => void handlePrintBill()}
-              disabled={isPrintingBill || cart.length === 0}
-            >
-              {isPrintingBill ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Printing...
-                </>
-              ) : (
-                <>
-                  <Printer className="mr-2 h-5 w-5" />
-                  Print Bill
-                </>
-              )}
-            </Button>
-            <Button size="lg" className="bg-green-600 hover:bg-green-700" onClick={() => { setPaymentSessionId((id) => id + 1); setPaymentDialogOpen(true); }}>
-              <CreditCard className="mr-2 h-5 w-5" /> Payment
-            </Button>
-          </div>
+          <Button size="lg" className="w-full bg-green-600 hover:bg-green-700" onClick={() => { setPaymentSessionId((id) => id + 1); setPaymentDialogOpen(true); }}>
+            <CreditCard className="mr-2 h-5 w-5" /> Payment
+          </Button>
         </>
       )}
     </div>
@@ -4329,6 +4159,18 @@ export const GenericPos = ({
 
       {!isInlineMobileCart && (hasItemsInCart || hideDefaultMobileCartTrigger || mobileCartOpen) && renderMobileCartDialog()}
     </div>
+    <MenuOptionSelectionDialog
+      item={selectedOptionsItem}
+      open={Boolean(selectedOptionsItem)}
+      onOpenChange={(open) => {
+        if (!open) {
+          setSelectedOptionsItem(null);
+        }
+      }}
+      onConfirm={(item, selectedOptions, configuredPrice) => (
+        onAddToCart(item, 1, configuredPrice, undefined, undefined, { selectedOptions })
+      )}
+    />
     {!isInlineCheckout && (
       <Dialog open={isPaymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
           <PaymentDialog
@@ -4351,29 +4193,6 @@ export const GenericPos = ({
               appointmentSettlement={appointmentSettlement}
           />
       </Dialog>
-    )}
-    {hasItemsInCart && (
-      <div className="hidden">
-        <BillReceipt
-          cart={cart}
-          currencyFormatter={formatCurrency}
-          subtotal={subtotal}
-          tax={tax}
-          charges={cartChargesTotal}
-          total={total}
-          taxLabel={cartTaxLabel}
-          billNumber={billNumber}
-          paperWidth={billPaperWidth}
-          receiptFontSize={billDisplaySettings.receiptFontSize}
-          receiptFontWeight={billDisplaySettings.receiptFontWeight}
-          receiptLineHeight={billDisplaySettings.receiptLineHeight}
-          receiptPaddingX={billDisplaySettings.receiptPaddingX}
-          receiptBusinessNameFontSize={billDisplaySettings.receiptBusinessNameFontSize}
-          receiptBusinessNameFontWeight={billDisplaySettings.receiptBusinessNameFontWeight}
-          receiptBusinessNameScaleX={billDisplaySettings.receiptBusinessNameScaleX}
-          receiptHeaderDetailScaleX={billDisplaySettings.receiptHeaderDetailScaleX}
-        />
-      </div>
     )}
     <PrinterConfigModal isOpen={showPrinterConfig} onOpenChange={setShowPrinterConfig} />
     </>

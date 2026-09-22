@@ -99,6 +99,26 @@ const pickFirstString = (...values: Array<unknown>): string => {
   return '';
 };
 
+const getPersonName = (...profiles: Array<Record<string, any> | null | undefined>): string => {
+  for (const profile of profiles) {
+    if (!profile) continue;
+    const fullName = pickFirstString(
+      profile.display_name,
+      profile.displayName,
+      profile.name,
+      profile.full_name,
+      profile.fullName,
+    );
+    if (fullName) return fullName;
+
+    const firstName = pickFirstString(profile.first_name, profile.firstName);
+    const lastName = pickFirstString(profile.last_name, profile.lastName);
+    const combinedName = `${firstName} ${lastName}`.trim();
+    if (combinedName) return combinedName;
+  }
+  return '';
+};
+
 const parseStoredJson = <T,>(value: string | null): T | null => {
   if (!value) {
     return null;
@@ -170,14 +190,8 @@ const buildUserFromToken = (accessToken: string): User | null => {
       phone
     ) || 'authenticated-user';
   const displayName =
-    pickFirstString(
-      payload.display_name,
-      payload.displayName,
-      payload.name,
-      payload.full_name,
-      payload.fullName,
-      payload.username
-    ) ||
+    getPersonName(payload) ||
+    pickFirstString(payload.username) ||
     (email ? email.split('@')[0] : '') ||
     phone ||
     'User';
@@ -245,15 +259,7 @@ const buildUserFromProfiles = (profile: any, staffProfile: any | null): User | n
     staffProfile?.user?.phone
   );
   const displayName =
-    pickFirstString(
-      profile?.display_name,
-      profile?.displayName,
-      profile?.name,
-      profile?.full_name,
-      profile?.fullName,
-      staffProfile?.name,
-      staffProfile?.full_name
-    ) ||
+    getPersonName(profile, profile?.user, staffProfile, staffProfile?.user) ||
     (email ? email.split('@')[0] : '') ||
     phone ||
     'User';

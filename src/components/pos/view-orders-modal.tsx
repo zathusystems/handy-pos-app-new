@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/auth-fetch';
 import {
@@ -40,9 +41,9 @@ import {
   AlertCircle,
   Calendar,
   CheckCircle2,
-  ChefHat,
   Clock,
   CreditCard,
+  Loader2,
   Phone,
   Printer,
   RefreshCw,
@@ -87,12 +88,10 @@ type ViewOrdersModalProps = {
   currentUserRole?: string | null;
 };
 
-type OrderFilter = 'attention' | 'mine' | 'kitchen' | 'ready' | 'cancelled' | 'all';
+type OrderFilter = 'mine' | 'all' | 'completed' | 'cancelled';
 
-const ATTENTION_STATUSES = new Set(['Pending', 'Confirmed', 'New']);
-const KITCHEN_STATUSES = new Set(['Sent to Kitchen', 'Preparing']);
-const READY_STATUSES = new Set(['Ready']);
 const CANCELLED_STATUSES = new Set(['Cancelled']);
+const COMPLETED_STATUSES = new Set(['Completed']);
 const ORDER_MODAL_REFRESH_MS = 10_000;
 const ORDER_BILL_PRINT_ROOT_ID = 'orders-modal-bill-printable-area';
 const KITCHEN_TICKET_PRINT_ROOT_ID = 'orders-modal-kitchen-ticket-printable-area';
@@ -141,6 +140,16 @@ const getTimeAgo = (dateString: string): string => {
   }
 };
 
+const getOrderDateKey = (dateString?: string | null): string => {
+  if (!dateString) return '';
+
+  try {
+    return format(parseISO(dateString), 'yyyy-MM-dd');
+  } catch {
+    return '';
+  }
+};
+
 const toFiniteNumber = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -166,6 +175,19 @@ const isAppointmentOrder = (order: TakeOrder): boolean => {
   return Boolean(appointment?.appointmentId || appointment?.appointment_id);
 };
 
+const getOrderCreatorName = (order: TakeOrder): string => {
+  const candidates = [
+    order.createdByName,
+    (order as any).created_by_name,
+    (order as any).createdByDisplayName,
+  ];
+  const creatorName = candidates
+    .map((value) => String(value ?? '').trim())
+    .find((value) => value && !value.includes('@'));
+
+  return creatorName || 'Staff member';
+};
+
 export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale, onRequestProcessSale, businessType, currentUserRole }: ViewOrdersModalProps) {
   const { format: formatCurrency } = useCurrency();
   const { user } = useAuth();
@@ -176,7 +198,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [cancellationReason, setCancellationReason] = useState('');
   const [showTakeOrderModal, setShowTakeOrderModal] = useState(false);
   const [showAppointmentsModal, setShowAppointmentsModal] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<OrderFilter>('attention');
+  const [activeFilter, setActiveFilter] = useState<OrderFilter>('all');
+  const [createdDateFilter, setCreatedDateFilter] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [ordersReadyForNotifications, setOrdersReadyForNotifications] = useState(false);
   const [billOrder, setBillOrder] = useState<TakeOrder | null>(null);
   const [billPaperWidth, setBillPaperWidth] = useState<'80mm' | '58mm'>('80mm');
@@ -218,14 +241,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     if (status === 'Ready') return workflowCopy.readyLabel;
     return status;
   }, [isSalonServiceWorkflow, workflowCopy]);
-  const orderFilterLabels: Record<OrderFilter, string> = {
-    attention: 'Needs Attention',
-    mine: 'My Orders',
-    kitchen: workflowCopy.queueLabel,
-    ready: workflowCopy.readyLabel,
-    cancelled: 'Cancelled',
-    all: 'All Orders',
-  };
   const canCancelOrders = !currentUserRole || currentUserRole === 'Admin';
 
   const getCustomerBillPaymentAccounts = React.useCallback(async () => {
@@ -315,12 +330,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     };
   }, [isOpen, branchId]);
 
-  React.useEffect(() => {
-    if (!orderFulfillmentEnabled && activeFilter === 'kitchen') {
-      setActiveFilter('attention');
-    }
-  }, [activeFilter, orderFulfillmentEnabled]);
-
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'Ready':
@@ -369,14 +378,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       : 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200';
   };
 
-  const statusCounts = useMemo(() => {
-    const counts: { [key: string]: number } = {};
-    allOrders.forEach(order => {
-      counts[order.status] = (counts[order.status] || 0) + 1;
-    });
-    return counts;
-  }, [allOrders]);
-
   const isCurrentUsersOrder = React.useCallback((order: TakeOrder): boolean => {
     const currentUserId = String(user?.uid ?? '').trim();
     const createdBy = String(order.createdBy ?? (order as any).created_by ?? '').trim();
@@ -387,34 +388,32 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     [currentUserRole, user?.uid]
   );
 
+  const ordersForSelectedDate = useMemo(() => {
+    if (!createdDateFilter) return allOrders;
+    return allOrders.filter((order) => getOrderDateKey(order.createdAt) === createdDateFilter);
+  }, [allOrders, createdDateFilter]);
+
   const orderStats = useMemo(() => {
-    const needsAttention = allOrders.filter((order) => ATTENTION_STATUSES.has(order.status)).length;
-    const inKitchen = allOrders.filter((order) => (
-      KITCHEN_STATUSES.has(order.status) &&
-      hasFulfillmentItems(order)
-    )).length;
-    const ready = allOrders.filter((order) => READY_STATUSES.has(order.status)).length;
-    const cancelled = allOrders.filter((order) => CANCELLED_STATUSES.has(order.status)).length;
-    const mine = allOrders.filter(isCurrentUsersOrder).length;
+    const completed = ordersForSelectedDate.filter((order) => COMPLETED_STATUSES.has(order.status)).length;
+    const cancelled = ordersForSelectedDate.filter((order) => CANCELLED_STATUSES.has(order.status)).length;
+    const mine = ordersForSelectedDate.filter(isCurrentUsersOrder).length;
 
     return {
-      needsAttention,
       mine,
-      inKitchen,
-      ready,
+      all: ordersForSelectedDate.length,
+      completed,
       cancelled,
-      all: allOrders.length,
     };
-  }, [allOrders, hasFulfillmentItems, isCurrentUsersOrder]);
+  }, [isCurrentUsersOrder, ordersForSelectedDate]);
   const audibleOrderNotifications = useMemo(
     () => allOrders.flatMap((order) => {
-      if (ATTENTION_STATUSES.has(order.status)) {
+      if (['Pending', 'Confirmed', 'New'].includes(order.status)) {
         return [{ id: order.id, channel: 'attention' }];
       }
-      if (READY_STATUSES.has(order.status)) {
+      if (order.status === 'Ready') {
         return [{ id: order.id, channel: 'ready' }];
       }
-      if (orderFulfillmentEnabled && KITCHEN_STATUSES.has(order.status) && hasFulfillmentItems(order)) {
+      if (orderFulfillmentEnabled && ['Sent to Kitchen', 'Preparing'].includes(order.status) && hasFulfillmentItems(order)) {
         return [{ id: order.id, channel: 'kitchen' }];
       }
       return [];
@@ -427,28 +426,18 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   });
 
   const filteredOrders = useMemo(() => {
-    if (activeFilter === 'attention') {
-      return allOrders.filter((order) => ATTENTION_STATUSES.has(order.status));
-    }
     if (activeFilter === 'mine') {
-      return allOrders.filter(isCurrentUsersOrder);
+      return ordersForSelectedDate.filter(isCurrentUsersOrder);
     }
-    if (activeFilter === 'kitchen') {
-      if (!orderFulfillmentEnabled) return [];
-      return allOrders.filter((order) => (
-        KITCHEN_STATUSES.has(order.status) &&
-        hasFulfillmentItems(order)
-      ));
-    }
-    if (activeFilter === 'ready') {
-      return allOrders.filter((order) => READY_STATUSES.has(order.status));
+    if (activeFilter === 'completed') {
+      return ordersForSelectedDate.filter((order) => COMPLETED_STATUSES.has(order.status));
     }
     if (activeFilter === 'cancelled') {
-      return allOrders.filter((order) => CANCELLED_STATUSES.has(order.status));
+      return ordersForSelectedDate.filter((order) => CANCELLED_STATUSES.has(order.status));
     }
 
-    return allOrders;
-  }, [activeFilter, allOrders, hasFulfillmentItems, isCurrentUsersOrder, orderFulfillmentEnabled]);
+    return ordersForSelectedDate;
+  }, [activeFilter, isCurrentUsersOrder, ordersForSelectedDate]);
 
   const filterOptions: Array<{
     key: OrderFilter;
@@ -456,28 +445,13 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     count: number;
     icon: React.ElementType;
   }> = [
-    { key: 'attention', label: 'Needs Attention', count: orderStats.needsAttention, icon: AlertCircle },
     { key: 'mine', label: 'My Orders', count: orderStats.mine, icon: User },
-    ...(orderFulfillmentEnabled ? [{ key: 'kitchen' as const, label: workflowCopy.queueLabel, count: orderStats.inKitchen, icon: ChefHat }] : []),
-    { key: 'ready', label: workflowCopy.readyLabel, count: orderStats.ready, icon: CheckCircle2 },
-    { key: 'cancelled', label: 'Cancelled', count: orderStats.cancelled, icon: X },
     { key: 'all', label: 'All Orders', count: orderStats.all, icon: ShoppingBasket },
+    { key: 'completed', label: 'Completed', count: orderStats.completed, icon: CheckCircle2 },
+    { key: 'cancelled', label: 'Cancelled', count: orderStats.cancelled, icon: X },
   ];
-  const activeFilterLabel = orderFilterLabels[activeFilter];
-
-  const getDestinationFilter = (status: string, order?: TakeOrder): OrderFilter => {
-    if (ATTENTION_STATUSES.has(status)) return 'attention';
-    if (READY_STATUSES.has(status)) return 'ready';
-    if (CANCELLED_STATUSES.has(status)) return 'cancelled';
-    if (
-      KITCHEN_STATUSES.has(status)
-      && orderFulfillmentEnabled
-      && (!order || hasFulfillmentItems(order))
-    ) {
-      return 'kitchen';
-    }
-    return 'all';
-  };
+  const todayDate = format(new Date(), 'yyyy-MM-dd');
+  const isShowingToday = createdDateFilter === todayDate;
 
   const getPrimaryAction = (order: TakeOrder) => {
     const status = order.status;
@@ -518,6 +492,14 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     }
 
     setProcessingSaleOrderId(order.id);
+    await new Promise<void>((resolve) => {
+      if (typeof window === 'undefined') {
+        resolve();
+        return;
+      }
+      window.requestAnimationFrame(() => resolve());
+    });
+
     try {
       if (onProcessSale) {
         const processed = await onProcessSale(order);
@@ -883,16 +865,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
           : targetOrder?._operation,
         syncPending: savedLocally || targetOrder?.syncPending || undefined,
       });
-      const destinationFilter = getDestinationFilter(resolvedStatus, targetOrder);
-      if (destinationFilter !== activeFilter) {
-        setActiveFilter(destinationFilter);
-        toast({
-          title: `Order moved to ${orderFilterLabels[destinationFilter]}`,
-          description: savedLocally
-            ? `Saved on this device and will sync when the connection returns. You are now viewing ${orderFilterLabels[destinationFilter]}.`
-            : `You are now viewing ${orderFilterLabels[destinationFilter]}.`,
-        });
-      }
       console.log(`[ViewOrdersModal] Order ${orderId} updated to ${resolvedStatus}`);
       if (!savedLocally) {
         const { syncService } = require('@/lib/services/sync-service');
@@ -950,6 +922,8 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       !['Cancelled', 'Completed'].includes(order.status);
     const hasNotes = Boolean(order.customerNotes || order.specialInstructions || order.items.some((item) => item.notes));
     const appointmentOrder = isAppointmentOrder(order);
+    const creatorName = getOrderCreatorName(order);
+    const isProcessingPayment = processingSaleOrderId === order.id;
 
     return (
       <div key={order.id} className="rounded-lg border bg-card p-3 shadow-sm transition hover:border-primary/30 hover:bg-muted/30 hover:shadow-md sm:p-4">
@@ -962,7 +936,11 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 <span className="text-xs font-semibold">{getDisplayStatus(order.status)}</span>
               </Badge>
               <Badge className={`${getOrderTypeColor(order.orderType)} text-xs`}>
-                {order.orderType === 'staff' ? 'Staff' : 'QR Order'}
+                {order.orderType === 'staff' ? (
+                  <span className="max-w-40 truncate" title={`Taken by ${creatorName}`}>
+                    Taken by {creatorName}
+                  </span>
+                ) : 'QR Order'}
               </Badge>
               {(order.syncPending || order._dirty) && (
                 <Badge variant="outline" className="flex items-center gap-1 text-xs text-amber-700">
@@ -1025,7 +1003,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             {primaryAction && (!isPrimaryPaymentAction || canProcessPayment) && (
               <Button
                 size="sm"
-                className="w-full sm:w-auto"
+                className="w-full gap-2 sm:w-auto"
                 disabled={'processSale' in primaryAction && Boolean(processingSaleOrderId)}
                 onClick={() => (
                   'processSale' in primaryAction
@@ -1035,9 +1013,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                       : handleUpdateStatus(order.id, primaryAction.nextStatus, order)
                 )}
               >
-                {'processSale' in primaryAction && processingSaleOrderId === order.id
-                  ? 'Opening POS...'
-                  : primaryAction.label}
+                {'processSale' in primaryAction && isProcessingPayment ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Preparing checkout...
+                  </>
+                ) : primaryAction.label}
               </Button>
             )}
             {canProcessPayment && !isPrimaryPaymentAction && (
@@ -1048,8 +1029,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 disabled={Boolean(processingSaleOrderId)}
                 onClick={() => handleProcessSale(order)}
               >
-                <CreditCard className="h-4 w-4" />
-                {processingSaleOrderId === order.id ? 'Opening POS...' : 'Process Payment'}
+                {isProcessingPayment ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CreditCard className="h-4 w-4" />
+                )}
+                {isProcessingPayment ? 'Preparing checkout...' : 'Process Payment'}
               </Button>
             )}
             {canPrintKitchenTicket && (
@@ -1113,6 +1098,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
       order.status !== 'Cancelled' &&
       order.status !== 'Completed' &&
       canCurrentUserProcessPayment(order);
+    const isProcessingPayment = processingSaleOrderId === order.id;
 
     return (
       <>
@@ -1170,12 +1156,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                   <p className="break-words font-medium text-foreground">{order.orderType === 'staff' ? 'Staff Created' : 'Self-Service'}</p>
                 </div>
               </div>
-              {order.createdByName && (
+              {order.orderType === 'staff' && (
                 <div className="flex items-start gap-3 rounded-lg border bg-muted p-3">
                   <User className="mt-1 h-4 w-4 flex-shrink-0 text-muted-foreground" />
                   <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase text-muted-foreground">Taken By</p>
-                    <p className="break-words font-medium text-foreground">{order.createdByName}</p>
+                    <p className="break-words font-medium text-foreground">{getOrderCreatorName(order)}</p>
                   </div>
                 </div>
               )}
@@ -1355,8 +1341,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                         onClick={() => handleProcessSale(order)}
                         variant="secondary"
                       >
-                        <CreditCard className="h-4 w-4" />
-                        {processingSaleOrderId === order.id ? 'Opening...' : 'POS'}
+                        {isProcessingPayment ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CreditCard className="h-4 w-4" />
+                        )}
+                        {isProcessingPayment ? 'Preparing checkout...' : 'POS'}
                       </Button>
                     )}
                     {canProcessPayment && order.status !== 'Ready' && (
@@ -1367,8 +1357,12 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                         onClick={() => handleProcessSale(order)}
                         variant="secondary"
                       >
-                        <CreditCard className="h-4 w-4" />
-                        {processingSaleOrderId === order.id ? 'Opening...' : 'POS'}
+                        {isProcessingPayment ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CreditCard className="h-4 w-4" />
+                        )}
+                        {isProcessingPayment ? 'Preparing checkout...' : 'POS'}
                       </Button>
                     )}
                     {canCancelOrders && (
@@ -1485,36 +1479,53 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
                 </div>
               </div>
 
-              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-3 sm:gap-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {filterOptions.map(({ key, label, count, icon: Icon }) => (
                   <button
                     key={key}
                     type="button"
                     onClick={() => setActiveFilter(key)}
                     aria-current={activeFilter === key ? 'page' : undefined}
-                    className={`flex min-w-[112px] shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-left transition sm:block sm:min-w-0 sm:rounded-lg sm:p-3 ${
+                    className={`flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-left transition sm:block sm:rounded-lg sm:p-3 ${
                       activeFilter === key
                         ? 'border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
                         : 'bg-background/60 hover:bg-background'
                     }`}
                   >
-                    <div className="flex items-center gap-2 sm:justify-between">
+                    <div className="flex shrink-0 items-center gap-2 sm:justify-between">
                       <Icon className={`h-4 w-4 ${activeFilter === key ? 'text-primary-foreground' : 'text-muted-foreground'}`} />
                       <span className="text-base font-semibold sm:text-lg">{count}</span>
                     </div>
-                    <p className={`truncate text-xs font-medium sm:mt-1 ${activeFilter === key ? 'text-primary-foreground' : 'text-muted-foreground'}`}>{label}</p>
+                    <p className={`min-w-0 truncate text-xs font-medium sm:mt-1 ${activeFilter === key ? 'text-primary-foreground' : 'text-muted-foreground'}`}>{label}</p>
                   </button>
                 ))}
               </div>
-              <div
-                className="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm"
-                aria-live="polite"
-              >
-                <span className="text-muted-foreground">Viewing</span>
-                <span className="ml-auto font-semibold text-foreground">{activeFilterLabel}</span>
-                <span className="rounded bg-background px-2 py-0.5 text-xs font-semibold text-foreground">
-                  {filteredOrders.length}
-                </span>
+              <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-background/50 p-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={isShowingToday ? 'secondary' : 'outline'}
+                  className="h-8 px-2.5"
+                  onClick={() => setCreatedDateFilter(todayDate)}
+                >
+                  Today
+                </Button>
+                <Input
+                  type="date"
+                  aria-label="Filter orders by created date"
+                  className="h-8 min-w-0 w-full bg-background text-xs"
+                  value={createdDateFilter}
+                  onChange={(event) => setCreatedDateFilter(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!createdDateFilter ? 'secondary' : 'outline'}
+                  className="h-8 px-2.5"
+                  onClick={() => setCreatedDateFilter('')}
+                >
+                  All dates
+                </Button>
               </div>
             </div>
           </DialogHeader>
@@ -1524,7 +1535,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
               <div className="flex min-h-[18rem] flex-col items-center justify-center py-12 text-center text-muted-foreground">
                 <ShoppingBasket className="h-16 w-16 mb-4 opacity-30" />
                 <p className="text-lg font-semibold">No orders here</p>
-                <p className="text-sm">Try another filter or refresh the list.</p>
+                <p className="text-sm">Try another view, date, or refresh the list.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -1533,17 +1544,20 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             )}
           </div>
 
-          {Object.entries(statusCounts).length > 0 && (
-            <div className="max-h-24 shrink-0 overflow-y-auto border-t bg-muted/20 p-3 sm:max-h-none sm:p-4">
-              <div className="flex flex-wrap gap-2">
-              {Object.entries(statusCounts).map(([status, count]) => (
-                <Badge key={status} variant="outline" className="text-xs">
-                  {status}: <span className="ml-1 font-bold">{count}</span>
-                </Badge>
-              ))}
+          {processingSaleOrderId && (
+            <div
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/85 p-6 text-center backdrop-blur-sm"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="h-9 w-9 animate-spin text-primary" />
+              <div className="space-y-1">
+                <p className="font-semibold text-foreground">Preparing checkout</p>
+                <p className="text-sm text-muted-foreground">Adding this order&apos;s items to the POS cart...</p>
               </div>
             </div>
           )}
+
         </DialogContent>
       </Dialog>
       <TakeOrderModal
@@ -1606,7 +1620,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             orderNotes={billOrder.customerNotes}
             specialInstructions={billOrder.specialInstructions}
             createdAt={billOrder.createdAt}
-            createdByName={billOrder.createdByName}
+            createdByName={getOrderCreatorName(billOrder)}
             paperWidth={billPaperWidth}
             receiptFontSize={billPrinterSettings?.receiptFontSize}
             receiptFontWeight={billPrinterSettings?.receiptFontWeight}
@@ -1626,7 +1640,7 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             rootId={KITCHEN_TICKET_PRINT_ROOT_ID}
             orderNumber={kitchenTicketOrder.orderNumber}
             businessName={kitchenTicketBusinessName}
-            takenByName={kitchenTicketOrder.createdByName || kitchenTicketOrder.createdBy}
+            takenByName={getOrderCreatorName(kitchenTicketOrder)}
             customerName={kitchenTicketOrder.customerName}
             tableNumber={kitchenTicketOrder.tableNumber}
             createdAt={kitchenTicketOrder.createdAt}

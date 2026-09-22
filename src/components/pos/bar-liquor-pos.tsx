@@ -1,19 +1,26 @@
 'use client';
 
 import { GlassWater } from 'lucide-react';
-import { GenericPos, type PosProps } from './generic-pos';
+import { GenericPos, type PosAddToCartHandler, type PosCartAddOptions, type PosProps } from './generic-pos';
 import { useState } from 'react';
 import type { InventoryItem } from '@/lib/db';
 import { PortionSaleDialog, canSellInPortions } from './portion-sale-dialog';
 
 export const BarLiquorPos = (props: PosProps) => {
-    const [selectedPortionItem, setSelectedPortionItem] = useState<InventoryItem | null>(null);
+    const [selectedPortionSale, setSelectedPortionSale] = useState<{
+        item: InventoryItem;
+        selectedOptions: Array<Record<string, unknown>>;
+    } | null>(null);
 
-    const handleAddToCart = (item: InventoryItem) => {
+    const handleAddToCart: PosAddToCartHandler = (item, quantity, price, notes, takeOrderId, options: PosCartAddOptions = {}) => {
         if (canSellInPortions(item)) {
-            setSelectedPortionItem(item);
+            setSelectedPortionSale({
+                item,
+                selectedOptions: Array.isArray(options.selectedOptions) ? options.selectedOptions : [],
+            });
+            return true;
         } else {
-            props.onAddToCart(item);
+            return props.onAddToCart(item, quantity, price, notes, takeOrderId, options);
         }
     };
 
@@ -26,14 +33,17 @@ export const BarLiquorPos = (props: PosProps) => {
                 onAddToCart={handleAddToCart}
             />
             <PortionSaleDialog
-                item={selectedPortionItem}
-                open={!!selectedPortionItem}
+                item={selectedPortionSale?.item ?? null}
+                open={!!selectedPortionSale}
                 onOpenChange={(open) => {
                     if (!open) {
-                        setSelectedPortionItem(null);
+                        setSelectedPortionSale(null);
                     }
                 }}
-                onAddToCart={props.onAddToCart}
+                selectedOptions={selectedPortionSale?.selectedOptions}
+                onAddToCart={(item, quantity, price, selectedOptions) => (
+                    props.onAddToCart(item, quantity, price, undefined, undefined, { selectedOptions })
+                )}
             />
         </>
     );

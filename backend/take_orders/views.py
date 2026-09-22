@@ -167,6 +167,12 @@ class TakeOrderViewSet(viewsets.ModelViewSet):
         return queryset.select_related(
             'appointment',
             'appointment__customer',
+            'created_by',
+            'created_by__staff_profile',
+            'completed_by',
+            'completed_by__staff_profile',
+            'cancelled_by',
+            'cancelled_by__staff_profile',
         ).prefetch_related(
             'items',
             'appointment__deposits',

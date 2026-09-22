@@ -88,6 +88,7 @@ export function useSyncStatus(branchId?: string | null) {
         const dirtyInventory = (await db.inventory.toArray()).filter(r => r._dirty === true && (!branchId || String(r.branchId) === String(branchId)));
         const dirtySessions = (await db.sessions.toArray()).filter(r => r._dirty === true && (!branchId || String(r.branchId) === String(branchId)));
         const dirtyOrders = (await db.orders.toArray()).filter(r => r._dirty === true && (!branchId || String(r.branchId) === String(branchId)));
+        const dirtyTakeOrders = (await db.takeOrders.toArray()).filter(r => r._dirty === true && (!branchId || String(r.branchId) === String(branchId)));
         const dirtyPurchaseOrders = (await db.purchaseOrders.toArray()).filter(r => r._dirty === true && (!branchId || String(r.branchId) === String(branchId)));
         const dirtyStockTransfers = (await db.stockTransfers.toArray()).filter(r => r._dirty === true && (!branchId || String(r.branchId) === String(branchId)));
         const dirtyWasteRecords = (await db.wasteLog.toArray()).filter(r => r._dirty === true && (!branchId || String(r.branchId) === String(branchId)));
@@ -99,6 +100,7 @@ export function useSyncStatus(branchId?: string | null) {
           ...dirtyInventory.map(r => ({ type: 'InventoryItem', id: r.id, operation: r._operation, name: r.name })),
           ...dirtySessions.map(r => ({ type: 'Session', id: r.id, operation: r._operation, name: r.id })),
           ...dirtyOrders.map(r => ({ type: 'Order', id: r.id, operation: r._operation, name: r.id })),
+          ...dirtyTakeOrders.map(r => ({ type: 'TakeOrder', id: r.id, operation: r._operation, name: `Order ${r.orderNumber}` })),
           ...dirtyPurchaseOrders.map(r => ({ type: 'PurchaseOrder', id: r.id, operation: r._operation, name: r.order_number })),
           ...dirtyStockTransfers.map(r => ({ type: 'StockTransfer', id: r.id, operation: r._operation, name: r.id })),
           ...dirtyWasteRecords.map(r => ({ type: 'WasteRecord', id: r.id, operation: r._operation, name: r.id })),
