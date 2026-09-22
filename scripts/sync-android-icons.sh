@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_ICON="$ROOT_DIR/src-tauri/icons/icon.png"
 ANDROID_ICONS_DIR="$ROOT_DIR/src-tauri/icons/android"
+GENERATED_ANDROID_RES_DIR="$ROOT_DIR/src-tauri/gen/android/app/src/main/res"
 TAURI_BINARY="$ROOT_DIR/node_modules/.bin/tauri"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/handypos-android-icons.XXXXXX")"
 
@@ -40,5 +41,13 @@ cp -R "$TEMP_DIR/android/." "$ANDROID_ICONS_DIR/"
 # Tauri's Android template also copies this full-resolution source into the
 # generated project. Keep it identical to the desktop icon source.
 cp "$SOURCE_ICON" "$ANDROID_ICONS_DIR/handy_pos_icon.png"
+
+# `tauri android init` materializes the launcher assets in this generated
+# project. Update it too when it exists; otherwise the current CI run can
+# still package stale icons even though the source assets were refreshed.
+if [[ -d "$GENERATED_ANDROID_RES_DIR" ]]; then
+  cp -R "$TEMP_DIR/android/." "$GENERATED_ANDROID_RES_DIR/"
+  cp "$SOURCE_ICON" "$GENERATED_ANDROID_RES_DIR/handy_pos_icon.png"
+fi
 
 echo "Android launcher icons now match src-tauri/icons/icon.png"

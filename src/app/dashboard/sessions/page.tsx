@@ -2647,11 +2647,11 @@ export default function SessionsPage() {
             ) : activeSession ? (
                 <>
                     <Card>
-                        <CardHeader className="flex flex-row items-center justify-between">
-                            <div>
-                                <div className="flex items-center gap-3">
-                                    <CheckCircle className={`h-6 w-6 ${activeSession.status === 'closed' ? 'text-muted-foreground' : 'text-green-500'}`} />
-                                    <CardTitle className="text-xl">
+                        <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-start gap-3">
+                                    <CheckCircle className={`mt-0.5 h-6 w-6 shrink-0 ${activeSession.status === 'closed' ? 'text-muted-foreground' : 'text-green-500'}`} />
+                                    <CardTitle className="min-w-0 break-words text-lg leading-tight sm:text-xl">
                                         {activeSession.status === 'closed'
                                             ? isOwnSession(activeSession)
                                                 ? 'Your Closed Session'
@@ -2662,16 +2662,16 @@ export default function SessionsPage() {
                                         }
                                     </CardTitle>
                                 </div>
-                                <CardDescription>
+                                <CardDescription className="mt-2 break-words leading-relaxed">
                                     Session started by {isOwnSession(activeSession) ? 'you' : activeSession.userName} at {formatSessionDateTime(activeSession.startedAt)}
                                     {activeSession.status === 'closed' && ` and closed at ${formatSessionDateTime(activeSession.closedAt)}`}
                                 </CardDescription>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
                               {manageableSessions.length > 1 && (
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
-                                    <Button variant="outline">
+                                    <Button variant="outline" className="w-full whitespace-normal sm:w-auto">
                                       Switch Session ({manageableSessions.length})
                                     </Button>
                                   </DropdownMenuTrigger>
@@ -2695,7 +2695,7 @@ export default function SessionsPage() {
                                   <Dialog open={isCloseModalOpen} onOpenChange={setCloseModalOpen}>
                                       {canCloseActiveSession ? (
                                         <DialogTrigger asChild>
-                                            <Button variant="destructive">
+                                            <Button variant="destructive" className="w-full whitespace-normal sm:w-auto">
                                                 <DoorClosed className="mr-2" />
                                                 {isOwnSession(activeSession) ? 'Close Session' : "Close This Session"}
                                             </Button>

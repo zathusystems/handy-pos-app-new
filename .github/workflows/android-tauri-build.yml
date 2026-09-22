@@ -36,14 +36,17 @@ jobs:
           version="${REQUESTED_RELEASE_VERSION//[[:space:]]/}"
 
           if [ -z "$version" ]; then
-            tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName' 2>/dev/null || true)"
-            case "$tag" in
-              desktop-v*) version="${tag#desktop-v}" ;;
-              *)
-                echo "No Windows desktop release was found. Start with the Windows build, or provide release_version when dispatching this workflow."
-                exit 1
-                ;;
-            esac
+            # `gh release view` selects GitHub's latest release of any type.
+            # Select the newest Windows release explicitly so a future Android
+            # release cannot make Android pick the wrong app version.
+            tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '[.[] | select(.tag_name | startswith("desktop-v")) | .tag_name][0]' 2>/dev/null || true)"
+            if [[ "$tag" == desktop-v* ]]; then
+              version="${tag#desktop-v}"
+            else
+              echo "No Windows desktop release was found. Start with the Windows build, or provide release_version when dispatching this workflow."
+              exit 1
+            fi
           fi
 
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
@@ -99,11 +102,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Sync Android launcher icon
-        run: bash scripts/sync-android-icons.sh
-
       - name: Initialize Android project
         run: npm run tauri:android:init
+
+      - name: Sync Android launcher icon from the desktop source
+        run: bash scripts/sync-android-icons.sh
 
       - name: Build Android APK/AAB
         run: |

@@ -38,6 +38,61 @@ class SyncService {
   private readonly RETRY_INTERVAL = 30000; // 30 seconds
   private readonly DEFAULT_SYNC_TIMESTAMP = '2000-01-01T00:00:00Z';
 
+  /**
+   * The inventory endpoint intentionally does not include digital-menu
+   * configuration. Persist that configuration alongside the branch's
+   * inventory snapshot whenever a normal online sync succeeds, so menu
+   * choices remain available to POS and Take Order while offline.
+   */
+  private async cacheMenuOptionsForOffline(backendBranchId: string): Promise<void> {
+    try {
+      const response = await authFetch.fetch<any>(
+        `/digital-menu/menu/by_branch/?branch_id=${backendBranchId}`,
+        { queueOnFailure: false }
+      );
+      const entries = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.results)
+          ? response.results
+          : [];
+
+      await db.transaction('rw', db.inventory, db.menuEntryCache, async () => {
+        for (const entry of entries) {
+          const rawInventoryId = entry?.inventory_item
+            ?? entry?.inventory_item_id
+            ?? entry?.item_details?.id;
+          const inventoryItemId = String(
+            typeof rawInventoryId === 'object' && rawInventoryId !== null
+              ? rawInventoryId.id ?? rawInventoryId.pk ?? ''
+              : rawInventoryId ?? ''
+          ).trim();
+          if (!inventoryItemId) continue; // Prepared menu items have no inventory row.
+
+          const optionGroups = Array.isArray(entry?.option_groups)
+            ? entry.option_groups
+            : Array.isArray(entry?.optionGroups)
+              ? entry.optionGroups
+              : [];
+          await db.inventory.update(inventoryItemId, {
+            optionGroups,
+            option_groups: optionGroups,
+          });
+        }
+
+        const cachedMenu = {
+          branchId: String(backendBranchId),
+          items: entries as Array<Record<string, unknown>>,
+          updatedAt: new Date().toISOString(),
+        };
+        await db.menuEntryCache.put({ id: `pos-menu-options:${backendBranchId}`, ...cachedMenu });
+      });
+    } catch (error) {
+      // A menu configuration failure must not turn a successful inventory
+      // refresh into a failed sync. Existing local options remain intact.
+      console.warn('[Sync] Could not refresh offline menu options:', error);
+    }
+  }
+
   private resolveNumber(value: unknown): number | undefined {
     const parsed = typeof value === 'number' ? value : Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
@@ -3522,6 +3577,8 @@ class SyncService {
           console.log(`[Sync] Removed local inventory item missing from backend: ${localItemId}`);
         }
       }
+
+      await this.cacheMenuOptionsForOffline(backendBranchId);
 
       console.log(`[Sync] Successfully refreshed inventory cache with ${items.length} backend items`);
       options.onProgress?.({

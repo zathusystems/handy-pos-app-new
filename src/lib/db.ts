@@ -177,6 +177,13 @@ export interface InventoryItem {
     onMenu?: boolean;
     menuEntryId?: string;
     menuIsVisible?: boolean;
+    // Menu configuration is retained with the offline inventory snapshot so
+    // POS and Take Order can still present required add-ons without a network
+    // request.
+    // Menu options are backend-defined and consumed by several POS flows with
+    // their own narrowed option-group types.
+    optionGroups?: any[];
+    option_groups?: any[];
     image?: string; // Base64 encoded image or image URL
     is_mra_ready?: boolean;
     price_locked?: boolean;

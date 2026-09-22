@@ -118,10 +118,14 @@ export function KitchenTicket({
           font-weight: 800;
         }
         .kitchen-ticket-business {
-          margin-bottom: 5px;
+          /* Keep the business name at the same default size and weight as the
+             customer bill. The docket title and order number should carry the
+             emphasis on a preparation ticket. */
+          margin: 2px 0 3px;
           text-align: center;
-          font-size: ${isCompactPaper ? 14 : 18}px;
-          font-weight: 800;
+          font-size: ${isCompactPaper ? 13 : 16}px;
+          font-weight: 400;
+          line-height: 1;
           overflow-wrap: anywhere;
         }
         .kitchen-ticket-order {
