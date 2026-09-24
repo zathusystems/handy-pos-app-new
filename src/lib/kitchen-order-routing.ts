@@ -127,6 +127,13 @@ export const isKitchenPrepOrderItem = (
   orderItem: any,
   lookup: KitchenInventoryLookup
 ): boolean => {
+  // Prepared menu entries do not always retain their inventory/recipe snapshot
+  // once they are saved as order lines. They are still kitchen work and must
+  // remain visible on kitchen tickets.
+  if (toBoolean(orderItem?.isPreparedMenuItem ?? orderItem?.is_prepared_menu_item)) {
+    return true;
+  }
+
   if (toBoolean(orderItem?.isKitchenItem ?? orderItem?.is_kitchen_item)) {
     return true;
   }

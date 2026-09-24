@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type InventoryItem, type Session, type TakeOrder } from '@/lib/db';
 import {
@@ -1035,11 +1036,18 @@ export function TakeOrderModal({
         return highestOrderNumber + 1;
     };
 
-    const handlePrintKitchenTicket = async (order: TakeOrder) => {
-        if (kitchenTicketPrintLockRef.current) return;
+    const handlePrintKitchenTicket = async (order: TakeOrder): Promise<boolean> => {
+        if (kitchenTicketPrintLockRef.current) return false;
 
         const fulfillmentItems = getOrderFulfillmentItems(order, kitchenInventoryLookup, businessType);
-        if (fulfillmentItems.length === 0) return;
+        if (fulfillmentItems.length === 0) {
+            toast({
+                variant: 'destructive',
+                title: `${workflowCopy.ticketLabel} Not Printed`,
+                description: `Order ${order.orderNumber} has no ${workflowCopy.prepItemLabel} items to print.`,
+            });
+            return false;
+        }
 
         kitchenTicketPrintLockRef.current = true;
         try {
@@ -1057,17 +1065,23 @@ export function TakeOrderModal({
                     title: `${workflowCopy.ticketLabel} Not Printed`,
                     description: `Order was sent to ${workflowCopy.queueLabel.toLowerCase()}, but no default printer is configured.`,
                 });
-                return;
+                return false;
             }
 
             const selectedPaperWidth: '80mm' | '58mm' =
                 printerSettings.receiptPaperWidth === '58mm' || printerSettings.receiptPaperWidth === '80mm'
                     ? printerSettings.receiptPaperWidth
                     : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
-            setKitchenTicketPaperWidth(selectedPaperWidth);
-            setKitchenTicketBusinessName(businessProfile?.name || '');
-            setKitchenTicketOrder(order);
-            await new Promise((resolve) => setTimeout(resolve, 150));
+            // Orders can close immediately after being sent. Commit the ticket
+            // before extracting HTML so the print request is never empty.
+            flushSync(() => {
+                setKitchenTicketPaperWidth(selectedPaperWidth);
+                setKitchenTicketBusinessName(businessProfile?.name || '');
+                setKitchenTicketOrder(order);
+            });
+            await new Promise<void>((resolve) => {
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+            });
 
             const kitchenTicketElement = document.getElementById(TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID);
             const printContents = kitchenTicketElement?.innerHTML;
@@ -1077,13 +1091,17 @@ export function TakeOrderModal({
                     title: `${workflowCopy.ticketLabel} Not Printed`,
                     description: `The ${workflowCopy.ticketLabel.toLowerCase()} was not ready. Check the printer and ${workflowCopy.queueLabel.toLowerCase()}.`,
                 });
-                return;
+                return false;
             }
 
             const isBluetoothPrinter =
                 defaultPrinter.connectionType === 'bluetooth' ||
                 String(defaultPrinter.id || '').toLowerCase().startsWith('bt:');
             const printAttemptTimeoutMs = isBluetoothPrinter ? 45_000 : 20_000;
+            toast({
+                title: `Printing ${workflowCopy.ticketLabel}`,
+                description: `Sending Order ${order.orderNumber} to ${defaultPrinter.name}.`,
+            });
             const result = await Promise.race([
                 silentPrintService
                     .printSilentlyViaSystem(printContents, {
@@ -1107,7 +1125,7 @@ export function TakeOrderModal({
                         ? 'Order was sent, but the printer did not respond in time.'
                         : `Order was sent, but the ${workflowCopy.ticketLabel.toLowerCase()} could not be printed.`,
                 });
-                return;
+                return false;
             }
 
             try {
@@ -1141,6 +1159,7 @@ export function TakeOrderModal({
                 title: `${workflowCopy.ticketLabel} Printed`,
                 description: `Order ${order.orderNumber} was sent to ${workflowCopy.queueLabel.toLowerCase()}.`,
             });
+            return true;
         } catch (error) {
             console.error('[Take Order Kitchen Ticket] Failed to print kitchen ticket:', error);
             toast({
@@ -1148,6 +1167,7 @@ export function TakeOrderModal({
                 title: `${workflowCopy.ticketLabel} Not Printed`,
                 description: `Order was sent, but the ${workflowCopy.ticketLabel.toLowerCase()} could not be printed.`,
             });
+            return false;
         } finally {
             kitchenTicketPrintLockRef.current = false;
         }
@@ -1316,7 +1336,7 @@ export function TakeOrderModal({
             window.dispatchEvent(new CustomEvent('handypos-orders-changed'));
 
             if (resolvedDestination === 'kitchen') {
-                void handlePrintKitchenTicket(takeOrder);
+                await handlePrintKitchenTicket(takeOrder);
             }
 
             toast({
@@ -1870,7 +1890,7 @@ export function TakeOrderModal({
         onAddToCart={handleAddToCart}
     />
     {kitchenTicketOrder && (
-        <div className="hidden">
+        <div className="pointer-events-none fixed left-[-10000px] top-0" aria-hidden="true">
             <KitchenTicket
                 rootId={TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID}
                 orderNumber={kitchenTicketOrder.orderNumber}
