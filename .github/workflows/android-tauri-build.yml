@@ -79,12 +79,16 @@ jobs:
             i686-linux-android
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          # The legacy Android SDK `tools` package has been retired. The action
+          # supplies command-line tools itself; only adb is needed at this stage.
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: 'false'
 
       - name: Install Android SDK/NDK packages
         run: |
-          sdkmanager --licenses
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" "ndk;26.1.10909125"
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125"
 
       - name: Configure Android SDK/NDK
         run: |
