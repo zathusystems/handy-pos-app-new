@@ -50,18 +50,18 @@ import sys
 path = Path(sys.argv[1])
 content = path.read_text()
 permissions = (
-    '    <uses-permission android:name="android.permission.CAMERA" />\n'
-    '    <uses-permission android:name="android.permission.VIBRATE" />\n'
-    '    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n'
-    '    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n'
-    '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />\n'
-    '    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n'
-    '    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />\n'
+    '    <uses-permission android:name="android.permission.CAMERA" />\n',
+    '    <uses-permission android:name="android.permission.VIBRATE" />\n',
+    '    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n',
+    '    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n',
+    '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />\n',
+    '    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n',
+    '    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />\n',
 )
 features = (
-    '    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />\n'
-    '    <uses-feature android:name="android.hardware.camera.any" android:required="false" />\n'
-    '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n'
+    '    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />\n',
+    '    <uses-feature android:name="android.hardware.camera.any" android:required="false" />\n',
+    '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n',
 )
 
 missing_permissions = ''.join(permission for permission in permissions if permission not in content)
