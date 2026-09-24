@@ -38,46 +38,57 @@ ANDROID_BUILD_AUTOVERSION=0
 ANDROID_TAURI_PROPERTIES_BACKUP=""
 ANDROID_TAURI_PROPERTIES_EXISTED=0
 
-ensure_android_camera_manifest() {
+ensure_android_manifest_capabilities() {
   if [[ ! -f "$ANDROID_MANIFEST_FILE" ]]; then
     return 0
   fi
 
-  if ! grep -q 'android.permission.CAMERA' "$ANDROID_MANIFEST_FILE"; then
-    python3 - "$ANDROID_MANIFEST_FILE" <<'PY'
+  python3 - "$ANDROID_MANIFEST_FILE" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
 content = path.read_text()
-needle = '    <uses-permission android:name="android.permission.INTERNET" />\n'
-insert = (
+permissions = (
     '    <uses-permission android:name="android.permission.CAMERA" />\n'
     '    <uses-permission android:name="android.permission.VIBRATE" />\n'
+    '    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n'
+    '    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n'
+    '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />\n'
+    '    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n'
+    '    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />\n'
 )
-if needle in content and insert not in content:
-    content = content.replace(needle, needle + insert, 1)
-    path.write_text(content)
-PY
-  fi
-
-  if ! grep -q 'android.hardware.camera.any' "$ANDROID_MANIFEST_FILE"; then
-    python3 - "$ANDROID_MANIFEST_FILE" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-content = path.read_text()
-needle = '    <uses-feature android:name="android.software.leanback" android:required="false" />\n'
-insert = (
+features = (
+    '    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />\n'
     '    <uses-feature android:name="android.hardware.camera.any" android:required="false" />\n'
     '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n'
 )
-if needle in content and insert not in content:
-    content = content.replace(needle, needle + insert, 1)
-    path.write_text(content)
+
+missing_permissions = ''.join(permission for permission in permissions if permission not in content)
+if missing_permissions:
+    permission_anchor = '    <uses-permission android:name="android.permission.INTERNET" />\n'
+    if permission_anchor in content:
+        content = content.replace(permission_anchor, permission_anchor + missing_permissions, 1)
+    else:
+        manifest_start = content.find('<manifest')
+        manifest_end = content.find('>', manifest_start)
+        if manifest_start < 0 or manifest_end < 0:
+            raise SystemExit('Android manifest has no opening <manifest> tag')
+        content = content[:manifest_end + 1] + '\n' + missing_permissions + content[manifest_end + 1:]
+
+missing_features = ''.join(feature for feature in features if feature not in content)
+if missing_features:
+    feature_anchor = '    <uses-feature android:name="android.software.leanback" android:required="false" />\n'
+    if feature_anchor in content:
+        content = content.replace(feature_anchor, feature_anchor + missing_features, 1)
+    else:
+        application_index = content.find('    <application')
+        if application_index < 0:
+            raise SystemExit('Android manifest has no <application> tag')
+        content = content[:application_index] + missing_features + content[application_index:]
+
+path.write_text(content)
 PY
-  fi
 }
 
 copy_if_exists() {
@@ -628,7 +639,7 @@ trap 'rm -f "$BUILD_MARKER_FILE" "$TEMP_ANDROID_BUILD_CONFIG" "$ANDROID_TAURI_PR
 TAURI_ARGS=("$@")
 ANDROID_SUBCOMMAND="${1:-}"
 recreate_android_project_if_broken "$ANDROID_SUBCOMMAND"
-ensure_android_camera_manifest
+ensure_android_manifest_capabilities
 
 if [[ "$ANDROID_SUBCOMMAND" == "build" ]] && [[ -f "$ANDROID_TAURI_CONFIG" ]] && ! has_tauri_config_arg "${TAURI_ARGS[@]}"; then
   BASE_TAURI_VERSION="$(read_tauri_base_version)"
@@ -674,7 +685,7 @@ if [[ "$ANDROID_BUILD_AUTOVERSION" == "1" ]]; then
   echo "Persisted Android versionCode: $GENERATED_ANDROID_VERSION_CODE"
 fi
 
-ensure_android_camera_manifest
+ensure_android_manifest_capabilities
 
 if should_sign_release_apks "${TAURI_ARGS[@]}"; then
   sign_release_apks "$BUILD_MARKER_FILE"

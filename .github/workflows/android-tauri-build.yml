@@ -109,6 +109,19 @@ jobs:
       - name: Initialize Android project
         run: npm run tauri:android:init
 
+      - name: Verify Bluetooth printer permissions
+        run: |
+          set -euo pipefail
+          manifest="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
+          for permission in \
+            android.permission.BLUETOOTH_CONNECT \
+            android.permission.BLUETOOTH_SCAN \
+            android.permission.BLUETOOTH \
+            android.permission.BLUETOOTH_ADMIN \
+            android.permission.ACCESS_FINE_LOCATION; do
+            grep -q "android:name=\"$permission\"" "$manifest"
+          done
+
       - name: Sync Android launcher icon from the desktop source
         run: bash scripts/sync-android-icons.sh
 
