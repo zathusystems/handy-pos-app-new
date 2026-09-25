@@ -16,11 +16,50 @@ export interface SilentPrintOptions {
 }
 
 class SilentPrintService {
+  private printQueue: Promise<void> = Promise.resolve();
+
+  private isAndroidEnvironment(): boolean {
+    try {
+      return /android/i.test(navigator.userAgent);
+    } catch {
+      return false;
+    }
+  }
+
+  private shouldSettleBluetoothPrint(options: SilentPrintOptions): boolean {
+    const printerId = String(options.printerId || '').trim().toLowerCase();
+    return this.isAndroidEnvironment() && printerId.startsWith('bt:');
+  }
+
+  private async waitForBluetoothPrinter(): Promise<void> {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 450));
+  }
+
   /**
    * Print silently using system print command (if available)
    * This works best with Tauri or Electron apps
    */
   async printSilentlyViaSystem(
+    htmlContent: string,
+    options: SilentPrintOptions = {}
+  ): Promise<boolean> {
+    // Thermal Bluetooth printers only accept one RFCOMM connection at a time.
+    // Queue every app print, so a bill, receipt, or kitchen ticket cannot close
+    // the connection while the previous job is still finishing.
+    const job = this.printQueue.then(() => this.printSilentlyViaSystemNow(htmlContent, options));
+    this.printQueue = job.then(
+      async (success) => {
+        if (success && this.shouldSettleBluetoothPrint(options)) {
+          await this.waitForBluetoothPrinter();
+        }
+      },
+      () => undefined
+    );
+
+    return job;
+  }
+
+  private async printSilentlyViaSystemNow(
     htmlContent: string,
     options: SilentPrintOptions = {}
   ): Promise<boolean> {

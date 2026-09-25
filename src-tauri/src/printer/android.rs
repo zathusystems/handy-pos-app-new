@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
 use jni::objects::{JObject, JString, JValue};
@@ -9,12 +9,19 @@ const ANDROID_BLUETOOTH_PERMISSION_REQUEST_CODE: i32 = 4107;
 const ANDROID_BLUETOOTH_WRITE_CHUNK_SIZE: usize = 512;
 const ANDROID_BLUETOOTH_WRITE_DELAY_MS: u64 = 50;
 const ANDROID_BLUETOOTH_COPY_DELAY_MS: u64 = 350;
+const ANDROID_BLUETOOTH_INTERPRINT_DELAY_MS: u64 = 300;
 const BLUETOOTH_SPP_UUID: &str = "00001101-0000-1000-8000-00805F9B34FB";
 const BLUETOOTH_PRINTER_MAJOR_CLASS: i32 = 0x0600;
 const BLUETOOTH_PRINTER_KEYWORDS: &[&str] = &[
     "printer", "thermal", "receipt", "epson", "star", "sunmi", "xprinter", "bixolon", "rongta",
     "gprinter", "pos",
 ];
+
+static BLUETOOTH_PRINT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn bluetooth_print_lock() -> &'static Mutex<()> {
+    BLUETOOTH_PRINT_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct PrinterInfo {
@@ -673,7 +680,14 @@ pub fn print_receipt(
     paper_size: Option<String>,
     printer_paper_width: Option<String>,
 ) -> Result<String, String> {
-    run_with_android_context(window, move |env, activity, _| {
+    // Android Bluetooth RFCOMM sockets are single-connection devices. Keep
+    // native calls serialized too, because print requests can originate from
+    // different screens in the same app.
+    let _print_guard = bluetooth_print_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let result = run_with_android_context(window, move |env, activity, _| {
         ensure_bluetooth_permissions(env, activity, "printing")
             .map_err(|error| friendly_bluetooth_error(error, "printing"))?;
 
@@ -688,5 +702,13 @@ pub fn print_receipt(
             .map_err(|error| friendly_bluetooth_error(error, "printing"))?;
 
         Ok("success".to_string())
-    })
+    });
+
+    if result.is_ok() {
+        // Let the printer release the previous RFCOMM socket before another
+        // receipt, bill, or kitchen ticket opens a fresh connection.
+        std::thread::sleep(Duration::from_millis(ANDROID_BLUETOOTH_INTERPRINT_DELAY_MS));
+    }
+
+    result
 }

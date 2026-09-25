@@ -25,8 +25,12 @@ pub fn resolve_receipt_layout(
     paper_size: Option<&str>,
     printer_paper_width: Option<&str>,
 ) -> (usize, usize) {
-    let line_width = resolve_line_width(paper_size);
+    let requested_line_width = resolve_line_width(paper_size);
     let printer_line_width = resolve_line_width(printer_paper_width);
+    // The requested layout may come from an older device setting. Never send
+    // 80 mm-sized lines to a physical 58 mm roll: many small thermal printers
+    // drop or corrupt those jobs instead of wrapping them safely.
+    let line_width = requested_line_width.min(printer_line_width);
     let horizontal_offset = printer_line_width.saturating_sub(line_width) / 2;
 
     (line_width, horizontal_offset)
@@ -1343,6 +1347,14 @@ mod tests {
 
         assert_eq!(line_width, COMPACT_RECEIPT_LINE_WIDTH);
         assert_eq!(horizontal_offset, 5);
+    }
+
+    #[test]
+    fn physical_compact_roll_limits_an_outdated_wide_layout() {
+        let (line_width, horizontal_offset) = resolve_receipt_layout(Some("80mm"), Some("58mm"));
+
+        assert_eq!(line_width, COMPACT_RECEIPT_LINE_WIDTH);
+        assert_eq!(horizontal_offset, 0);
     }
 
     #[test]

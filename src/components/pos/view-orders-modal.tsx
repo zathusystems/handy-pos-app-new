@@ -564,10 +564,14 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         return false;
       }
 
-      const selectedPaperWidth: '80mm' | '58mm' =
-        printerSettings.receiptPaperWidth === '58mm' || printerSettings.receiptPaperWidth === '80mm'
-          ? printerSettings.receiptPaperWidth
-          : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
+      // The printed bill must never be wider than the physical roll.
+      // This also repairs older devices whose saved receipt layout still
+      // says 80 mm after their printer was changed to 58 mm.
+      const selectedPaperWidth: '80mm' | '58mm' = defaultPrinter.paperWidth === '58mm'
+        ? '58mm'
+        : printerSettings.receiptPaperWidth === '58mm'
+          ? '58mm'
+          : '80mm';
       setBillPaperWidth(selectedPaperWidth);
       setBillPrinterSettings(printerSettings);
       setBillPaymentAccounts(paymentAccounts);
@@ -689,10 +693,14 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         return false;
       }
 
-      const selectedPaperWidth: '80mm' | '58mm' =
-        printerSettings.receiptPaperWidth === '58mm' || printerSettings.receiptPaperWidth === '80mm'
-          ? printerSettings.receiptPaperWidth
-          : (defaultPrinter.paperWidth as '80mm' | '58mm') || '80mm';
+      // The kitchen ticket must never be wider than the physical roll.
+      // This also repairs older devices whose saved receipt layout still
+      // says 80 mm after their printer was changed to 58 mm.
+      const selectedPaperWidth: '80mm' | '58mm' = defaultPrinter.paperWidth === '58mm'
+        ? '58mm'
+        : printerSettings.receiptPaperWidth === '58mm'
+          ? '58mm'
+          : '80mm';
       flushSync(() => {
         setKitchenTicketPaperWidth(selectedPaperWidth);
         setKitchenTicketBusinessName(businessProfile?.name || '');
