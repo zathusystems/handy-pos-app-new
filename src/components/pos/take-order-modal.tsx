@@ -2,7 +2,6 @@
 'use client';
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { flushSync } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type InventoryItem, type Session, type TakeOrder } from '@/lib/db';
 import {
@@ -33,8 +32,8 @@ import {
 } from '@/lib/inventory/config';
 import { PortionSaleDialog, canSellInPortions } from './portion-sale-dialog';
 import { getPortionQuantityDisplay } from '@/lib/quantity-format';
-import { KitchenTicket } from './kitchen-ticket';
 import { getOfflineBusinessProfile } from '@/lib/business-profile';
+import { buildKitchenTicketPrintHtml } from '@/lib/kitchen-ticket-print';
 import { useAuth } from '@/hooks/use-auth';
 
 type TakeOrderModalProps = {
@@ -48,8 +47,6 @@ type TakeOrderModalProps = {
 };
 
 type OrderDestination = 'kitchen' | 'pos';
-
-const TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID = 'take-order-modal-kitchen-ticket-printable-area';
 
 type TakeawayConfig = {
     enabled: boolean;
@@ -365,9 +362,6 @@ export function TakeOrderModal({
     const [customerNotes, setCustomerNotes] = useState('');
     const [tableNumber, setTableNumber] = useState('');
     const [mobilePanel, setMobilePanel] = useState<'menu' | 'order'>('menu');
-    const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
-    const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
-    const [kitchenTicketBusinessName, setKitchenTicketBusinessName] = useState('');
     const kitchenTicketPrintLockRef = React.useRef(false);
     const preventParentDismissRef = useRef(false);
     const parentDismissResetRef = useRef<number | null>(null);
@@ -1040,7 +1034,13 @@ export function TakeOrderModal({
         if (kitchenTicketPrintLockRef.current) return false;
 
         const fulfillmentItems = getOrderFulfillmentItems(order, kitchenInventoryLookup, businessType);
-        if (fulfillmentItems.length === 0) {
+        // Orders sent to the kitchen by older app builds can be missing their
+        // prepared-item flag after a sync. Their non-packaging lines are still
+        // the correct docket content, so do not silently lose the ticket.
+        const ticketItems = fulfillmentItems.length > 0
+            ? fulfillmentItems
+            : (order.items || []).filter((item) => !Boolean(item.isTakeawayPackaging ?? item.is_takeaway_packaging));
+        if (ticketItems.length === 0) {
             toast({
                 variant: 'destructive',
                 title: `${workflowCopy.ticketLabel} Not Printed`,
@@ -1076,19 +1076,22 @@ export function TakeOrderModal({
                 : printerSettings.receiptPaperWidth === '58mm'
                     ? '58mm'
                     : '80mm';
-            // Orders can close immediately after being sent. Commit the ticket
-            // before extracting HTML so the print request is never empty.
-            flushSync(() => {
-                setKitchenTicketPaperWidth(selectedPaperWidth);
-                setKitchenTicketBusinessName(businessProfile?.name || '');
-                setKitchenTicketOrder(order);
+            // Do not depend on an off-screen Dialog subtree being mounted. On
+            // Android that subtree can unmount while the customer form closes.
+            const printContents = buildKitchenTicketPrintHtml({
+                items: ticketItems,
+                orderNumber: order.orderNumber,
+                businessName: businessProfile?.name || '',
+                takenByName: getOrderCreatorName(order),
+                customerName: order.customerName,
+                tableNumber: order.tableNumber,
+                createdAt: order.createdAt,
+                isTakeaway: Boolean(order.isTakeaway ?? order.is_takeaway),
+                isSelfService: order.orderType === 'self_service',
+                paperWidth: selectedPaperWidth,
+                ticketTitle: workflowCopy.ticketTitle,
+                locationLabel: workflowCopy.locationLabel,
             });
-            await new Promise<void>((resolve) => {
-                requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-            });
-
-            const kitchenTicketElement = document.getElementById(TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID);
-            const printContents = kitchenTicketElement?.innerHTML;
             if (!printContents || printContents.trim().length === 0) {
                 toast({
                     variant: 'destructive',
@@ -1893,36 +1896,6 @@ export function TakeOrderModal({
         selectedOptions={pendingSelectedOptions}
         onAddToCart={handleAddToCart}
     />
-    {kitchenTicketOrder && (
-        <div className="pointer-events-none fixed left-[-10000px] top-0" aria-hidden="true">
-            <KitchenTicket
-                rootId={TAKE_ORDER_KITCHEN_TICKET_PRINT_ROOT_ID}
-                orderNumber={kitchenTicketOrder.orderNumber}
-                businessName={kitchenTicketBusinessName}
-                takenByName={getOrderCreatorName(kitchenTicketOrder)}
-                customerName={kitchenTicketOrder.customerName}
-                tableNumber={kitchenTicketOrder.tableNumber}
-                createdAt={kitchenTicketOrder.createdAt}
-                isTakeaway={Boolean(kitchenTicketOrder.isTakeaway ?? kitchenTicketOrder.is_takeaway)}
-                isSelfService={kitchenTicketOrder.orderType === 'self_service'}
-                paperWidth={kitchenTicketPaperWidth}
-                ticketTitle={workflowCopy.ticketTitle}
-                locationLabel={workflowCopy.locationLabel}
-                items={getOrderFulfillmentItems(kitchenTicketOrder, kitchenInventoryLookup, businessType).map((item) => ({
-                    id: String(item.id),
-                    name: String(item.name || 'Item'),
-                    quantity: Number(item.quantity || 0),
-                    notes: item.notes,
-                    selectedOptions: Array.isArray(item.selectedOptions ?? item.selected_options)
-                        ? item.selectedOptions ?? item.selected_options
-                        : [],
-                    selected_options: Array.isArray(item.selectedOptions ?? item.selected_options)
-                        ? item.selectedOptions ?? item.selected_options
-                        : [],
-                }))}
-            />
-        </div>
-    )}
     </>
   );
 }

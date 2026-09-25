@@ -9,6 +9,7 @@ const ANDROID_BLUETOOTH_PERMISSION_REQUEST_CODE: i32 = 4107;
 const ANDROID_BLUETOOTH_WRITE_CHUNK_SIZE: usize = 512;
 const ANDROID_BLUETOOTH_WRITE_DELAY_MS: u64 = 50;
 const ANDROID_BLUETOOTH_COPY_DELAY_MS: u64 = 350;
+const ANDROID_BLUETOOTH_DRAIN_DELAY_MS: u64 = 650;
 const ANDROID_BLUETOOTH_INTERPRINT_DELAY_MS: u64 = 300;
 const BLUETOOTH_SPP_UUID: &str = "00001101-0000-1000-8000-00805F9B34FB";
 const BLUETOOTH_PRINTER_MAJOR_CLASS: i32 = 0x0600;
@@ -436,6 +437,15 @@ fn write_escpos_to_socket(
 
         Ok(())
     })();
+
+    if write_result.is_ok() {
+        // A short kitchen ticket often fits in one Bluetooth write. Android's
+        // flush can return before the RFCOMM stack has handed those final bytes
+        // to the printer, and closing the stream immediately then drops the
+        // whole short job. Longer customer bills accidentally had more time
+        // because they were split into multiple chunks.
+        std::thread::sleep(Duration::from_millis(ANDROID_BLUETOOTH_DRAIN_DELAY_MS));
+    }
 
     close_java_resource(env, &output_stream);
     write_result

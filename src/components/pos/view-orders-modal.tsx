@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type TakeOrder } from '@/lib/db';
 import {
@@ -63,11 +62,11 @@ import { format, parseISO } from 'date-fns';
 import { TakeOrderModal } from './take-order-modal';
 import { AppointmentCheckInModal } from './appointment-check-in-modal';
 import { BillReceipt } from './bill-receipt';
-import { KitchenTicket } from './kitchen-ticket';
 import { SplitBillDialog, type SplitBillShare } from './split-bill-dialog';
 import { syncService } from '@/lib/services/sync-service';
 import type { PrinterSettings } from '@/lib/services/printer-service';
 import { getOfflineBusinessProfile, resolveOfflineBusinessId } from '@/lib/business-profile';
+import { buildKitchenTicketPrintHtml } from '@/lib/kitchen-ticket-print';
 import {
   getCustomerBillPaymentAccountsFromPayload,
   hasCustomerBillPaymentAccountsInPayload,
@@ -95,7 +94,6 @@ const CANCELLED_STATUSES = new Set(['Cancelled']);
 const COMPLETED_STATUSES = new Set(['Completed']);
 const ORDER_MODAL_REFRESH_MS = 10_000;
 const ORDER_BILL_PRINT_ROOT_ID = 'orders-modal-bill-printable-area';
-const KITCHEN_TICKET_PRINT_ROOT_ID = 'orders-modal-kitchen-ticket-printable-area';
 type CustomerBillPrintOptions = {
   items?: TakeOrder['items'];
   billNumber?: string;
@@ -210,9 +208,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
   const [billCartTitle, setBillCartTitle] = useState<string | undefined>();
   const [isPrintingBill, setIsPrintingBill] = useState(false);
   const [splitBillOrder, setSplitBillOrder] = useState<TakeOrder | null>(null);
-  const [kitchenTicketOrder, setKitchenTicketOrder] = useState<TakeOrder | null>(null);
-  const [kitchenTicketPaperWidth, setKitchenTicketPaperWidth] = useState<'80mm' | '58mm'>('80mm');
-  const [kitchenTicketBusinessName, setKitchenTicketBusinessName] = useState('');
   const [printingKitchenTicketOrderId, setPrintingKitchenTicketOrderId] = useState<string | null>(null);
   const [processingSaleOrderId, setProcessingSaleOrderId] = useState<string | null>(null);
   const billPrintLockRef = React.useRef(false);
@@ -663,7 +658,13 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
     if (kitchenTicketPrintLockRef.current) return false;
 
     const fulfillmentItems = getOrderFulfillmentItems(order, kitchenInventoryLookup, businessType);
-    if (fulfillmentItems.length === 0) {
+    // Keep tickets available for kitchen orders created before their prepared
+    // item marker was stored locally. Packaging is the only line never sent to
+    // the kitchen/service docket.
+    const ticketItems = fulfillmentItems.length > 0
+      ? fulfillmentItems
+      : (order.items || []).filter((item) => !Boolean(item.isTakeawayPackaging ?? item.is_takeaway_packaging));
+    if (ticketItems.length === 0) {
       toast({
         variant: 'destructive',
         title: `${workflowCopy.ticketLabel} Not Printed`,
@@ -701,17 +702,20 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
         : printerSettings.receiptPaperWidth === '58mm'
           ? '58mm'
           : '80mm';
-      flushSync(() => {
-        setKitchenTicketPaperWidth(selectedPaperWidth);
-        setKitchenTicketBusinessName(businessProfile?.name || '');
-        setKitchenTicketOrder(order);
+      const printContents = buildKitchenTicketPrintHtml({
+        items: ticketItems,
+        orderNumber: order.orderNumber,
+        businessName: businessProfile?.name || '',
+        takenByName: getOrderCreatorName(order),
+        customerName: order.customerName,
+        tableNumber: order.tableNumber,
+        createdAt: order.createdAt,
+        isTakeaway: Boolean(order.isTakeaway ?? order.is_takeaway),
+        isSelfService: order.orderType === 'self_service',
+        paperWidth: selectedPaperWidth,
+        ticketTitle: workflowCopy.ticketTitle,
+        locationLabel: workflowCopy.locationLabel,
       });
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
-
-      const kitchenTicketElement = document.getElementById(KITCHEN_TICKET_PRINT_ROOT_ID);
-      const printContents = kitchenTicketElement?.innerHTML;
       if (!printContents || printContents.trim().length === 0) {
         toast({
           variant: 'destructive',
@@ -1657,32 +1661,6 @@ export function ViewOrdersModal({ branchId, isOpen, onOpenChange, onProcessSale,
             receiptBusinessNameScaleX={billPrinterSettings?.receiptBusinessNameScaleX}
             receiptHeaderDetailScaleX={billPrinterSettings?.receiptHeaderDetailScaleX}
             paymentAccounts={billPaymentAccounts}
-          />
-        </div>
-      )}
-      {kitchenTicketOrder && (
-        <div className="pointer-events-none fixed left-[-10000px] top-0" aria-hidden="true">
-          <KitchenTicket
-            rootId={KITCHEN_TICKET_PRINT_ROOT_ID}
-            orderNumber={kitchenTicketOrder.orderNumber}
-            businessName={kitchenTicketBusinessName}
-            takenByName={getOrderCreatorName(kitchenTicketOrder)}
-            customerName={kitchenTicketOrder.customerName}
-            tableNumber={kitchenTicketOrder.tableNumber}
-            createdAt={kitchenTicketOrder.createdAt}
-            isTakeaway={Boolean(kitchenTicketOrder.isTakeaway ?? kitchenTicketOrder.is_takeaway)}
-            isSelfService={kitchenTicketOrder.orderType === 'self_service'}
-            paperWidth={kitchenTicketPaperWidth}
-            ticketTitle={workflowCopy.ticketTitle}
-            locationLabel={workflowCopy.locationLabel}
-            items={getOrderFulfillmentItems(kitchenTicketOrder, kitchenInventoryLookup, businessType).map((item) => ({
-              id: String(item.id),
-              name: String(item.name || 'Item'),
-              quantity: toFiniteNumber(item.quantity, 0),
-              notes: item.notes,
-              selectedOptions: getSelectedOptions(item),
-              selected_options: getSelectedOptions(item),
-            }))}
           />
         </div>
       )}
