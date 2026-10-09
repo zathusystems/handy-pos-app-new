@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from business.models import Branch, Business
 from staff.models import Staff
+from .compat import check_constraint
 
 
 class EmployeeSequence(models.Model):
@@ -162,7 +163,7 @@ class EmploymentTerm(models.Model):
                 fields=['employee', 'effective_from'],
                 name='hr_unique_employee_term_effective_date',
             ),
-            models.CheckConstraint(
+            check_constraint(
                 condition=models.Q(effective_to__isnull=True) | models.Q(effective_to__gte=models.F('effective_from')),
                 name='hr_term_end_not_before_start',
             ),
@@ -212,7 +213,7 @@ class ShiftTemplate(models.Model):
                 fields=['business', 'name'],
                 name='hr_unique_shift_template_name_per_business',
             ),
-            models.CheckConstraint(
+            check_constraint(
                 condition=models.Q(ends_at__gt=models.F('starts_at')),
                 name='hr_shift_template_end_after_start',
             ),
@@ -277,7 +278,7 @@ class WorkShift(models.Model):
                 fields=['employee', 'work_date', 'starts_at'],
                 name='hr_unique_employee_shift_start',
             ),
-            models.CheckConstraint(
+            check_constraint(
                 condition=models.Q(ends_at__gt=models.F('starts_at')),
                 name='hr_shift_end_after_start',
             ),
@@ -421,7 +422,7 @@ class LeaveType(models.Model):
         ordering = ['name']
         constraints = [
             models.UniqueConstraint(fields=['business', 'code'], name='hr_unique_leave_type_code'),
-            models.CheckConstraint(condition=models.Q(annual_allowance_days__gte=0), name='hr_leave_allowance_non_negative'),
+            check_constraint(condition=models.Q(annual_allowance_days__gte=0), name='hr_leave_allowance_non_negative'),
         ]
 
     def __str__(self):
@@ -629,11 +630,11 @@ class PayrollRule(models.Model):
             models.Index(fields=['business', 'is_active', 'kind']),
         ]
         constraints = [
-            models.CheckConstraint(
+            check_constraint(
                 condition=models.Q(fixed_amount__gte=0),
                 name='hr_payroll_rule_fixed_amount_non_negative',
             ),
-            models.CheckConstraint(
+            check_constraint(
                 condition=models.Q(percentage_rate__gte=0),
                 name='hr_payroll_rule_percentage_rate_non_negative',
             ),
@@ -704,7 +705,7 @@ class PayrollRun(models.Model):
                 fields=['business', 'period_start', 'period_end'],
                 name='hr_unique_payroll_period_per_business',
             ),
-            models.CheckConstraint(
+            check_constraint(
                 condition=models.Q(period_end__gte=models.F('period_start')),
                 name='hr_payroll_end_not_before_start',
             ),

@@ -4,6 +4,7 @@ import django.db.models.deletion
 import uuid
 from django.conf import settings
 from django.db import migrations, models
+from hr.compat import check_constraint
 
 
 class Migration(migrations.Migration):
@@ -150,7 +151,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='leavetype',
-            constraint=models.CheckConstraint(condition=models.Q(('annual_allowance_days__gte', 0)), name='hr_leave_allowance_non_negative'),
+            constraint=check_constraint(condition=models.Q(('annual_allowance_days__gte', 0)), name='hr_leave_allowance_non_negative'),
         ),
         migrations.AddIndex(
             model_name='leaverequest',
@@ -186,7 +187,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='workshift',
-            constraint=models.CheckConstraint(condition=models.Q(('ends_at__gt', models.F('starts_at'))), name='hr_shift_end_after_start'),
+            constraint=check_constraint(condition=models.Q(('ends_at__gt', models.F('starts_at'))), name='hr_shift_end_after_start'),
         ),
         migrations.AddIndex(
             model_name='attendancerecord',

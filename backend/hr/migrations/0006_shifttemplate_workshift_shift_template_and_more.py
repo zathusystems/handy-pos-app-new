@@ -3,6 +3,7 @@
 import django.db.models.deletion
 import uuid
 from django.db import migrations, models
+from hr.compat import check_constraint
 
 
 class Migration(migrations.Migration):
@@ -48,6 +49,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='shifttemplate',
-            constraint=models.CheckConstraint(condition=models.Q(('ends_at__gt', models.F('starts_at'))), name='hr_shift_template_end_after_start'),
+            constraint=check_constraint(condition=models.Q(('ends_at__gt', models.F('starts_at'))), name='hr_shift_template_end_after_start'),
         ),
     ]

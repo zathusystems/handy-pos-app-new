@@ -3,6 +3,7 @@
 import django.db.models.deletion
 import uuid
 from django.db import migrations, models
+from hr.compat import check_constraint
 
 
 class Migration(migrations.Migration):
@@ -39,7 +40,7 @@ class Migration(migrations.Migration):
             options={
                 'ordering': ['kind', 'name'],
                 'indexes': [models.Index(fields=['business', 'is_active', 'kind'], name='hr_payrollr_busines_d321b4_idx')],
-                'constraints': [models.CheckConstraint(condition=models.Q(('fixed_amount__gte', 0)), name='hr_payroll_rule_fixed_amount_non_negative'), models.CheckConstraint(condition=models.Q(('percentage_rate__gte', 0)), name='hr_payroll_rule_percentage_rate_non_negative')],
+                'constraints': [check_constraint(condition=models.Q(('fixed_amount__gte', 0)), name='hr_payroll_rule_fixed_amount_non_negative'), check_constraint(condition=models.Q(('percentage_rate__gte', 0)), name='hr_payroll_rule_percentage_rate_non_negative')],
             },
         ),
     ]

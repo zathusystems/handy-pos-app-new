@@ -5,6 +5,7 @@ import uuid
 from decimal import Decimal
 from django.conf import settings
 from django.db import migrations, models
+from hr.compat import check_constraint
 
 
 class Migration(migrations.Migration):
@@ -108,7 +109,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='payrollrun',
-            constraint=models.CheckConstraint(condition=models.Q(('period_end__gte', models.F('period_start'))), name='hr_payroll_end_not_before_start'),
+            constraint=check_constraint(condition=models.Q(('period_end__gte', models.F('period_start'))), name='hr_payroll_end_not_before_start'),
         ),
         migrations.AddIndex(
             model_name='payrollentry',

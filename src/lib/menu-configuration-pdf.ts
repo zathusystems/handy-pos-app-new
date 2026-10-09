@@ -46,13 +46,6 @@ type MenuItemSummary = {
 
 const text = (value: unknown): string => String(value ?? '').trim();
 
-const escapeHtml = (value: unknown): string => text(value)
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;')
-  .replace(/'/g, '&#39;');
-
 const asBoolean = (value: unknown): boolean | null => {
   if (value === true || value === 'true') return true;
   if (value === false || value === 'false') return false;
@@ -151,184 +144,156 @@ const summarizeRows = (rows: MenuConfigurationExportRow[]): MenuItemSummary[] =>
   return Array.from(items.values());
 };
 
-const status = (value: boolean | null, positive: string, negative: string): string => {
-  if (value === null) return '';
-  return `<span class="status ${value ? 'positive' : 'negative'}">${value ? positive : negative}</span>`;
-};
-
-const connectionTable = (connections: StockConnection[], emptyText: string): string => {
-  if (!connections.length) {
-    return `<p class="empty">${escapeHtml(emptyText)}</p>`;
-  }
-  return `
-    <table>
-      <thead><tr><th>Inventory item</th><th class="quantity">Quantity used</th><th class="unit">Unit</th></tr></thead>
-      <tbody>
-        ${connections.map((connection) => `
-          <tr>
-            <td>${escapeHtml(connection.name)}</td>
-            <td class="quantity">${escapeHtml(connection.quantity)}</td>
-            <td class="unit">${escapeHtml(connection.unit)}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-};
-
-const choiceSetHtml = (choiceSet: ChoiceSetSummary): string => {
-  const selectionRule = [
-    choiceSet.required ? 'Required' : 'Optional',
-    choiceSet.minimum || choiceSet.maximum
-      ? `Choose ${escapeHtml(choiceSet.minimum || '0')}-${escapeHtml(choiceSet.maximum || '0')}`
-      : '',
-    choiceSet.shared ? 'Reusable choice set' : 'Item-specific choice set',
-  ].filter(Boolean).join(' | ');
-
-  const choices = Array.from(choiceSet.choices.values());
-  return `
-    <section class="choice-set">
-      <div class="choice-set-header">
-        <div>
-          <h3>${escapeHtml(choiceSet.name)}</h3>
-          <p>${escapeHtml(choiceSet.type || 'Choice')} | ${selectionRule}</p>
-          ${choiceSet.shared && choiceSet.sourceMenuItem
-            ? `<p class="muted">Source item: ${escapeHtml(choiceSet.sourceMenuItem)}</p>`
-            : ''}
-        </div>
-      </div>
-      ${choices.length ? choices.map((choice) => `
-        <article class="choice">
-          <div class="choice-title">
-            <strong>${escapeHtml(choice.name)}</strong>
-            <span>${status(choice.visible, 'Visible', 'Hidden')} ${choice.overridden ? status(true, 'Custom for this item', '') : ''}</span>
-          </div>
-          <p class="choice-price">Price: ${escapeHtml(choice.priceMode === 'override' ? 'Overrides meal price' : 'Adds to meal price')}${choice.price ? ` (${escapeHtml(choice.price)})` : ''}</p>
-          ${choice.directStock ? `
-            <div class="direct-stock"><strong>Direct stock deduction:</strong> ${escapeHtml(choice.directStock.quantity)} ${escapeHtml(choice.directStock.unit)} of ${escapeHtml(choice.directStock.name)}</div>
-          ` : ''}
-          <div class="choice-recipe">
-            <div class="subheading">Choice recipe ingredients</div>
-            ${connectionTable(choice.recipe, choice.directStock ? 'No additional recipe ingredients.' : 'No stock connection configured for this choice.')}
-          </div>
-        </article>
-      `).join('') : '<p class="empty">No choices have been added to this set.</p>'}
-    </section>
-  `;
-};
-
-const buildPdfHtml = (data: MenuConfigurationExport): string => {
-  const items = summarizeRows(Array.isArray(data.rows) ? data.rows : []);
-  const generatedAt = new Intl.DateTimeFormat('en-GB', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date());
-
-  return `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="UTF-8" />
-        <title>Menu Configuration Report</title>
-        <style>
-          * { box-sizing: border-box; }
-          body { margin: 0; padding: 28px; background: #fff; color: #111827; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 1.42; }
-          .report { max-width: 850px; margin: 0 auto; }
-          header { display: flex; justify-content: space-between; gap: 24px; padding-bottom: 16px; border-bottom: 2px solid #111827; }
-          .business-name { font-size: 23px; font-weight: 800; text-transform: uppercase; }
-          .branch { margin-top: 4px; color: #4b5563; }
-          .document { text-align: right; }
-          .document h1 { margin: 0; font-size: 22px; letter-spacing: .03em; }
-          .document p { margin: 4px 0 0; color: #4b5563; }
-          .notice { margin: 18px 0; padding: 11px 13px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; }
-          .menu-item { margin-top: 18px; border: 1px solid #9ca3af; page-break-inside: avoid; break-inside: avoid; }
-          .menu-header { display: flex; justify-content: space-between; gap: 16px; padding: 13px 15px; background: #f3f4f6; border-bottom: 1px solid #9ca3af; }
-          .menu-header h2 { margin: 0; font-size: 16px; }
-          .menu-meta { margin-top: 4px; color: #4b5563; }
-          .price { text-align: right; font-size: 14px; font-weight: 700; }
-          .source { margin-top: 4px; color: #4b5563; font-size: 10px; }
-          .section { padding: 13px 15px; border-bottom: 1px solid #e5e7eb; }
-          .section:last-child { border-bottom: 0; }
-          .section h3 { margin: 0 0 8px; font-size: 13px; }
-          table { width: 100%; border-collapse: collapse; }
-          th { padding: 7px 8px; background: #f9fafb; border-top: 1px solid #d1d5db; border-bottom: 1px solid #d1d5db; text-align: left; font-size: 10px; }
-          td { padding: 7px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
-          .quantity, .unit { text-align: right; white-space: nowrap; }
-          .empty { margin: 0; color: #6b7280; font-style: italic; }
-          .choice-set { padding: 12px 0 0; }
-          .choice-set + .choice-set { margin-top: 14px; border-top: 1px solid #d1d5db; }
-          .choice-set-header h3 { margin: 0; font-size: 13px; }
-          .choice-set-header p { margin: 3px 0 0; color: #4b5563; }
-          .muted { color: #6b7280 !important; }
-          .choice { margin-top: 9px; padding: 10px; border: 1px solid #d1d5db; background: #fff; }
-          .choice-title { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
-          .choice-title strong { font-size: 12px; }
-          .choice-price { margin: 4px 0 8px; color: #374151; }
-          .direct-stock { margin: 8px 0; padding: 7px 8px; background: #ecfdf5; border-left: 3px solid #059669; }
-          .subheading { margin: 9px 0 5px; font-size: 10px; color: #4b5563; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-          .status { display: inline-block; margin-left: 4px; padding: 2px 5px; border-radius: 3px; font-size: 9px; font-weight: 700; white-space: nowrap; }
-          .positive { background: #dcfce7; color: #166534; }
-          .negative { background: #fee2e2; color: #991b1b; }
-          footer { margin-top: 20px; border-top: 1px solid #d1d5db; padding-top: 10px; color: #6b7280; font-size: 10px; }
-          @media print { body { padding: 0; } .report { max-width: none; } }
-        </style>
-      </head>
-      <body>
-        <main class="report">
-          <header>
-            <div>
-              <div class="business-name">${escapeHtml(data.business_name || 'Business')}</div>
-              <div class="branch">Branch: ${escapeHtml(data.branch_name || 'Current branch')}</div>
-            </div>
-            <div class="document">
-              <h1>MENU CONFIGURATION</h1>
-              <p>Generated ${escapeHtml(generatedAt)}</p>
-            </div>
-          </header>
-          <div class="notice">This report shows how menu items, ingredients, units, quantities, choice sets, and choice stock deductions are currently configured. Hidden items and choices are included for troubleshooting.</div>
-          ${items.length ? items.map((item) => `
-            <article class="menu-item">
-              <div class="menu-header">
-                <div>
-                  <h2>${escapeHtml(item.name)} ${status(item.visible, 'Visible', 'Hidden')}</h2>
-                  <div class="menu-meta">${escapeHtml(item.category || 'Uncategorized')}</div>
-                </div>
-                <div class="price">${escapeHtml(item.price || '0')}<div class="source">${escapeHtml(item.source || 'Menu item')}</div></div>
-              </div>
-              <section class="section">
-                <h3>Meal recipe</h3>
-                ${connectionTable(item.recipe, 'No recipe ingredients are configured for this menu item.')}
-              </section>
-              <section class="section">
-                <h3>Choice sets and stock connections</h3>
-                ${item.choiceSets.size
-                  ? Array.from(item.choiceSets.values()).map(choiceSetHtml).join('')
-                  : '<p class="empty">No choice sets are configured for this menu item.</p>'}
-              </section>
-            </article>
-          `).join('') : '<p class="empty">No menu items are configured for this branch.</p>'}
-          <footer>Quantities are shown in the exact units configured on the connected inventory items. A choice with no stock connection does not deduct stock when selected.</footer>
-        </main>
-      </body>
-    </html>
-  `;
-};
-
 export async function downloadMenuConfigurationPdf(data: MenuConfigurationExport): Promise<void> {
-  const html2pdfModule = await import('html2pdf.js');
-  const html2pdf = ((html2pdfModule as any).default ?? html2pdfModule) as any;
-  const container = document.createElement('div');
-  container.innerHTML = buildPdfHtml(data);
+  const jsPdfModule = await import('jspdf');
+  const JsPdf = (jsPdfModule as any).default ?? jsPdfModule.jsPDF;
+  const pdf = new JsPdf({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const items = summarizeRows(Array.isArray(data.rows) ? data.rows : []);
+  const margin = 14;
+  const pageWidth = 210;
+  const contentWidth = pageWidth - (margin * 2);
+  const bottom = 282;
+  let y = 14;
 
-  await html2pdf()
-    .set({
-      margin: 0.22,
-      filename: `HandyPOS_Menu_Configuration_${filenamePart(data.branch_name, 'Branch')}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] },
-    })
-    .from(container)
-    .save();
+  const drawHeader = (continued = false) => {
+    pdf.setTextColor(17, 24, 39);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(17);
+    pdf.text(text(data.business_name || 'Business').toUpperCase(), margin, y);
+    pdf.setFontSize(14);
+    pdf.text(continued ? 'MENU CONFIGURATION (CONTINUED)' : 'MENU CONFIGURATION', pageWidth - margin, y, { align: 'right' });
+    y += 6;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(75, 85, 99);
+    pdf.text(`Branch: ${text(data.branch_name || 'Current branch')}`, margin, y);
+    pdf.text(`Generated: ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}`, pageWidth - margin, y, { align: 'right' });
+    y += 4;
+    pdf.setDrawColor(17, 24, 39);
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 7;
+  };
+
+  const newPage = () => {
+    pdf.addPage();
+    y = 14;
+    drawHeader(true);
+  };
+
+  const ensureSpace = (height: number) => {
+    if (y + height > bottom) newPage();
+  };
+
+  const write = (
+    value: string,
+    options: { size?: number; bold?: boolean; color?: [number, number, number]; indent?: number; gapAfter?: number } = {},
+  ) => {
+    const size = options.size ?? 10;
+    const indent = options.indent ?? 0;
+    const lineHeight = size >= 13 ? 6.2 : size >= 11 ? 5.3 : 4.5;
+    const lines = pdf.splitTextToSize(value, contentWidth - indent);
+    ensureSpace((lines.length * lineHeight) + 2);
+    pdf.setFont('helvetica', options.bold ? 'bold' : 'normal');
+    pdf.setFontSize(size);
+    pdf.setTextColor(...(options.color ?? [17, 24, 39]));
+    pdf.text(lines, margin + indent, y);
+    y += (lines.length * lineHeight) + (options.gapAfter ?? 1.5);
+  };
+
+  const divider = () => {
+    ensureSpace(4);
+    pdf.setDrawColor(209, 213, 219);
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 4;
+  };
+
+  const connectionText = (connection: StockConnection): string => {
+    const quantity = [connection.quantity, connection.unit].filter(Boolean).join(' ');
+    return `${quantity ? `${quantity} of ` : ''}${connection.name || 'Unnamed inventory item'}`;
+  };
+
+  drawHeader();
+  write(
+    'This report records the menu setup at the time it was downloaded. Hidden menu items and choices are included so configuration problems can be identified.',
+    { size: 9, color: [30, 64, 175], gapAfter: 5 },
+  );
+
+  if (!items.length) {
+    write('No menu items are configured for this branch.', { size: 11, color: [75, 85, 99] });
+  }
+
+  items.forEach((item) => {
+    ensureSpace(18);
+    divider();
+    write(item.name, { size: 14, bold: true, gapAfter: 0.5 });
+    const details = [
+      item.category || 'Uncategorized',
+      `Price: ${item.price || '0'}`,
+      item.visible === null ? '' : item.visible ? 'Visible' : 'Hidden',
+      item.source || 'Menu item',
+    ].filter(Boolean).join(' | ');
+    write(details, { size: 9, color: [75, 85, 99], gapAfter: 3 });
+
+    write('Meal recipe', { size: 11, bold: true, gapAfter: 1 });
+    if (item.recipe.length) {
+      item.recipe.forEach((connection) => {
+        write(`- ${connectionText(connection)}`, { size: 10, indent: 4, gapAfter: 0.8 });
+      });
+    } else {
+      write('No recipe ingredients are configured for this menu item.', { size: 9, color: [107, 114, 128], indent: 4, gapAfter: 2 });
+    }
+
+    write('Choice sets and stock connections', { size: 11, bold: true, gapAfter: 1 });
+    const choiceSets = Array.from(item.choiceSets.values());
+    if (!choiceSets.length) {
+      write('No choice sets are configured for this menu item.', { size: 9, color: [107, 114, 128], indent: 4, gapAfter: 2 });
+    }
+
+    choiceSets.forEach((choiceSet) => {
+      const selectionRule = [
+        choiceSet.required ? 'Required' : 'Optional',
+        choiceSet.minimum || choiceSet.maximum ? `Choose ${choiceSet.minimum || '0'}-${choiceSet.maximum || '0'}` : '',
+        choiceSet.shared ? 'Reusable' : 'Item-specific',
+      ].filter(Boolean).join(' | ');
+      write(`${choiceSet.name} (${choiceSet.type || 'Choice'})`, { size: 11, bold: true, indent: 4, gapAfter: 0.5 });
+      write(selectionRule, { size: 9, color: [75, 85, 99], indent: 8, gapAfter: 0.5 });
+      if (choiceSet.shared && choiceSet.sourceMenuItem) {
+        write(`Source item: ${choiceSet.sourceMenuItem}`, { size: 9, color: [75, 85, 99], indent: 8, gapAfter: 0.5 });
+      }
+
+      const choices = Array.from(choiceSet.choices.values());
+      if (!choices.length) {
+        write('No choices have been added to this set.', { size: 9, color: [107, 114, 128], indent: 8, gapAfter: 1.5 });
+      }
+
+      choices.forEach((choice) => {
+        const choiceStatus = [
+          choice.visible === null ? '' : choice.visible ? 'Visible' : 'Hidden',
+          choice.overridden ? 'Custom for this menu item' : '',
+        ].filter(Boolean).join(' | ');
+        write(`- ${choice.name}${choiceStatus ? ` (${choiceStatus})` : ''}`, { size: 10, bold: true, indent: 8, gapAfter: 0.5 });
+        const priceLabel = choice.priceMode === 'override' ? 'Overrides meal price' : 'Adds to meal price';
+        write(`Price: ${priceLabel}${choice.price ? ` (${choice.price})` : ''}`, { size: 9, indent: 12, gapAfter: 0.5 });
+        if (choice.directStock) {
+          write(`Direct stock deduction: ${connectionText(choice.directStock)}`, { size: 9, indent: 12, gapAfter: 0.5 });
+        }
+        if (choice.recipe.length) {
+          write('Choice recipe ingredients:', { size: 9, bold: true, indent: 12, gapAfter: 0.4 });
+          choice.recipe.forEach((connection) => {
+            write(`- ${connectionText(connection)}`, { size: 9, indent: 16, gapAfter: 0.4 });
+          });
+        } else if (!choice.directStock) {
+          write('No stock connection configured for this choice.', { size: 9, color: [107, 114, 128], indent: 12, gapAfter: 0.5 });
+        }
+      });
+      y += 1.5;
+    });
+  });
+
+  divider();
+  write(
+    'Quantities are shown in the exact units configured on the linked inventory items. A choice with no stock connection does not deduct stock when selected.',
+    { size: 9, color: [107, 114, 128] },
+  );
+  pdf.save(`HandyPOS_Menu_Configuration_${filenamePart(data.branch_name, 'Branch')}.pdf`);
 }

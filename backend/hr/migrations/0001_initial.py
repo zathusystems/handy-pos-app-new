@@ -3,6 +3,7 @@
 import django.db.models.deletion
 import uuid
 from django.db import migrations, models
+from hr.compat import check_constraint
 
 
 class Migration(migrations.Migration):
@@ -82,6 +83,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='employmentterm',
-            constraint=models.CheckConstraint(condition=models.Q(('effective_to__isnull', True), ('effective_to__gte', models.F('effective_from')), _connector='OR'), name='hr_term_end_not_before_start'),
+            constraint=check_constraint(condition=models.Q(('effective_to__isnull', True), ('effective_to__gte', models.F('effective_from')), _connector='OR'), name='hr_term_end_not_before_start'),
         ),
     ]
