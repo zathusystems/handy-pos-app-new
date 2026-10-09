@@ -17,6 +17,7 @@ from .utils import (
     get_business_currency,
     option_assignment_for_menu,
     option_snapshot,
+    resolve_menu_options,
     sync_menu_config_currency,
 )
 from business.access import (
@@ -73,6 +74,206 @@ class MenuViewSet(viewsets.ModelViewSet):
         menu_items = self.get_queryset().filter(branch_id=branch_id)
         serializer = self.get_serializer(menu_items, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='export-configuration')
+    def export_configuration(self, request):
+        """Return a flat, spreadsheet-ready view of a branch menu's stock setup."""
+        from business.models import Branch
+        from inventory.models import InventoryItem
+
+        branch_id = request.query_params.get('branch_id')
+        if not branch_id:
+            return Response(
+                {'error': 'branch_id query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        branch = Branch.objects.select_related('business').filter(
+            id=branch_id,
+            business_id__in=get_accessible_business_ids(request.user),
+        ).first()
+        if not branch:
+            return Response({'error': 'Branch not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        menu_items = list(
+            Menu.objects.filter(branch=branch)
+            .select_related('inventory_item')
+            .order_by('added_at')
+        )
+        menu_ids = [item.id for item in menu_items]
+        groups = list(
+            MenuOptionGroup.objects.filter(
+                Q(menu_id__in=menu_ids) | Q(menu_assignments__menu_id__in=menu_ids)
+            )
+            .select_related('menu', 'menu__inventory_item')
+            .prefetch_related('options__linked_inventory_item', 'menu_assignments')
+            .distinct()
+            .order_by('sort_order', 'created_at')
+        )
+        groups_by_menu_id = {str(menu.id): [] for menu in menu_items}
+        for group in groups:
+            groups_by_menu_id.setdefault(str(group.menu_id), []).append(group)
+            for assignment in group.menu_assignments.all():
+                groups_by_menu_id.setdefault(str(assignment.menu_id), []).append(group)
+
+        def recipe_rows(recipe):
+            return recipe if isinstance(recipe, list) else []
+
+        def stock_item_id(recipe_row):
+            if not isinstance(recipe_row, dict):
+                return ''
+            for key in ('ingredientId', 'ingredient_id', 'inventoryItemId', 'inventory_item_id', 'id'):
+                value = recipe_row.get(key)
+                if value not in (None, ''):
+                    return str(value)
+            return ''
+
+        stock_ids = set()
+        for menu_item in menu_items:
+            stock_ids.update(filter(None, (stock_item_id(row) for row in recipe_rows(menu_item.display_recipe))))
+        for group in groups:
+            for option in group.options.all():
+                if option.linked_inventory_item_id:
+                    stock_ids.add(str(option.linked_inventory_item_id))
+                stock_ids.update(filter(None, (stock_item_id(row) for row in recipe_rows(option.recipe))))
+
+        stock_by_id = {
+            str(item.id): item
+            for item in InventoryItem.objects.filter(
+                business=branch.business,
+                id__in=stock_ids,
+            )
+        }
+
+        def ingredient_values(recipe_row):
+            recipe_row = recipe_row if isinstance(recipe_row, dict) else {}
+            item_id = stock_item_id(recipe_row)
+            item = stock_by_id.get(item_id)
+            return {
+                'id': item_id,
+                'name': item.name if item else str(recipe_row.get('name') or ''),
+                'unit': item.unit_type if item else str(recipe_row.get('unit') or ''),
+                'quantity': str(recipe_row.get('quantity') or ''),
+            }
+
+        rows = []
+        for menu_item in menu_items:
+            item_recipe = recipe_rows(menu_item.display_recipe)
+            base_row = {
+                'menu_item_id': str(menu_item.id),
+                'menu_item': menu_item.display_name,
+                'menu_category': menu_item.display_category,
+                'menu_price': str(menu_item.display_price),
+                'menu_item_visible': bool(menu_item.is_visible),
+                'menu_item_source': 'Inventory product' if menu_item.inventory_item_id else 'Menu-only item',
+                'menu_inventory_item_id': str(menu_item.inventory_item_id or ''),
+                'choice_set': '',
+                'choice_set_type': '',
+                'choice_set_required': '',
+                'choice_set_minimum': '',
+                'choice_set_maximum': '',
+                'choice_set_shared': '',
+                'choice_source_menu_item': '',
+                'choice_name': '',
+                'choice_visible': '',
+                'choice_is_item_override': '',
+                'choice_price_mode': '',
+                'choice_price': '',
+                'option_stock_item_id': '',
+                'option_stock_item': '',
+                'option_stock_unit': '',
+                'option_stock_quantity': '',
+                'menu_recipe_ingredient_id': '',
+                'menu_recipe_ingredient': '',
+                'menu_recipe_unit': '',
+                'menu_recipe_quantity': '',
+                'choice_recipe_ingredient_id': '',
+                'choice_recipe_ingredient': '',
+                'choice_recipe_unit': '',
+                'choice_recipe_quantity': '',
+            }
+
+            if item_recipe:
+                for recipe_row in item_recipe:
+                    ingredient = ingredient_values(recipe_row)
+                    rows.append({
+                        **base_row,
+                        'connection_type': 'Menu item recipe ingredient',
+                        'menu_recipe_ingredient_id': ingredient['id'],
+                        'menu_recipe_ingredient': ingredient['name'],
+                        'menu_recipe_unit': ingredient['unit'],
+                        'menu_recipe_quantity': ingredient['quantity'],
+                    })
+            else:
+                rows.append({**base_row, 'connection_type': 'Menu item without a recipe'})
+
+            for group in groups_by_menu_id.get(str(menu_item.id), []):
+                group_base_row = {
+                    **base_row,
+                    'choice_set': group.name,
+                    'choice_set_type': group.group_type,
+                    'choice_set_required': bool(group.is_required),
+                    'choice_set_minimum': group.min_select,
+                    'choice_set_maximum': group.max_select,
+                    'choice_set_shared': bool(group.is_shared),
+                    'choice_source_menu_item': group.menu.display_name,
+                }
+                resolved_options = resolve_menu_options(group, menu_item)
+                if not resolved_options:
+                    rows.append({**group_base_row, 'connection_type': 'Choice set without choices'})
+                    continue
+
+                for resolved in resolved_options:
+                    option = resolved['source']
+                    values = resolved['values']
+                    linked_item = resolved.get('linked_inventory_item')
+                    option_base_row = {
+                        **group_base_row,
+                        'choice_name': values.get('name') or option.name,
+                        'choice_visible': bool(values.get('is_visible', True)),
+                        'choice_is_item_override': bool(resolved['is_overridden']),
+                        'choice_price_mode': values.get('price_mode') or option.price_mode,
+                        'choice_price': str(
+                            values.get('price_override')
+                            if values.get('price_mode') == 'override'
+                            else values.get('price_delta') or 0
+                        ),
+                    }
+                    option_recipe = recipe_rows(values.get('recipe'))
+                    has_stock_link = values.get('linked_inventory_item')
+
+                    if has_stock_link:
+                        linked_id = str(values.get('linked_inventory_item') or '')
+                        linked_item = linked_item or stock_by_id.get(linked_id)
+                        rows.append({
+                            **option_base_row,
+                            'connection_type': 'Choice direct stock connection',
+                            'option_stock_item_id': linked_id,
+                            'option_stock_item': linked_item.name if linked_item else '',
+                            'option_stock_unit': linked_item.unit_type if linked_item else '',
+                            'option_stock_quantity': str(values.get('linked_inventory_quantity') or 0),
+                        })
+
+                    for recipe_row in option_recipe:
+                        ingredient = ingredient_values(recipe_row)
+                        rows.append({
+                            **option_base_row,
+                            'connection_type': 'Choice recipe ingredient',
+                            'choice_recipe_ingredient_id': ingredient['id'],
+                            'choice_recipe_ingredient': ingredient['name'],
+                            'choice_recipe_unit': ingredient['unit'],
+                            'choice_recipe_quantity': ingredient['quantity'],
+                        })
+
+                    if not has_stock_link and not option_recipe:
+                        rows.append({**option_base_row, 'connection_type': 'Choice without a stock connection'})
+
+        return Response({
+            'branch_id': str(branch.id),
+            'branch_name': branch.name,
+            'business_name': branch.business.name,
+            'rows': rows,
+        })
 
     @action(detail=False, methods=['post'])
     def add_item(self, request):

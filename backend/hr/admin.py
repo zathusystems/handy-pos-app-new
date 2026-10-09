@@ -10,8 +10,10 @@ from .models import (
     OvertimeRequest,
     PayrollEntry,
     PayrollLine,
+    PayrollRule,
     PayrollRun,
     PayrollSettings,
+    ShiftTemplate,
     WorkShift,
 )
 
@@ -48,16 +50,24 @@ class EmploymentTermAdmin(admin.ModelAdmin):
 
 @admin.register(WorkShift)
 class WorkShiftAdmin(admin.ModelAdmin):
-    list_display = ('work_date', 'employee', 'branch', 'starts_at', 'ends_at', 'status')
+    list_display = ('work_date', 'employee', 'shift_template', 'branch', 'starts_at', 'ends_at', 'late_grace_minutes', 'status')
     search_fields = ('employee__first_name', 'employee__last_name', 'employee__email', 'notes')
     list_filter = ('status', 'work_date', 'branch')
     readonly_fields = ('id', 'created_at', 'updated_at')
     ordering = ('-work_date', 'starts_at')
 
 
+@admin.register(ShiftTemplate)
+class ShiftTemplateAdmin(admin.ModelAdmin):
+    list_display = ('name', 'business', 'branch', 'starts_at', 'ends_at', 'break_minutes', 'late_grace_minutes', 'is_active')
+    search_fields = ('name', 'business__name', 'branch__name', 'notes')
+    list_filter = ('is_active', 'business', 'branch')
+    readonly_fields = ('id', 'created_at', 'updated_at')
+
+
 @admin.register(AttendanceRecord)
 class AttendanceRecordAdmin(admin.ModelAdmin):
-    list_display = ('work_date', 'employee', 'branch', 'clock_in', 'clock_out', 'worked_minutes', 'status', 'source')
+    list_display = ('work_date', 'employee', 'branch', 'clock_in', 'clock_out', 'worked_minutes', 'late_minutes', 'status', 'source')
     search_fields = ('employee__first_name', 'employee__last_name', 'employee__email', 'notes')
     list_filter = ('status', 'source', 'work_date', 'branch')
     readonly_fields = ('id', 'worked_minutes', 'created_at', 'updated_at')
@@ -103,6 +113,14 @@ class PayrollSettingsAdmin(admin.ModelAdmin):
     list_display = ('business', 'standard_monthly_hours', 'overtime_multiplier', 'updated_at')
     search_fields = ('business__name',)
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(PayrollRule)
+class PayrollRuleAdmin(admin.ModelAdmin):
+    list_display = ('name', 'business', 'kind', 'calculation_method', 'fixed_amount', 'percentage_rate', 'is_active')
+    search_fields = ('name', 'code', 'business__name')
+    list_filter = ('kind', 'calculation_method', 'is_active', 'business')
+    readonly_fields = ('id', 'created_at', 'updated_at')
 
 
 @admin.register(PayrollRun)

@@ -17,6 +17,7 @@ from .models import (
     LeaveRequest,
     LeaveType,
     OvertimeRequest,
+    ShiftTemplate,
     WorkShift,
 )
 from .serializers import (
@@ -31,6 +32,7 @@ from .serializers import (
     ManualAttendanceSerializer,
     OvertimeRequestSerializer,
     OvertimeRequestWriteSerializer,
+    ShiftTemplateSerializer,
     WorkShiftSerializer,
 )
 from .services import leave_balance_summary
@@ -152,13 +154,41 @@ class EmploymentTermViewSet(HRBusinessAccessMixin, viewsets.ModelViewSet):
         serializer.save()
 
 
+class ShiftTemplateViewSet(HRBusinessAccessMixin, viewsets.ModelViewSet):
+    serializer_class = ShiftTemplateSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        return self.filter_business_queryset(ShiftTemplate.objects.select_related('business', 'branch'))
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.action == 'create':
+            context['business'] = self.get_requested_business()
+        return context
+
+    def perform_create(self, serializer):
+        serializer.save(business=self.get_requested_business())
+
+    def perform_update(self, serializer):
+        if not self.is_admin_for_business(serializer.instance.business_id):
+            raise PermissionDenied('Only the business owner or an Administrator can manage shift templates.')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.is_admin_for_business(instance.business_id):
+            raise PermissionDenied('Only the business owner or an Administrator can manage shift templates.')
+        instance.delete()
+
+
 class WorkShiftViewSet(HRBusinessAccessMixin, viewsets.ModelViewSet):
     serializer_class = WorkShiftSerializer
     permission_classes = [permissions.IsAuthenticated]
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def get_queryset(self):
-        queryset = WorkShift.objects.select_related('employee', 'branch', 'created_by')
+        queryset = WorkShift.objects.select_related('employee', 'branch', 'shift_template', 'created_by')
         business_ids = self.get_accessible_business_ids()
         if business_ids:
             queryset = self.filter_business_queryset(queryset, 'employee__business_id')
@@ -242,17 +272,22 @@ class AttendanceRecordViewSet(HRBusinessAccessMixin, viewsets.ModelViewSet):
             return Response({'detail': 'You are already clocked in.'}, status=status.HTTP_400_BAD_REQUEST)
 
         today = timezone.localdate()
-        shift = WorkShift.objects.filter(
+        shifts = WorkShift.objects.filter(
             employee=employee,
             work_date=today,
             status=WorkShift.Status.SCHEDULED,
-        ).select_related('branch').order_by('starts_at').first()
+        ).select_related('branch').order_by('starts_at')
         branch_id = request.data.get('branch') or request.data.get('branch_id')
-        branch = shift.branch if shift else None
+        shift = None
+        branch = None
         if branch_id:
             branch = Branch.objects.filter(pk=branch_id, business_id=employee.business_id).first()
             if not branch:
                 return Response({'detail': 'The selected branch does not belong to your business.'}, status=status.HTTP_400_BAD_REQUEST)
+            shift = shifts.filter(branch=branch).first()
+        else:
+            shift = shifts.first()
+            branch = shift.branch if shift else None
         if not branch:
             branch = getattr(employee.staff, 'branch', None)
         if not branch:

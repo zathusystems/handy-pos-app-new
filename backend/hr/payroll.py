@@ -9,6 +9,7 @@ from .models import (
     OvertimeRequest,
     PayrollEntry,
     PayrollLine,
+    PayrollRule,
     PayrollRun,
     PayrollSettings,
 )
@@ -122,17 +123,64 @@ def recalculate_run(payroll_run):
     return payroll_run
 
 
+def applicable_payroll_rules(payroll_run):
+    return PayrollRule.objects.filter(
+        business=payroll_run.business,
+        is_active=True,
+    ).filter(
+        Q(effective_from__isnull=True) | Q(effective_from__lte=payroll_run.period_end),
+    ).filter(
+        Q(effective_to__isnull=True) | Q(effective_to__gte=payroll_run.period_start),
+    ).order_by('kind', 'name')
+
+
+def payroll_rule_amount(rule, entry):
+    if rule.calculation_method == PayrollRule.CalculationMethod.FIXED:
+        return money(rule.fixed_amount)
+    if rule.calculation_method == PayrollRule.CalculationMethod.BASE_PERCENTAGE:
+        return money(entry.base_pay * rule.percentage_rate / Decimal('100'))
+    return money(entry.gross_pay * rule.percentage_rate / Decimal('100'))
+
+
+def apply_payroll_rules(entry, payroll_rules):
+    """Snapshot active rules into the generated payslip so later changes are safe."""
+    earnings = [rule for rule in payroll_rules if rule.kind == PayrollRule.Kind.EARNING]
+    deductions = [rule for rule in payroll_rules if rule.kind == PayrollRule.Kind.DEDUCTION]
+
+    for rule in earnings:
+        PayrollLine.objects.create(
+            payroll_entry=entry,
+            kind=PayrollLine.Kind.EARNING,
+            label=rule.name,
+            amount=payroll_rule_amount(rule, entry),
+            notes=rule.code or rule.notes,
+        )
+    recalculate_entry(entry)
+
+    for rule in deductions:
+        PayrollLine.objects.create(
+            payroll_entry=entry,
+            kind=PayrollLine.Kind.DEDUCTION,
+            label=rule.name,
+            amount=payroll_rule_amount(rule, entry),
+            notes=rule.code or rule.notes,
+        )
+    return recalculate_entry(entry)
+
+
 @transaction.atomic
 def generate_payroll_run(payroll_run):
     if payroll_run.status != PayrollRun.Status.DRAFT:
         raise ValueError('Only draft payroll runs can be generated.')
 
     payroll_settings = get_payroll_settings(payroll_run.business)
+    payroll_rules = list(applicable_payroll_rules(payroll_run))
     payroll_run.entries.all().delete()
     employees = Employee.objects.filter(
         business=payroll_run.business,
         employment_status=Employee.Status.ACTIVE,
     ).prefetch_related('employment_terms')
+    generated_entries = 0
     for employee in employees:
         if employee.started_on and employee.started_on > payroll_run.period_end:
             continue
@@ -156,7 +204,13 @@ def generate_payroll_run(payroll_run):
                 payroll_settings=payroll_settings,
             ),
         )
-        recalculate_entry(entry)
+        apply_payroll_rules(entry, payroll_rules)
+        generated_entries += 1
+
+    if generated_entries == 0:
+        raise ValueError(
+            'No active employees with an employment term in this period are available for payroll.'
+        )
 
     payroll_run.status = PayrollRun.Status.CALCULATED
     payroll_run.save(update_fields=['status', 'updated_at'])

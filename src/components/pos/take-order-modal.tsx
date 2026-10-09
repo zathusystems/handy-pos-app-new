@@ -446,10 +446,14 @@ export function TakeOrderModal({
         () => menuCacheId ? db.menuEntryCache.get(menuCacheId) : undefined,
         [menuCacheId]
     );
-    const takeawayConfigCacheId = useMemo(() => {
-        const backendBranchId = getBackendBranchId(branchId);
-        return backendBranchId === null ? null : `take-order-takeaway:${backendBranchId}`;
-    }, [branchId]);
+    // The active branch can briefly be represented as "BRN-1" and then "1"
+    // while it is being restored. Keep takeaway loading tied to the canonical
+    // backend ID so that harmless representation changes do not remount the field.
+    const takeawayBranchId = useMemo(() => getBackendBranchId(branchId), [branchId]);
+    const takeawayConfigCacheId = useMemo(
+        () => takeawayBranchId === null ? null : `take-order-takeaway:${takeawayBranchId}`,
+        [takeawayBranchId]
+    );
 
     useEffect(() => {
         let cancelled = false;
@@ -554,9 +558,6 @@ export function TakeOrderModal({
                     return true;
                 }
 
-                setTakeawayConfig(null);
-                setTakeawayPackagingItem(null);
-                setIsTakeaway(false);
                 return false;
             };
 
@@ -567,37 +568,43 @@ export function TakeOrderModal({
                 return;
             }
 
-            const backendBranchId = getBackendBranchId(branchId);
-            if (backendBranchId === null) {
+            if (takeawayBranchId === null) {
                 setTakeawayConfig(null);
                 setTakeawayPackagingItem(null);
+                setIsTakeaway(false);
                 setIsLoadingTakeawayConfig(false);
                 return;
             }
 
-            // Takeaway packaging is also cached locally. Use that snapshot
-            // straight away when offline so a takeaway order can still be taken.
+            setIsLoadingTakeawayConfig(true);
+
+            // Takeaway packaging is cached locally, so a saved setup remains
+            // immediately usable offline and survives a temporary refresh failure.
             if (typeof navigator !== 'undefined' && !navigator.onLine) {
-                await applyCachedTakeawayConfig();
+                const hasCachedConfig = await applyCachedTakeawayConfig();
                 if (!cancelled) {
+                    if (!hasCachedConfig) {
+                        setTakeawayConfig(null);
+                        setTakeawayPackagingItem(null);
+                        setIsTakeaway(false);
+                    }
                     setIsLoadingTakeawayConfig(false);
                 }
                 return;
             }
 
-            setIsLoadingTakeawayConfig(true);
             try {
                 let response: any;
                 try {
                     response = await authFetch.fetch<any>(
-                        `/digital-menu/menu-config/public/?branch_id=${backendBranchId}`,
+                        `/digital-menu/menu-config/public/?branch_id=${takeawayBranchId}`,
                         { queueOnFailure: false },
                     );
                 } catch (publicError) {
                     // Keep staff ordering usable if a deployment has not exposed the public config action yet.
                     console.warn('[TakeOrderModal] Public takeaway config unavailable; trying authenticated config:', publicError);
                     response = await authFetch.fetch<any>(
-                        `/digital-menu/menu-config/by_branch/?branch_id=${backendBranchId}`,
+                        `/digital-menu/menu-config/by_branch/?branch_id=${takeawayBranchId}`,
                         { queueOnFailure: false },
                     );
                 }
@@ -632,7 +639,7 @@ export function TakeOrderModal({
                     name: config.packagingName,
                     category: 'Packaging',
                     itemType: 'ingredient',
-                    branchId,
+                    branchId: String(takeawayBranchId),
                     price: config.price,
                     stockUnits: 0,
                 };
@@ -642,8 +649,8 @@ export function TakeOrderModal({
                     setTakeawayPackagingItem(packageItem);
                     setIsLoadingTakeawayConfig(false);
                     void db.menuEntryCache.put({
-                        id: `take-order-takeaway:${backendBranchId}`,
-                        branchId: String(backendBranchId),
+                        id: `take-order-takeaway:${takeawayBranchId}`,
+                        branchId: String(takeawayBranchId),
                         items: [{ config, packageItem }] as unknown as Array<Record<string, unknown>>,
                         updatedAt: new Date().toISOString(),
                     }).catch((cacheError) => {
@@ -652,8 +659,13 @@ export function TakeOrderModal({
                 }
             } catch (error) {
                 console.warn('[TakeOrderModal] Could not load takeaway configuration:', error);
-                await applyCachedTakeawayConfig();
+                const hasCachedConfig = await applyCachedTakeawayConfig();
                 if (!cancelled) {
+                    if (!hasCachedConfig) {
+                        setTakeawayConfig(null);
+                        setTakeawayPackagingItem(null);
+                        setIsTakeaway(false);
+                    }
                     setIsLoadingTakeawayConfig(false);
                 }
             }
@@ -663,7 +675,7 @@ export function TakeOrderModal({
         return () => {
             cancelled = true;
         };
-    }, [branchId, isOpen, takeawayConfigCacheId]);
+    }, [isOpen, takeawayBranchId, takeawayConfigCacheId]);
 
     const menuItems = useMemo(() => {
         if (backendMenuItems) return backendMenuItems;

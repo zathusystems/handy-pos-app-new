@@ -46,6 +46,7 @@ import {
   ShoppingBasket,
   Clock3,
   CalendarDays,
+  Banknote,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useForm, FormProvider } from 'react-hook-form';
@@ -278,6 +279,7 @@ const navSections = [
       { href: '/dashboard/expenses', icon: CreditCard, label: 'Expenses', permission: 'view_expenses' as Permission },
       { href: '/dashboard/staff', icon: Users, label: 'Staff', permission: 'manage_staff' as Permission },
       { href: '/dashboard/people', icon: Group, label: 'People', permission: 'manage_staff' as Permission },
+      { href: '/dashboard/payroll', icon: Banknote, label: 'Payroll', permission: 'manage_staff' as Permission },
     ],
   },
 ];

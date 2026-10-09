@@ -19,8 +19,10 @@ from .models import (
     OvertimeRequest,
     PayrollEntry,
     PayrollLine,
+    PayrollRule,
     PayrollRun,
     PayrollSettings,
+    ShiftTemplate,
     WorkShift,
 )
 from .services import leave_balance_summary, working_days
@@ -243,17 +245,47 @@ class EmployeeWriteSerializer(serializers.ModelSerializer):
         return employee
 
 
+class ShiftTemplateSerializer(serializers.ModelSerializer):
+    branch_name = serializers.CharField(source='branch.name', read_only=True, default=None)
+
+    class Meta:
+        model = ShiftTemplate
+        fields = [
+            'id', 'business', 'branch', 'branch_name', 'name', 'starts_at', 'ends_at',
+            'break_minutes', 'late_grace_minutes', 'is_active', 'notes', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'business', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        instance = getattr(self, 'instance', None)
+        business = self.context.get('business') or getattr(instance, 'business', None)
+        branch = attrs.get('branch', getattr(instance, 'branch', None))
+        starts_at = attrs.get('starts_at', getattr(instance, 'starts_at', None))
+        ends_at = attrs.get('ends_at', getattr(instance, 'ends_at', None))
+        break_minutes = attrs.get('break_minutes', getattr(instance, 'break_minutes', 0))
+
+        if business and branch and branch.business_id != business.id:
+            raise serializers.ValidationError({'branch': 'The selected branch must belong to this business.'})
+        if starts_at and ends_at and ends_at <= starts_at:
+            raise serializers.ValidationError({'ends_at': 'Shift end time must be after the start time.'})
+        if starts_at and ends_at and break_minutes >= (ends_at.hour * 60 + ends_at.minute - starts_at.hour * 60 - starts_at.minute):
+            raise serializers.ValidationError({'break_minutes': 'Break time must be shorter than the shift.'})
+        return attrs
+
+
 class WorkShiftSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source='employee.full_name', read_only=True)
     employee_code = serializers.CharField(source='employee.employee_code', read_only=True)
     branch_name = serializers.CharField(source='branch.name', read_only=True)
+    shift_template_name = serializers.CharField(source='shift_template.name', read_only=True, default=None)
     scheduled_minutes = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = WorkShift
         fields = [
             'id', 'employee', 'employee_name', 'employee_code', 'branch', 'branch_name',
-            'work_date', 'starts_at', 'ends_at', 'break_minutes', 'scheduled_minutes',
+            'shift_template', 'shift_template_name',
+            'work_date', 'starts_at', 'ends_at', 'break_minutes', 'late_grace_minutes', 'scheduled_minutes',
             'status', 'notes', 'created_by', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
@@ -265,12 +297,17 @@ class WorkShiftSerializer(serializers.ModelSerializer):
         starts_at = attrs.get('starts_at', getattr(instance, 'starts_at', None))
         ends_at = attrs.get('ends_at', getattr(instance, 'ends_at', None))
         break_minutes = attrs.get('break_minutes', getattr(instance, 'break_minutes', 0))
+        shift_template = attrs.get('shift_template', getattr(instance, 'shift_template', None))
         if employee and branch and branch.business_id != employee.business_id:
             raise serializers.ValidationError({'branch': 'The selected branch must belong to the employee business.'})
         if starts_at and ends_at and ends_at <= starts_at:
             raise serializers.ValidationError({'ends_at': 'Shift end time must be after the start time.'})
         if starts_at and ends_at and break_minutes >= (ends_at.hour * 60 + ends_at.minute - starts_at.hour * 60 - starts_at.minute):
             raise serializers.ValidationError({'break_minutes': 'Break time must be shorter than the shift.'})
+        if shift_template and employee and shift_template.business_id != employee.business_id:
+            raise serializers.ValidationError({'shift_template': 'The selected shift template belongs to another business.'})
+        if shift_template and branch and shift_template.branch_id and shift_template.branch_id != branch.id:
+            raise serializers.ValidationError({'shift_template': 'The selected shift template belongs to another branch.'})
         return attrs
 
 
@@ -279,17 +316,18 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     employee_code = serializers.CharField(source='employee.employee_code', read_only=True)
     branch_name = serializers.CharField(source='branch.name', read_only=True)
     worked_minutes = serializers.IntegerField(read_only=True)
+    late_minutes = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = AttendanceRecord
         fields = [
             'id', 'employee', 'employee_name', 'employee_code', 'branch', 'branch_name',
-            'shift', 'work_date', 'clock_in', 'clock_out', 'break_minutes', 'worked_minutes',
+            'shift', 'work_date', 'clock_in', 'clock_out', 'break_minutes', 'worked_minutes', 'late_minutes',
             'status', 'source', 'notes', 'recorded_by', 'reviewed_by', 'reviewed_at',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'worked_minutes', 'recorded_by', 'reviewed_by', 'reviewed_at',
+            'id', 'worked_minutes', 'late_minutes', 'recorded_by', 'reviewed_by', 'reviewed_at',
             'created_at', 'updated_at',
         ]
 
@@ -310,6 +348,17 @@ class ManualAttendanceSerializer(serializers.ModelSerializer):
         shift = attrs.get('shift')
         if shift and shift.employee_id != employee.id:
             raise serializers.ValidationError({'shift': 'The selected shift must belong to the employee.'})
+        if shift and shift.branch_id != branch.id:
+            raise serializers.ValidationError({'shift': 'The selected shift must belong to the attendance branch.'})
+        if shift and shift.work_date != attrs['work_date']:
+            raise serializers.ValidationError({'shift': 'The selected shift must be on the attendance date.'})
+        if not shift:
+            attrs['shift'] = WorkShift.objects.filter(
+                employee=employee,
+                branch=branch,
+                work_date=attrs['work_date'],
+                status=WorkShift.Status.SCHEDULED,
+            ).order_by('starts_at').first()
         if not attrs.get('clock_out'):
             raise serializers.ValidationError({'clock_out': 'Manual attendance needs both clock-in and clock-out times.'})
         if attrs.get('clock_out') and attrs['clock_out'] < attrs['clock_in']:
@@ -479,6 +528,40 @@ class PayrollSettingsSerializer(serializers.ModelSerializer):
         return value
 
 
+class PayrollRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PayrollRule
+        fields = [
+            'id', 'business', 'name', 'code', 'kind', 'calculation_method',
+            'fixed_amount', 'percentage_rate', 'effective_from', 'effective_to',
+            'is_active', 'notes', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'business', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        instance = getattr(self, 'instance', None)
+        calculation_method = attrs.get(
+            'calculation_method',
+            getattr(instance, 'calculation_method', PayrollRule.CalculationMethod.FIXED),
+        )
+        fixed_amount = attrs.get('fixed_amount', getattr(instance, 'fixed_amount', Decimal('0')))
+        percentage_rate = attrs.get('percentage_rate', getattr(instance, 'percentage_rate', Decimal('0')))
+        effective_from = attrs.get('effective_from', getattr(instance, 'effective_from', None))
+        effective_to = attrs.get('effective_to', getattr(instance, 'effective_to', None))
+
+        if effective_from and effective_to and effective_to < effective_from:
+            raise serializers.ValidationError({'effective_to': 'End date cannot be before the effective date.'})
+        if fixed_amount < 0:
+            raise serializers.ValidationError({'fixed_amount': 'Fixed amount cannot be negative.'})
+        if percentage_rate < 0 or percentage_rate > 100:
+            raise serializers.ValidationError({'percentage_rate': 'Percentage must be between 0 and 100.'})
+        if calculation_method == PayrollRule.CalculationMethod.FIXED:
+            attrs['percentage_rate'] = Decimal('0')
+        else:
+            attrs['fixed_amount'] = Decimal('0')
+        return attrs
+
+
 class PayrollLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayrollLine
@@ -555,7 +638,7 @@ class PayrollLineWriteSerializer(serializers.ModelSerializer):
         fields = ['payroll_entry', 'kind', 'label', 'amount', 'notes']
 
     def validate(self, attrs):
-        entry = attrs.get('payroll_entry')
+        entry = attrs.get('payroll_entry', getattr(self.instance, 'payroll_entry', None))
         if entry and entry.payroll_run.status not in {PayrollRun.Status.DRAFT, PayrollRun.Status.CALCULATED}:
             raise serializers.ValidationError('Pay lines cannot be changed after the payroll run is approved.')
         if attrs.get('amount', 0) < 0:

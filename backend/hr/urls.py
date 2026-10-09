@@ -9,11 +9,13 @@ from .views import (
     LeaveRequestViewSet,
     LeaveTypeViewSet,
     OvertimeRequestViewSet,
+    ShiftTemplateViewSet,
     WorkShiftViewSet,
 )
 from .payroll_views import (
     PayrollEntryViewSet,
     PayrollLineViewSet,
+    PayrollRuleViewSet,
     PayrollRunViewSet,
     PayrollSettingsViewSet,
 )
@@ -22,6 +24,7 @@ from .payroll_views import (
 router = DefaultRouter()
 router.register(r'employees', EmployeeViewSet, basename='hr-employee')
 router.register(r'employment-terms', EmploymentTermViewSet, basename='hr-employment-term')
+router.register(r'shift-templates', ShiftTemplateViewSet, basename='hr-shift-template')
 router.register(r'shifts', WorkShiftViewSet, basename='hr-shift')
 router.register(r'attendance', AttendanceRecordViewSet, basename='hr-attendance')
 router.register(r'leave-types', LeaveTypeViewSet, basename='hr-leave-type')
@@ -29,6 +32,7 @@ router.register(r'leave-balances', LeaveBalanceViewSet, basename='hr-leave-balan
 router.register(r'leave-requests', LeaveRequestViewSet, basename='hr-leave-request')
 router.register(r'overtime-requests', OvertimeRequestViewSet, basename='hr-overtime-request')
 router.register(r'payroll-settings', PayrollSettingsViewSet, basename='hr-payroll-settings')
+router.register(r'payroll-rules', PayrollRuleViewSet, basename='hr-payroll-rule')
 router.register(r'payroll-runs', PayrollRunViewSet, basename='hr-payroll-run')
 router.register(r'payroll-entries', PayrollEntryViewSet, basename='hr-payroll-entry')
 router.register(r'payroll-lines', PayrollLineViewSet, basename='hr-payroll-line')

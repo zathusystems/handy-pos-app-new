@@ -1,14 +1,28 @@
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from business.models import Branch, Business
 from staff.models import Staff, StaffRole
 
-from .models import AttendanceRecord, Employee, EmploymentTerm, LeaveBalance, LeaveRequest, LeaveType, OvertimeRequest, WorkShift
+from .models import (
+    AttendanceRecord,
+    Employee,
+    EmploymentTerm,
+    LeaveBalance,
+    LeaveRequest,
+    LeaveType,
+    OvertimeRequest,
+    PayrollLine,
+    PayrollRule,
+    PayrollRun,
+    ShiftTemplate,
+    WorkShift,
+)
 
 
 User = get_user_model()
@@ -342,3 +356,203 @@ class PeopleOperationsAPITests(APITestCase):
         self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
         self.assertEqual(approve_response.data['status'], OvertimeRequest.Status.APPROVED)
         self.assertEqual(approve_response.data['approved_minutes'], 60)
+
+    def test_attendance_records_report_late_minutes_from_the_assigned_shift(self):
+        shift = WorkShift.objects.create(
+            employee=self.employee,
+            branch=self.branch,
+            work_date=date(2026, 9, 7),
+            starts_at=time(8, 0),
+            ends_at=time(17, 0),
+            late_grace_minutes=10,
+            created_by=self.owner,
+        )
+        record = AttendanceRecord.objects.create(
+            employee=self.employee,
+            branch=self.branch,
+            shift=shift,
+            work_date=shift.work_date,
+            clock_in=timezone.make_aware(datetime(2026, 9, 7, 8, 18)),
+            clock_out=timezone.make_aware(datetime(2026, 9, 7, 17, 0)),
+            status=AttendanceRecord.Status.SUBMITTED,
+        )
+        self.assertEqual(record.late_minutes, 8)
+
+        self.client.force_authenticate(self.owner)
+        response = self.client.get(f'/api/hr/attendance/?business_id={self.business.id}')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        records = response.data.get('results', response.data)
+        self.assertEqual(records[0]['late_minutes'], 8)
+
+    def test_admin_can_configure_a_shift_type_and_assign_it_to_an_employee(self):
+        self.client.force_authenticate(self.owner)
+        template_response = self.client.post('/api/hr/shift-templates/', {
+            'business_id': self.business.id,
+            'name': 'Morning',
+            'branch': self.branch.id,
+            'starts_at': '08:00:00',
+            'ends_at': '17:00:00',
+            'break_minutes': 60,
+            'late_grace_minutes': 15,
+        }, format='json')
+        self.assertEqual(template_response.status_code, status.HTTP_201_CREATED)
+
+        assignment_response = self.client.post('/api/hr/shifts/', {
+            'employee': str(self.employee.id),
+            'branch': self.branch.id,
+            'shift_template': template_response.data['id'],
+            'work_date': '2026-09-10',
+            'starts_at': '08:00:00',
+            'ends_at': '17:00:00',
+            'break_minutes': 60,
+            'late_grace_minutes': 15,
+        }, format='json')
+
+        self.assertEqual(assignment_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(assignment_response.data['shift_template_name'], 'Morning')
+        assigned_shift = WorkShift.objects.get(pk=assignment_response.data['id'])
+        self.assertEqual(str(assigned_shift.shift_template_id), template_response.data['id'])
+        self.assertEqual(ShiftTemplate.objects.get(pk=template_response.data['id']).late_grace_minutes, 15)
+
+
+class PayrollAPITests(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(email='owner-payroll@example.com', password='owner-pass')
+        self.business = Business.objects.create(owner=self.owner, name='Payroll Test Business')
+        self.branch = Branch.objects.create(
+            business=self.business,
+            name='Main Branch',
+            address='Main Road',
+            city='Lilongwe',
+            country='Malawi',
+        )
+        self.employee = Employee.objects.create(
+            business=self.business,
+            first_name='Thandiwe',
+            last_name='Banda',
+            started_on=date(2026, 9, 1),
+        )
+        EmploymentTerm.objects.create(
+            employee=self.employee,
+            branch=self.branch,
+            job_title='Cashier',
+            employment_type=EmploymentTerm.EmploymentType.FULL_TIME,
+            pay_frequency=EmploymentTerm.PayFrequency.MONTHLY,
+            base_salary=Decimal('250000.00'),
+            currency='MWK',
+            effective_from=date(2026, 9, 1),
+        )
+        self.client.force_authenticate(self.owner)
+
+    def create_payroll_run(self):
+        response = self.client.post('/api/hr/payroll-runs/', {
+            'business_id': self.business.id,
+            'period_start': '2026-09-01',
+            'period_end': '2026-09-30',
+            'pay_date': '2026-09-30',
+            'currency': 'MWK',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        return response.data
+
+    def test_generate_creates_employee_payslip_and_totals(self):
+        payroll_run = self.create_payroll_run()
+
+        response = self.client.post(f"/api/hr/payroll-runs/{payroll_run['id']}/generate/", {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], PayrollRun.Status.CALCULATED)
+        self.assertEqual(len(response.data['entries']), 1)
+        self.assertEqual(Decimal(response.data['total_gross']), Decimal('250000.00'))
+        self.assertEqual(Decimal(response.data['total_net']), Decimal('250000.00'))
+
+    def test_generate_refuses_empty_payroll_run(self):
+        payroll_run = self.create_payroll_run()
+        self.employee.employment_status = Employee.Status.TERMINATED
+        self.employee.ended_on = date(2026, 8, 31)
+        self.employee.save(update_fields=['employment_status', 'ended_on', 'updated_at'])
+
+        response = self.client.post(f"/api/hr/payroll-runs/{payroll_run['id']}/generate/", {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('No active employees', response.data['detail'])
+        run = PayrollRun.objects.get(pk=payroll_run['id'])
+        self.assertEqual(run.status, PayrollRun.Status.DRAFT)
+        self.assertFalse(run.entries.exists())
+
+    def test_payroll_adjustments_cannot_change_after_approval(self):
+        payroll_run = self.create_payroll_run()
+        generated = self.client.post(f"/api/hr/payroll-runs/{payroll_run['id']}/generate/", {}, format='json')
+        self.assertEqual(generated.status_code, status.HTTP_200_OK)
+        entry_id = generated.data['entries'][0]['id']
+
+        create_line = self.client.post('/api/hr/payroll-lines/', {
+            'payroll_entry': entry_id,
+            'kind': PayrollLine.Kind.DEDUCTION,
+            'label': 'PAYE',
+            'amount': '10000.00',
+        }, format='json')
+        self.assertEqual(create_line.status_code, status.HTTP_201_CREATED)
+
+        approved = self.client.post(f"/api/hr/payroll-runs/{payroll_run['id']}/approve/", {}, format='json')
+        self.assertEqual(approved.status_code, status.HTTP_200_OK)
+
+        update_line = self.client.patch(
+            f"/api/hr/payroll-lines/{create_line.data['id']}/",
+            {'amount': '12000.00'},
+            format='json',
+        )
+        self.assertEqual(update_line.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(PayrollLine.objects.get(pk=create_line.data['id']).amount, Decimal('10000.00'))
+
+    def test_active_payroll_rules_are_snapshotted_on_generated_payslip(self):
+        PayrollRule.objects.create(
+            business=self.business,
+            name='PAYE',
+            code='PAYE',
+            kind=PayrollRule.Kind.DEDUCTION,
+            calculation_method=PayrollRule.CalculationMethod.GROSS_PERCENTAGE,
+            percentage_rate=Decimal('10.00'),
+        )
+        PayrollRule.objects.create(
+            business=self.business,
+            name='Transport allowance',
+            kind=PayrollRule.Kind.EARNING,
+            calculation_method=PayrollRule.CalculationMethod.FIXED,
+            fixed_amount=Decimal('5000.00'),
+        )
+        payroll_run = self.create_payroll_run()
+
+        generated = self.client.post(f"/api/hr/payroll-runs/{payroll_run['id']}/generate/", {}, format='json')
+
+        self.assertEqual(generated.status_code, status.HTTP_200_OK)
+        entry = generated.data['entries'][0]
+        self.assertEqual(Decimal(entry['gross_pay']), Decimal('255000.00'))
+        self.assertEqual(Decimal(entry['deductions_total']), Decimal('25500.00'))
+        self.assertEqual(Decimal(entry['net_pay']), Decimal('229500.00'))
+        self.assertEqual(
+            {(line['kind'], line['label']) for line in entry['lines']},
+            {('earning', 'Transport allowance'), ('deduction', 'PAYE')},
+        )
+
+    def test_approved_overtime_is_included_in_generated_payroll(self):
+        OvertimeRequest.objects.create(
+            employee=self.employee,
+            branch=self.branch,
+            work_date=date(2026, 9, 15),
+            requested_minutes=90,
+            approved_minutes=90,
+            status=OvertimeRequest.Status.APPROVED,
+            submitted_by=self.owner,
+            reviewed_by=self.owner,
+        )
+        payroll_run = self.create_payroll_run()
+
+        generated = self.client.post(f"/api/hr/payroll-runs/{payroll_run['id']}/generate/", {}, format='json')
+
+        self.assertEqual(generated.status_code, status.HTTP_200_OK)
+        entry = generated.data['entries'][0]
+        self.assertEqual(entry['overtime_minutes'], 90)
+        self.assertGreater(Decimal(entry['overtime_pay']), Decimal('0.00'))
+        self.assertGreater(Decimal(entry['gross_pay']), Decimal(entry['base_pay']))

@@ -9,6 +9,7 @@ import {
   CreditCard,
   DollarSign,
   ExternalLink,
+  FileDown,
   Plus,
   RefreshCcw,
   Trash2,
@@ -22,6 +23,7 @@ import { buildSubscriptionBillingUrl } from '@/lib/frontend-flags';
 import { persistSubscriptionToCache } from '@/lib/subscription-cache';
 import { withBusinessPayload, withBusinessQuery } from '@/lib/subscription-api';
 import { getSubscriptionFeatureInfo } from '@/lib/subscription-access';
+import { downloadSubscriptionQuotationPdf } from '@/lib/subscription-quotation-pdf';
 import { useAuth } from '@/hooks/use-auth';
 import { useCurrency } from '@/hooks/use-currency';
 import { Button } from '@/components/ui/button';
@@ -418,6 +420,7 @@ export default function BillingPage() {
   const [hasAppliedOpenManageFeatures, setHasAppliedOpenManageFeatures] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
   const [isUpdatingFeatures, setIsUpdatingFeatures] = useState(false);
+  const [isDownloadingQuotation, setIsDownloadingQuotation] = useState(false);
   const [pendingCheckoutRedirectUrl, setPendingCheckoutRedirectUrl] = useState('');
   const handledGatewayReturnRef = useRef('');
   const pendingCheckoutWindowRef = useRef<Window | null>(null);
@@ -1677,6 +1680,93 @@ export default function BillingPage() {
     [enabledFeatureDetails]
   );
 
+  const monthlyQuotation = useMemo(() => {
+    if (!subscription) {
+      return {
+        includedFeatures: [],
+        additionalFeatures: [],
+        minimumMonthlyAmount: 0,
+      };
+    }
+
+    const configuredFeatures = new Map(
+      subscriptionFeatures.map((subscriptionFeature) => [subscriptionFeature.feature_id, subscriptionFeature])
+    );
+    const activeFeatures = features.filter((feature) => feature.is_active !== false);
+    const resolveFeatureEnabled = (feature: Feature) => {
+      const assignment = configuredFeatures.get(feature.id);
+      if (assignment) {
+        return assignment.enabled !== false;
+      }
+
+      const legacyFlag = `enable_${feature.feature}`;
+      return Boolean((subscription as unknown as Record<string, unknown>)[legacyFlag]);
+    };
+    const includedFeatures = activeFeatures
+      .filter(isFreeFeature)
+      .map((feature) => ({
+        name: getFeaturePresentation(feature).name,
+        description: getFeaturePresentation(feature).description,
+        monthlyPrice: 0,
+        included: true,
+      }));
+    const selectedAddOns = activeFeatures
+      .filter((feature) => !isFreeFeature(feature) && resolveFeatureEnabled(feature))
+      .map((feature) => ({
+        name: getFeaturePresentation(feature).name,
+        description: getFeaturePresentation(feature).description,
+        monthlyPrice: toCurrencyAmount(Number(feature.price_per_day || 0) * MONTHLY_BILLING_DAYS),
+        selected: true,
+      }));
+    const additionalFeatures = activeFeatures
+      .filter((feature) => !isFreeFeature(feature))
+      .map((feature) => ({
+        name: getFeaturePresentation(feature).name,
+        description: getFeaturePresentation(feature).description,
+        monthlyPrice: toCurrencyAmount(Number(feature.price_per_day || 0) * MONTHLY_BILLING_DAYS),
+      }));
+    const selectedAddOnMonthlyTotal = selectedAddOns.reduce(
+      (total, feature) => total + feature.monthlyPrice,
+      0,
+    );
+    const configuredMonthlyAmount = toCurrencyAmount(
+      Number(subscription.monthly_charge ?? Number(subscription.daily_charge || 0) * MONTHLY_BILLING_DAYS)
+    );
+
+    return {
+      includedFeatures,
+      additionalFeatures,
+      minimumMonthlyAmount: toCurrencyAmount(Math.max(configuredMonthlyAmount - selectedAddOnMonthlyTotal, 0)),
+    };
+  }, [features, subscription, subscriptionFeatures]);
+
+  const handleDownloadSubscriptionQuotation = async () => {
+    if (!subscription || isDownloadingQuotation) {
+      return;
+    }
+
+    setIsDownloadingQuotation(true);
+    try {
+      await downloadSubscriptionQuotationPdf({
+        currencyCode: subscription.currency_code || currencyCode,
+        ...monthlyQuotation,
+      });
+      toast({
+        title: 'Subscription quotation downloaded',
+        description: 'The quotation uses monthly prices for a 30-day subscription period.',
+      });
+    } catch (error) {
+      console.error('[Billing] Failed to download subscription quotation:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Quotation download failed',
+        description: error instanceof Error ? error.message : 'Could not create the subscription quotation PDF.',
+      });
+    } finally {
+      setIsDownloadingQuotation(false);
+    }
+  };
+
   const daysUntilInsufficientBalance =
     subscription && subscription.daily_charge > 0
       ? Math.floor(subscription.account_balance / subscription.daily_charge)
@@ -2916,8 +3006,26 @@ export default function BillingPage() {
         <TabsContent value="pricing" className="mt-0">
           <Card>
             <CardHeader>
-              <CardTitle>Pricing Information</CardTitle>
-              <CardDescription>How your subscription charges are calculated</CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle>Pricing Information</CardTitle>
+                  <CardDescription>How your subscription charges are calculated</CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleDownloadSubscriptionQuotation()}
+                  disabled={isDownloadingQuotation}
+                  className="w-full sm:w-auto"
+                >
+                  {isDownloadingQuotation ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="mr-2 h-4 w-4" />
+                  )}
+                  Download Monthly Quotation
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <Alert>
@@ -2952,6 +3060,10 @@ export default function BillingPage() {
                 <p className="mb-2 text-sm text-muted-foreground">
                   Your daily charge includes your base subscription fee plus any enabled premium features.
                   Credits are automatically deducted daily to cover these charges.
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Need a price sheet to share with a prospective client? Download the company quotation above
+                  for the monthly minimum price, optional modules, and the upcoming HR &amp; Payroll module.
                 </p>
               </div>
             </CardContent>

@@ -34,7 +34,7 @@ const FEATURE_INFO: Record<string, SubscriptionFeatureInfo> = {
   },
   staff_management: {
     name: 'Multi-User Access',
-    description: 'Allow your staff to run business operations with roles and access controls.',
+    description: 'Allow your staff to run business operations with roles and access controls, employee records, attendance, leave, and payroll.',
   },
   tax_management: {
     name: 'Tax Management',

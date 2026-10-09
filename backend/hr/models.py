@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.db.models import Max
+from django.utils import timezone
 
 from business.models import Branch, Business
 from staff.models import Staff
@@ -181,6 +182,59 @@ class EmploymentTerm(models.Model):
             raise ValidationError({'effective_to': 'End date cannot be before the effective date.'})
 
 
+class ShiftTemplate(models.Model):
+    """Reusable business-defined shift times, such as Morning or Evening."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='shift_templates')
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='shift_templates',
+        help_text='Leave empty when this shift can be used at any branch.',
+    )
+    name = models.CharField(max_length=100)
+    starts_at = models.TimeField()
+    ends_at = models.TimeField()
+    break_minutes = models.PositiveSmallIntegerField(default=0)
+    late_grace_minutes = models.PositiveSmallIntegerField(default=10)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['branch__name', 'starts_at', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['business', 'name'],
+                name='hr_unique_shift_template_name_per_business',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__gt=models.F('starts_at')),
+                name='hr_shift_template_end_after_start',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['business', 'is_active', 'starts_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.business.name} - {self.name}'
+
+    def clean(self):
+        if self.branch_id and self.branch.business_id != self.business_id:
+            raise ValidationError({'branch': 'The shift branch must belong to the same business.'})
+        if self.ends_at and self.starts_at and self.ends_at <= self.starts_at:
+            raise ValidationError({'ends_at': 'Shift end time must be after the start time.'})
+        if self.break_minutes and self.starts_at and self.ends_at:
+            total_minutes = int((datetime.combine(datetime.today(), self.ends_at) - datetime.combine(datetime.today(), self.starts_at)).total_seconds() / 60)
+            if self.break_minutes >= total_minutes:
+                raise ValidationError({'break_minutes': 'Break time must be shorter than the shift.'})
+
+
 class WorkShift(models.Model):
     class Status(models.TextChoices):
         SCHEDULED = 'scheduled', 'Scheduled'
@@ -189,10 +243,21 @@ class WorkShift(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='work_shifts')
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name='work_shifts')
+    shift_template = models.ForeignKey(
+        ShiftTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_shifts',
+    )
     work_date = models.DateField()
     starts_at = models.TimeField()
     ends_at = models.TimeField()
     break_minutes = models.PositiveSmallIntegerField(default=0)
+    late_grace_minutes = models.PositiveSmallIntegerField(
+        default=10,
+        help_text='Minutes after the scheduled start before the employee is marked late.',
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.SCHEDULED)
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(
@@ -233,6 +298,11 @@ class WorkShift(models.Model):
     def clean(self):
         if self.branch_id and self.employee_id and self.branch.business_id != self.employee.business_id:
             raise ValidationError({'branch': 'The shift branch must belong to the employee business.'})
+        if self.shift_template_id:
+            if self.shift_template.business_id != self.employee.business_id:
+                raise ValidationError({'shift_template': 'The selected shift template belongs to another business.'})
+            if self.shift_template.branch_id and self.shift_template.branch_id != self.branch_id:
+                raise ValidationError({'shift_template': 'The selected shift template belongs to another branch.'})
         if self.ends_at and self.starts_at and self.ends_at <= self.starts_at:
             raise ValidationError({'ends_at': 'Shift end time must be after the start time.'})
         if self.break_minutes and self.starts_at and self.ends_at:
@@ -310,6 +380,21 @@ class AttendanceRecord(models.Model):
             return None
         minutes = int((self.clock_out - self.clock_in).total_seconds() / 60)
         return max(0, minutes - self.break_minutes)
+
+    @property
+    def late_minutes(self):
+        """Minutes late against the assigned shift, after its grace period."""
+        if not self.shift_id or not self.clock_in:
+            return 0
+
+        scheduled_start = datetime.combine(self.work_date, self.shift.starts_at)
+        if timezone.is_naive(self.clock_in):
+            clock_in = timezone.make_aware(self.clock_in, timezone.get_current_timezone())
+        else:
+            clock_in = self.clock_in
+        scheduled_start = timezone.make_aware(scheduled_start, timezone.get_current_timezone())
+        elapsed_minutes = int((clock_in - scheduled_start).total_seconds() / 60)
+        return max(0, elapsed_minutes - self.shift.late_grace_minutes)
 
     def clean(self):
         if self.branch_id and self.employee_id and self.branch.business_id != self.employee.business_id:
@@ -505,6 +590,66 @@ class PayrollSettings(models.Model):
             raise ValidationError({'standard_monthly_hours': 'Standard monthly hours must be greater than zero.'})
         if self.overtime_multiplier <= 0:
             raise ValidationError({'overtime_multiplier': 'Overtime multiplier must be greater than zero.'})
+
+
+class PayrollRule(models.Model):
+    """A recurring earning or deduction applied when a payroll run is generated."""
+
+    class Kind(models.TextChoices):
+        EARNING = 'earning', 'Earning'
+        DEDUCTION = 'deduction', 'Deduction'
+
+    class CalculationMethod(models.TextChoices):
+        FIXED = 'fixed', 'Fixed amount per payroll run'
+        BASE_PERCENTAGE = 'base_percentage', 'Percentage of base pay'
+        GROSS_PERCENTAGE = 'gross_percentage', 'Percentage of gross pay'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='payroll_rules')
+    name = models.CharField(max_length=150)
+    code = models.CharField(max_length=40, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.DEDUCTION)
+    calculation_method = models.CharField(
+        max_length=30,
+        choices=CalculationMethod.choices,
+        default=CalculationMethod.FIXED,
+    )
+    fixed_amount = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    percentage_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0)
+    effective_from = models.DateField(null=True, blank=True)
+    effective_to = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['kind', 'name']
+        indexes = [
+            models.Index(fields=['business', 'is_active', 'kind']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(fixed_amount__gte=0),
+                name='hr_payroll_rule_fixed_amount_non_negative',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(percentage_rate__gte=0),
+                name='hr_payroll_rule_percentage_rate_non_negative',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.business.name} - {self.name}'
+
+    def clean(self):
+        if self.effective_from and self.effective_to and self.effective_to < self.effective_from:
+            raise ValidationError({'effective_to': 'End date cannot be before the effective date.'})
+        if self.calculation_method == self.CalculationMethod.FIXED and self.fixed_amount < 0:
+            raise ValidationError({'fixed_amount': 'Fixed amount cannot be negative.'})
+        if self.calculation_method != self.CalculationMethod.FIXED:
+            if self.percentage_rate < 0 or self.percentage_rate > 100:
+                raise ValidationError({'percentage_rate': 'Percentage must be between 0 and 100.'})
 
 
 class PayrollRun(models.Model):

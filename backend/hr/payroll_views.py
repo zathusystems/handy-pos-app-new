@@ -5,12 +5,13 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
-from .models import PayrollEntry, PayrollLine, PayrollRun, PayrollSettings
+from .models import PayrollEntry, PayrollLine, PayrollRule, PayrollRun, PayrollSettings
 from .payroll import generate_payroll_run, recalculate_entry, recalculate_run
 from .serializers import (
     PayrollEntrySerializer,
     PayrollLineSerializer,
     PayrollLineWriteSerializer,
+    PayrollRuleSerializer,
     PayrollRunSerializer,
     PayrollRunWriteSerializer,
     PayrollSettingsSerializer,
@@ -40,6 +41,25 @@ class PayrollSettingsViewSet(PayrollAdminMixin, viewsets.ModelViewSet):
     def perform_update(self, serializer):
         self.require_payroll_admin(serializer.instance.business_id)
         serializer.save()
+
+
+class PayrollRuleViewSet(PayrollAdminMixin, viewsets.ModelViewSet):
+    serializer_class = PayrollRuleSerializer
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        return self.filter_business_queryset(PayrollRule.objects.select_related('business'))
+
+    def perform_create(self, serializer):
+        serializer.save(business=self.get_requested_business())
+
+    def perform_update(self, serializer):
+        self.require_payroll_admin(serializer.instance.business_id)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self.require_payroll_admin(instance.business_id)
+        instance.delete()
 
 
 class PayrollRunViewSet(PayrollAdminMixin, viewsets.ModelViewSet):
@@ -155,6 +175,8 @@ class PayrollLineViewSet(PayrollAdminMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         entry = serializer.validated_data['payroll_entry']
         self.require_payroll_admin(entry.payroll_run.business_id)
+        if entry.payroll_run.status not in {PayrollRun.Status.DRAFT, PayrollRun.Status.CALCULATED}:
+            raise PermissionDenied('Pay lines cannot be changed after the payroll run is approved.')
         serializer.save()
         recalculate_run(entry.payroll_run)
 
@@ -170,5 +192,7 @@ class PayrollLineViewSet(PayrollAdminMixin, viewsets.ModelViewSet):
     def perform_update(self, serializer):
         line = serializer.instance
         self.require_payroll_admin(line.payroll_entry.payroll_run.business_id)
+        if line.payroll_entry.payroll_run.status not in {PayrollRun.Status.DRAFT, PayrollRun.Status.CALCULATED}:
+            raise PermissionDenied('Pay lines cannot be changed after the payroll run is approved.')
         serializer.save()
         recalculate_run(line.payroll_entry.payroll_run)

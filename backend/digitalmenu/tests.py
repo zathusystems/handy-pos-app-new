@@ -67,6 +67,67 @@ class MenuOptionManagementTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(str(rows[0]['id']), str(self.menu.id))
 
+    def test_active_staff_can_export_menu_configuration_with_ingredient_units(self):
+        beef = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='Beef',
+            category='Ingredients',
+            item_type='ingredient',
+            stock_units=Decimal('8.000'),
+            unit_type='kg',
+        )
+        sauce = InventoryItem.objects.create(
+            business=self.business,
+            branch=self.branch,
+            name='BBQ Sauce',
+            category='Ingredients',
+            item_type='ingredient',
+            stock_units=Decimal('4.000'),
+            unit_type='liter',
+        )
+        self.menu.recipe = [{
+            'ingredientId': str(beef.id),
+            'name': 'Outdated Beef Name',
+            'unit': 'packet',
+            'quantity': '0.250',
+        }]
+        self.menu.save(update_fields=['recipe'])
+        group = MenuOptionGroup.objects.create(
+            menu=self.menu,
+            name='Choose a sauce',
+            group_type='addon',
+            is_shared=True,
+            max_select=1,
+        )
+        MenuOption.objects.create(
+            group=group,
+            name='BBQ',
+            linked_inventory_item=sauce,
+            linked_inventory_quantity=Decimal('0.050'),
+            price_delta=Decimal('200.00'),
+        )
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.get(
+            '/api/digital-menu/menu/export-configuration/',
+            {'branch_id': self.branch.id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['branch_name'], self.branch.name)
+        rows = response.data['rows']
+        recipe_row = next(row for row in rows if row['connection_type'] == 'Menu item recipe ingredient')
+        self.assertEqual(recipe_row['menu_item'], 'Chicken and Chips')
+        self.assertEqual(recipe_row['menu_recipe_ingredient'], 'Beef')
+        self.assertEqual(recipe_row['menu_recipe_unit'], 'kg')
+        self.assertEqual(recipe_row['menu_recipe_quantity'], '0.250')
+        option_row = next(row for row in rows if row['connection_type'] == 'Choice direct stock connection')
+        self.assertEqual(option_row['choice_set'], 'Choose a sauce')
+        self.assertEqual(option_row['option_stock_item'], 'BBQ Sauce')
+        self.assertEqual(option_row['option_stock_unit'], 'liter')
+        self.assertEqual(option_row['option_stock_quantity'], '0.050')
+
     def test_active_staff_can_completely_delete_menu_item(self):
         group = MenuOptionGroup.objects.create(
             menu=self.menu,

@@ -44,6 +44,7 @@ import { formatQuantityWithUnit } from '@/lib/quantity-format';
 import { useSubscriptionFeatureAccess } from '@/hooks/use-subscription-feature-access';
 import { syncService } from '@/lib/services/sync-service';
 import { updateProduct } from '@/lib/services/product-service';
+import { downloadMenuConfigurationPdf } from '@/lib/menu-configuration-pdf';
 import { MenuTemplates } from '@/components/menu/menu-templates';
 import { QRCodeTemplates } from '@/components/menu/qr-code-templates';
 import { SubscriptionFeatureDisabledCard } from '@/components/subscription-feature-disabled-card';
@@ -2906,6 +2907,7 @@ export default function MenuBuilderPage() {
   const [publicMenuUrl, setPublicMenuUrl] = useState('');
   const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
   const [menuDataRefreshToken, setMenuDataRefreshToken] = useState(0);
+  const [isExportingConfiguration, setIsExportingConfiguration] = useState(false);
   const [businessName, setBusinessName] = useState('Our Restaurant');
   const {
     accessCheck: menuAccess,
@@ -3384,6 +3386,54 @@ export default function MenuBuilderPage() {
     }
   };
 
+  const handleExportMenuConfiguration = async () => {
+    if (!activeBranchId) return;
+
+    const branchId = getBackendBranchId(activeBranchId);
+    if (branchId === null) {
+      toast({
+        variant: 'destructive',
+        title: 'Export unavailable',
+        description: 'Choose a valid active branch before exporting the menu setup.',
+      });
+      return;
+    }
+
+    setIsExportingConfiguration(true);
+    try {
+      const exportData = await authFetch.fetch<{
+        business_name?: string;
+        branch_name?: string;
+        rows?: Array<Record<string, unknown>>;
+      }>(`/digital-menu/menu/export-configuration/?branch_id=${branchId}`);
+      const rows = Array.isArray(exportData?.rows) ? exportData.rows : [];
+      if (!rows.length) {
+        toast({
+          variant: 'destructive',
+          title: 'Nothing to export',
+          description: 'This branch does not have any menu items yet.',
+        });
+        return;
+      }
+
+      await downloadMenuConfigurationPdf(exportData);
+
+      toast({
+        title: 'Menu configuration exported',
+        description: 'Your menu configuration PDF has been downloaded.',
+      });
+    } catch (error) {
+      console.error('[Menu] Failed to export menu configuration:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Could not export menu configuration',
+        description: error instanceof Error ? error.message : 'Please try again while online.',
+      });
+    } finally {
+      setIsExportingConfiguration(false);
+    }
+  };
+
   if (isLoadingMenuAccess) {
     return (
         <div className="flex h-full items-center justify-center">
@@ -3418,7 +3468,7 @@ export default function MenuBuilderPage() {
             Manage the items that appear on your public customer-facing menu for the active branch.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           <Button 
             onClick={() => setAddModalOpen(true)}
           >
@@ -3432,6 +3482,18 @@ export default function MenuBuilderPage() {
           >
             <QrCode className="mr-2 h-4 w-4" />
             Share Menu
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void handleExportMenuConfiguration()}
+            disabled={isExportingConfiguration || isLoadingMenuItems}
+          >
+            {isExportingConfiguration ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            Export PDF
           </Button>
         </div>
       </div>
